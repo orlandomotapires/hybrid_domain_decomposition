@@ -1,0 +1,6 @@
+numpy
+scipy
+networkx
+# Optional: one of these for METIS backend
+pymetis
+# metis  # aka python-metis, alternative to pymetis
