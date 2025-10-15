@@ -1,7 +1,16 @@
 import networkx as nx
 from .coarsening import coarsen_graph
 from .partitioning import initial_partition_gggp, initial_partition_spectral, initial_partition_component_aware
-from .refinement import refine_partition_fm, refine_partition_kl, edge_cut, rebalance_partition
+from .refinement import (
+    refine_partition_fm,
+    refine_partition_kl,
+    edge_cut,
+    rebalance_partition,
+    refine_partition_kway_fm,
+    rebalance_partition_kway,
+    edge_cut_kway,
+)
+from .metis_backend import partition_graph_metis
 
 
 def project_partition(fine_G: nx.Graph, coarse_label: dict, coarse_part: dict):
@@ -157,3 +166,105 @@ def k_way_partition(
     # remap to 0..k-1
     remap = {lbl: i for i, lbl in enumerate(sorted(parts.keys()))}
     return {n: remap[lbl] for n, lbl in out.items()}
+
+
+def multilevel_kway_partition(
+    G: nx.Graph,
+    k: int,
+    *,
+    weight: str = 'weight',
+    coarsen_limit: int = 80,
+    max_levels: int = 20,
+    seed: int | None = None,
+    balance_tol: float = 0.03,
+    refine_method: str = 'KFM',  # K-way FM by default
+    refine_passes: int = 3,
+    n_trials: int = 4,
+    initial_method: str = 'GGGP',  # used when k==2 at coarsest for bootstrap
+) -> dict:
+    """
+    Direct K-way multilevel partitioning:
+      - Coarsen repeatedly (HEM)
+      - Initialize K labels on the coarsest graph by recursive bisection (fast bootstrap)
+      - Uncoarsen; at each level perform K-way refinement (FM-like) for multiple passes
+      - Final K-way rebalancing to enforce global tolerance
+    Returns {node: label in [0..k-1]}.
+    """
+    if k <= 1:
+        return {n: 0 for n in G.nodes()}
+
+    def coarsen_chain(H: nx.Graph, trial_seed: int | None):
+        graphs = [H]
+        maps: list[dict] = []
+        while graphs[-1].number_of_nodes() > coarsen_limit and len(graphs) < max_levels:
+            Gc, label = coarsen_graph(graphs[-1], weight=weight, seed=trial_seed)
+            if Gc.number_of_nodes() == graphs[-1].number_of_nodes():
+                break
+            graphs.append(Gc)
+            maps.append(label)
+        return graphs, maps
+
+    def project_k(fine_G: nx.Graph, coarse_label: dict, coarse_part: dict):
+        out = {}
+        for u in fine_G.nodes():
+            cu = coarse_label[u]
+            out[u] = coarse_part.get(cu, 0)
+        return out
+
+    def init_k(Gc: nx.Graph, kk: int, trial_seed: int | None):
+        # Prefer METIS to initialize K labels on the coarsest graph (closer to METIS behavior) if available
+        try:
+            return partition_graph_metis(Gc, nparts=kk, weight=weight, seed=trial_seed)
+        except Exception:
+            # Fallback: Bootstrap by recursive bisection (fast)
+            return k_way_partition(
+                Gc,
+                kk,
+                choose_by='vweight',
+                weight=weight,
+                coarsen_limit=max(20, coarsen_limit // 2),
+                max_levels=max(5, max_levels // 2),
+                seed=trial_seed,
+                balance_tol=balance_tol,
+                refine_method='FM',
+                refine_passes=max(1, refine_passes // 2),
+                n_trials=max(1, n_trials // 2),
+                initial_method=initial_method,
+            )
+
+    best_part = None
+    best_cut = float('inf')
+    base_seed = 0 if seed is None else int(seed)
+
+    for t in range(max(1, n_trials)):
+        trial_seed = base_seed + t
+        graphs, maps = coarsen_chain(G, trial_seed)
+        Gc = graphs[-1]
+        cpart = init_k(Gc, k, trial_seed)
+
+        # Uncoarsen with K-way refinement passes per level
+        for level in range(len(maps) - 1, -1, -1):
+            fine_G = graphs[level]
+            coarse_label = maps[level]
+            part = project_k(fine_G, coarse_label, cpart)
+
+            for _ in range(max(1, refine_passes)):
+                if refine_method.upper() in ('KFM', 'FM', 'K-WAY', 'KWAY'):
+                    part = refine_partition_kway_fm(
+                        fine_G, dict(part), k, weight=weight, balance_tol=balance_tol
+                    )
+                else:
+                    # fallback: a couple of 2-way FM sweeps approximating K-way by cycling pairs
+                    part = refine_partition_kway_fm(
+                        fine_G, dict(part), k, weight=weight, balance_tol=balance_tol
+                    )
+            cpart = part
+
+        # Final K-way rebalance and score
+        final = rebalance_partition_kway(G, cpart, k, weight=weight, balance_tol=balance_tol)
+        cut = edge_cut_kway(G, final, weight=weight)
+        if cut < best_cut:
+            best_cut = cut
+            best_part = final
+
+    return best_part if best_part is not None else {}

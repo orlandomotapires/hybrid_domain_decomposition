@@ -205,3 +205,176 @@ def kway_balance_info(G: nx.Graph, part: dict):
             per.append(sum(1 for n, p in part.items() if p == lbl))
     total = float(sum(per))
     return labels, per, total
+
+
+def _part_weights(G: nx.Graph, part: dict, k: int) -> list[float]:
+    """
+    Return per-part weights (vweight if present else counts) for k parts.
+    Parts with no nodes get 0.
+    """
+    has_v = _has_vweight(G)
+    w = [0.0] * k
+    if has_v:
+        for n, p in part.items():
+            w[p] += float(G.nodes[n].get('vweight', 1.0))
+    else:
+        for p in part.values():
+            w[p] += 1.0
+    return w
+
+
+def _node_weights(G: nx.Graph) -> dict:
+    return {u: float(G.nodes[u].get('vweight', 1.0)) for u in G.nodes()}
+
+
+def _move_gain_kway(G: nx.Graph, u, part: dict, target_b: int, weight: str = 'weight') -> float:
+    """
+    Gain of moving node u from current part a to target part b in terms of cut reduction.
+    gain = sum_w(u to nodes in b) - sum_w(u to nodes in a)
+    """
+    a = part[u]
+    if a == target_b:
+        return 0.0
+    sum_to_a = 0.0
+    sum_to_b = 0.0
+    for v, data in G[u].items():
+        w = float(abs(data.get(weight, 1.0)))
+        pv = part[v]
+        if pv == a:
+            sum_to_a += w
+        elif pv == target_b:
+            sum_to_b += w
+    return sum_to_b - sum_to_a
+
+
+def refine_partition_kway_fm(
+    G: nx.Graph,
+    part: dict,
+    k: int,
+    *,
+    weight: str = 'weight',
+    balance_tol: float = 0.03,
+    max_moves: int | None = None,
+) -> dict:
+    """
+    Simple K-way FM-like refinement: repeatedly move the single best node to the best target part
+    that yields positive gain and respects global balance tolerance (by vweight if available).
+    """
+    vweight = _node_weights(G)
+    total = sum(vweight.values()) if len(vweight) > 0 else float(len(G))
+    target = total / float(max(1, k))
+    # Per-part bound relative to target (METIS-like ub on each part)
+    max_imb = balance_tol * target
+
+    per = _part_weights(G, part, k)
+    moves = 0
+
+    while True:
+        best = None  # (gain, u, b)
+        # scan nodes and candidate target parts
+        for u in G.nodes():
+            a = part[u]
+            wu = vweight.get(u, 1.0)
+            for b in range(k):
+                if b == a:
+                    continue
+                # Check balance after hypothetical move a->b
+                new_a = per[a] - wu
+                new_b = per[b] + wu
+                # Enforce each part within target ± (balance_tol * target)
+                if abs(new_a - target) > max_imb or abs(new_b - target) > max_imb:
+                    continue
+                g = _move_gain_kway(G, u, part, b, weight=weight)
+                if g > 1e-12:
+                    if best is None or g > best[0]:
+                        best = (g, u, b)
+
+        if best is None:
+            break
+        # apply best move
+        _, u, b = best
+        a = part[u]
+        wu = vweight.get(u, 1.0)
+        part[u] = b
+        per[a] -= wu
+        per[b] += wu
+        moves += 1
+        if max_moves is not None and moves >= max_moves:
+            break
+
+    return part
+
+
+def rebalance_partition_kway(
+    G: nx.Graph,
+    part: dict,
+    k: int,
+    *,
+    weight: str = 'weight',
+    balance_tol: float = 0.03,
+    max_iters: int = 100000,
+) -> dict:
+    """
+    Greedy K-way rebalancing: while any part exceeds allowed tolerance relative to target,
+    move a single node from the heaviest part to the lightest part that yields the largest gain
+    (smallest increase in cut). This enforces global balance at slight cut cost.
+    """
+    vweight = _node_weights(G)
+    total = sum(vweight.values()) if len(vweight) > 0 else float(len(G))
+    target = total / float(max(1, k))
+    # Per-part bound relative to target (METIS-like)
+    max_imb = balance_tol * target
+    per = _part_weights(G, part, k)
+
+    def imbalance_ok() -> bool:
+        return all(abs(w - target) <= max_imb + 1e-12 for w in per)
+
+    it = 0
+    while not imbalance_ok() and it < max_iters:
+        # identify heaviest part and lightest candidate
+        heavy = max(range(k), key=lambda i: per[i])
+        light = min(range(k), key=lambda i: per[i])
+        # find best node to move from heavy to any other part (prefer light), by gain and balance feasibility
+        best = None  # (gain, u, b)
+        for u in G.nodes():
+            if part[u] != heavy:
+                continue
+            wu = vweight.get(u, 1.0)
+            for b in range(k):
+                if b == heavy:
+                    continue
+                new_heavy = per[heavy] - wu
+                new_b = per[b] + wu
+                if abs(new_heavy - target) > max_imb or abs(new_b - target) > max_imb:
+                    continue
+                g = _move_gain_kway(G, u, part, b, weight=weight)
+                if best is None or g > best[0]:
+                    best = (g, u, b)
+        if best is None:
+            # cannot improve while respecting balance; relax by moving smallest-weight node
+            # pick a node from heavy with minimal penalty towards light
+            alt = None
+            for u in G.nodes():
+                if part[u] != heavy:
+                    continue
+                wu = vweight.get(u, 1.0)
+                b = light
+                new_heavy = per[heavy] - wu
+                new_b = per[b] + wu
+                if abs(new_heavy - target) > max_imb or abs(new_b - target) > max_imb:
+                    continue
+                g = _move_gain_kway(G, u, part, b, weight=weight)
+                if alt is None or g > alt[0]:
+                    alt = (g, u, b)
+            if alt is None:
+                break
+            best = alt
+
+        _, u, b = best
+        a = part[u]
+        wu = vweight.get(u, 1.0)
+        part[u] = b
+        per[a] -= wu
+        per[b] += wu
+        it += 1
+    return part

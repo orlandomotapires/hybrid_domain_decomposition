@@ -1,113 +1,82 @@
 # FEM Graph Partitioning Toolkit (Multilevel + METIS)
 
-This repository contains utilities and algorithms to load FEM matrices (Matrix Market `.mtx`), convert them to graphs, and partition those graphs using a multilevel scheme with optional METIS integration. It includes a runnable Jupyter notebook showcasing end‑to‑end workflows and comparisons.
+This repository provides a modular multilevel graph partitioning toolkit for FEM graphs (converted from Matrix Market `.mtx`), with direct METIS integration. It ships a runnable notebook to reproduce results and compare strategies (recursive vs direct K‑way, vs METIS).
 
 Concept Board link: https://fraunhofer.conceptboard.com/board/x7ec-yo4e-gsdk-nxpq-15sy
 
 ## Repository structure
 
 - `data/`
-	- FEM matrices in Matrix Market format used in the notebook demos:
+	- FEM matrices used in the notebook demos:
 		- `hybrid_ma.classical.fem.matrix_k.mtx`
 		- `hybrid_ma.classical.fem.matrix_m.mtx`
 - `src/`
-	- `graph_partitioning_main.ipynb` — Main notebook demonstrating graph construction, multilevel partitioning (2‑way and K‑way), and METIS comparison.
+	- `graph_partitioning_main.ipynb` — End‑to‑end demo: load matrices → build graphs → run multilevel partitioners → compare vs METIS.
 	- `libs/`
-		- `utils.py` — Matrix IO and matrix→graph conversion, plus small print helpers.
-		- `multilevel_squeme/` — Modular multilevel graph partitioning implementation:
-			- `coarsening.py` — Heavy Edge Matching (HEM) coarsening and graph contraction.
-			- `partitioning.py` — Initial partitioning strategies: GGGP, Spectral, Component‑aware.
-			- `refinement.py` — Refinements (FM/KL), cut utilities, balance helpers.
-			- `driver.py` — Orchestrates the multilevel pipeline; includes 2‑way and recursive K‑way.
-			- `metis_backend.py` — Adapters to PyMetis and python‑metis for direct 2‑/K‑way partitioning.
-- `requirements.txt` — Python dependencies. One METIS backend is optional (PyMetis recommended).
+		- `utils.py` — Matrix IO and matrix→graph conversion; print helpers.
+		- `multilevel_squeme/` — Core library (see its README for a deep dive):
+			- `coarsening.py` — Heavy‑Edge Matching (HEM) and contraction.
+			- `partitioning.py` — Initializers: GGGP, Spectral, Component‑aware.
+			- `refinement.py` — 2‑way FM/KL, K‑way FM‑like refinement, balance helpers, cut utilities.
+			- `driver.py` — Orchestrates pipelines: 2‑way, recursive K‑way, direct K‑way.
+			- `metis_backend.py` — Bridges to PyMetis / python‑metis.
+- `requirements.txt` — Python deps; one METIS backend is optional (PyMetis recommended).
 
-## Key modules and main functions
+## High‑level architecture and main APIs
 
-### Matrix and graph utilities (`src/libs/utils.py`)
-- `load_mtx(path, target_name)` — Loads a Matrix Market file into `scipy.sparse.csr_matrix` and logs shape/nnz.
-- `matrix_to_graph(A, symmetrize='sum', drop_diagonal=True, abs_weights=True, node_vweight=None| 'diag' | 'degree', diag=None)` — Builds a NetworkX graph from a matrix. Supports:
-	- Symmetrization (sum/max/avg/none), diagonal removal, thresholding.
-	- Absolute edge weights (recommended for stable cuts and matching).
-	- Optional node vertex weights (vweight) from the matrix diagonal (e.g., mass) or degrees.
-- Convenience printers used by the notebook:
-	- `summarize(G, part, label)` — 2‑way cut and balance.
-	- `summarize_generic(G, part, label)` — Handles 2‑way or K‑way (uses library cut/balance helpers).
+Matrix/graph utilities (`src/libs/utils.py`)
+- `load_mtx(path, name)` — Load `.mtx` into `scipy.sparse.csr_matrix`.
+- `matrix_to_graph(A, ..., node_vweight='diag'|None, ...)` — Build a weighted NetworkX graph; can set per‑node `vweight`.
+- `summarize_generic(G, part, label)` — Print K‑agnostic cut/balance summary.
 
-### Multilevel scheme (`src/libs/multilevel_squeme/`)
+Multilevel scheme (`src/libs/multilevel_squeme/`)
+- Coarsening: `heavy_edge_matching`, `coarsen_graph` (aggregates `vweight`).
+- Initial partitioning (2‑way): `initial_partition_gggp`, `initial_partition_spectral`, `initial_partition_component_aware`.
+- Refinement (2‑way): `refine_partition_fm`, `refine_partition_kl`; Rebalance (2‑way): `rebalance_partition`.
+- K‑way utilities: `edge_cut_kway`, `kway_balance_info`.
+- K‑way refinement and rebalance: `refine_partition_kway_fm`, `rebalance_partition_kway` (per‑part tolerance relative to target).
+- Drivers:
+	- `multilevel_bipartition(...)` — Full 2‑way pipeline with multi‑start and multi‑pass refinement.
+	- `k_way_partition(G, k, ...)` — Recursive bisection to K parts via repeated bipartitions.
+	- `multilevel_kway_partition(G, k, ...)` — Direct K‑way multilevel with K‑way refinement and final K‑way rebalance; initializes coarsest labels via METIS when available.
+- METIS backend: `partition_graph_metis(G, nparts, ...)` — Calls PyMetis (preferred) or python‑metis; converts float weights to ints; forwards `vweight`.
 
-Coarsening:
-- `heavy_edge_matching(G, weight='weight', seed=None)` — HEM matching prioritizing heavier edges.
-- `coarsen_graph(G, weight='weight', seed=None)` — Contracts matched pairs; preserves/aggregates vweights.
+## Notebook usage (modes and knobs)
 
-Initial partitioning:
-- `initial_partition_gggp(G, weight='weight', balance_tol=0.03, seed=None)` — Greedy Growing (GGGP), vweight‑balanced when present.
-- `initial_partition_spectral(G, weight='weight', target_weight=None)` — Spectral initializer with robust fallbacks for disconnected/singular cases.
-- `initial_partition_component_aware(G, weight='weight', balance_tol=0.03, seed=None)` — Detects components; packs or splits to meet balance.
-
-Refinement and utilities:
-- `refine_partition_fm(G, part, weight='weight', balance_tol=0.03)` — Fiduccia–Mattheyses style refinement honoring vweight balance.
-- `refine_partition_kl(G, part, weight='weight')` — Simplified Kernighan–Lin refinement.
-- `edge_cut(G, part, weight='weight')` — 2‑way cut with absolute edge weights.
-- `edge_cut_kway(G, part, weight='weight')` — K‑way cut across labels.
-- `kway_balance_info(G, part)` — Per‑part weights (vweight if present, else counts) and total.
-- `rebalance_partition(G, part, weight='weight', balance_tol=0.03)` — Greedy post‑processing to enforce balance, helpful for disconnected graphs.
-
-Driver (orchestration):
-- `multilevel_bipartition(G, weight='weight', coarsen_limit=80, max_levels=20, seed=None, balance_tol=0.03, refine_method='FM', refine_passes=3, n_trials=8, initial_method='GGGP')`
-	- Full 2‑way pipeline: coarsen → initialize (GGGP/Spectral/Component‑aware) → uncoarsen + multi‑pass refinement (FM/KL) → rebalancing.
-	- Multi‑start (`n_trials`) selects the best cut.
-- `k_way_partition(G, k, choose_by='vweight', **kwargs)`
-	- Recursive bisection using `multilevel_bipartition` until `k` parts. Chooses the next block to split by total vweight (if available) or by size.
-
-METIS backend:
-- `partition_graph_metis(G, nparts=2, weight='weight', seed=None)`
-	- Tries PyMetis first (recommended), then python‑metis. Automatically converts absolute edge weights to integer weights and forwards node vweights.
-	- Works for 2‑way and K‑way (`nparts>=2`).
-
-All public symbols are re‑exported via `src/libs/multilevel_squeme/__init__.py` for convenient imports.
-
-## Concepts: cut and balance
-
-- Cut (2‑way): sum of absolute edge weights crossing between the two parts.
-- Cut (K‑way): sum of absolute edge weights whose endpoints are in different labels.
-- Balance: how equally “load” is distributed across parts.
-	- If nodes carry `vweight` (e.g., diagonal of the mass matrix), balance uses vweight sums.
-	- Otherwise, balance uses node counts. The target per part is `total / K` (K=2 for bipartition).
-	- `balance_tol` controls allowed relative deviation during splitting.
-
-## Notebook: how to run and switch modes
-
-Open `src/graph_partitioning_main.ipynb` and execute cells in order. Key configuration:
+Open `src/graph_partitioning_main.ipynb` and run sequentially. Key config:
 
 ```python
-# Modes: 'bipartition' | 'kway_recursive' | 'kway_metis'
-PARTITION_MODE = 'bipartition'
-NPARTS = 2  # set >2 for K-way
+# Modes: 'bipartition' | 'kway_recursive' | 'kway_direct' | 'kway_metis'
+PARTITION_MODE = 'kway_direct'
+NPARTS = 5
 ```
 
-- bipartition: runs `multilevel_bipartition` for 2‑way.
-- kway_recursive: runs `k_way_partition` (recursive bisection) for `NPARTS`.
-- kway_metis: runs `partition_graph_metis` directly with `nparts=NPARTS`.
+- bipartition: `multilevel_bipartition` (only for `NPARTS==2`).
+- kway_recursive: `k_way_partition` (stacked 2‑way pipeline).
+- kway_direct: `multilevel_kway_partition` (K‑way refinement + final K‑way rebalance, METIS‑seeded on coarsest if possible).
+- kway_metis: `partition_graph_metis`.
 
-The notebook builds two graphs from `K.mtx` and `M.mtx`:
-- `G_K` with absolute edge weights; balance by node count.
-- `G_M` with absolute edge weights and `vweight` from the diagonal of `M` for vweight‑balanced splits.
+Important parameters:
+- `balance_tol`: relative tolerance per part around its target (`total/K`).
+- `refine_passes`, `n_trials`: refinement and multi‑start budget.
+- `coarsen_limit`, `max_levels`: hierarchy depth controls.
 
-Outputs shown per run:
-- 2‑way: `cut` and `balance=(w0, w1)`.
-- K‑way: `cut`, `parts=[0..K-1]`, `per=[weights per part]`, `total`.
+## Cut, balance, and weights
 
-## METIS integration
+- Edge cut uses absolute edge weights everywhere (coarsening, refinement gain, scoring).
+- Balance uses node `vweight` when provided; otherwise node count. Target per part is `total/K`.
+- Direct K‑way uses per‑part tolerance relative to target (similar spirit to METIS `ubvec`).
 
-- Backends: PyMetis or python‑metis. Install one of them (PyMetis recommended).
-- Edge weights: scaled to integers with absolute values.
-- Vertex weights: forwarded if present (`G.nodes[u]['vweight']`).
-- Usage in notebook: set `PARTITION_MODE='kway_metis'` and `NPARTS` accordingly, or call `partition_graph_metis` directly.
+## METIS vs our implementations (why results differ)
 
-## Installation
+- Coarsening: METIS uses tuned matching variants and tie‑breakers; our HEM is simpler.
+- Initialization: direct K‑way in METIS uses K‑aware seeding. We now seed the coarsest graph via METIS when available.
+- Refinement: METIS uses boundary queues and best‑prefix FM; our K‑way FM‑like is greedy without best‑prefix yet (see module README for roadmap).
+- Balance handling: METIS integrates balance throughout moves; our direct K‑way enforces per‑part bounds and runs a final K‑way rebalance.
 
-Create a Python environment and install requirements:
+Despite these differences, with aligned `balance_tol` and sufficient `refine_passes`/`n_trials`, results are often in the same ballpark, especially in direct K‑way mode.
+
+## Install
 
 ```sh
 python -m venv .venv
@@ -115,7 +84,7 @@ python -m venv .venv
 pip install -r requirements.txt
 ```
 
-Optional: install a METIS backend (one of):
+Optional METIS backend (choose one):
 
 ```sh
 pip install pymetis
@@ -123,8 +92,6 @@ pip install pymetis
 pip install metis  # python-metis
 ```
 
-## Notes and tips
+## Where to read more
 
-- Consistent weighting: The pipeline uses absolute edge weights for coarsening, gains, and cut — this usually stabilizes results vs signed weights.
-- Disconnected graphs: The component‑aware initializer and final rebalancing help avoid zero‑cut artifacts and enforce balance.
-- Tuning: For tighter balance or lower cuts, adjust `balance_tol`, `refine_passes`, and `n_trials`. For K‑way, recursive bisection balance is local per split; METIS direct K‑way often yields slightly tighter global balance.
+- See `src/libs/multilevel_squeme/README.md` for a detailed algorithmic deep dive, parameters, tips, limitations, and roadmap.
