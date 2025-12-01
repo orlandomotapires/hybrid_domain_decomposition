@@ -3,8 +3,6 @@ import scipy.sparse as sp
 import numpy as np
 import networkx as nx
 
-from libs.multilevel_squeme.refinement import edge_cut, edge_cut_kway, kway_balance_info
-
 def load_mtx(filename, target_name):
     """
     Load a Matrix Market (MTX) file and return a scipy.sparse.csr_matrix.
@@ -119,6 +117,45 @@ def partition_balance(G, part):
         total = wA + wB
     return wA / total, wB / total
 
+def edge_cut(G: nx.Graph, part: dict, weight: str = "weight") -> float:
+    cut = 0.0
+    for u, v, data in G.edges(data=True):
+        if part[u] != part[v]:
+            w = data.get(weight, 1.0)
+            cut += abs(w)
+    return float(cut)
+
+def edge_cut_kway(G: nx.Graph, part: dict, weight: str = "weight") -> float:
+    """Sum of weights of edges whose endpoints are in different part labels."""
+    cut = 0.0
+    for u, v, data in G.edges(data=True):
+        if part[u] != part[v]:
+            cut += float(abs(data.get(weight, 1.0)))
+    return float(cut)
+
+
+def _has_vweight(G: nx.Graph) -> bool:
+    try:
+        return all('vweight' in G.nodes[n] for n in G.nodes())
+    except Exception:
+        return False
+
+
+def kway_balance_info(G: nx.Graph, part: dict):
+    """
+    Returns (labels_sorted, per_part_weights, total) where weights are vweight if present else counts.
+    """
+    labels = sorted(set(part.values()))
+    per = []
+    if _has_vweight(G):
+        for lbl in labels:
+            per.append(sum(float(G.nodes[n].get('vweight', 1.0)) for n, p in part.items() if p == lbl))
+    else:
+        for lbl in labels:
+            per.append(sum(1 for n, p in part.items() if p == lbl))
+    total = float(sum(per))
+    return labels, per, total
+
 def summarize(G, part, label):
     cut = edge_cut(G, part)
     b0, b1 = partition_balance(G, part)
@@ -132,4 +169,4 @@ def summarize_generic(G, part, label, weight='weight'):
         cut = edge_cut_kway(G, part, weight=weight)
         labs, per, total = kway_balance_info(G, part)
         print(f"{label}: cut={cut:.4f}, parts={labs}, per={per}, total={total:.4f}")
-        print("Per difference: Max per: Min per:", (max(per) - min(per)), max(per), min(per))
+        print(f"Per difference: {(max(per) - min(per))} Max per: {max(per)} Min per: {min(per)}")

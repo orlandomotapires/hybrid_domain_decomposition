@@ -84,3 +84,13 @@ def coarsen_graph(G: nx.Graph, weight: str = "weight", seed: int | None = None):
 
 	return Gc, coarse_label
 
+def coarsen_chain(H, trial_seed: int | None, coarsen_limit: int = 50, max_levels: int = 20, weight: str = "weight"):
+    graphs = [H]
+    maps: list[dict] = []
+    while graphs[-1].number_of_nodes() > coarsen_limit and len(graphs) < max_levels:
+        Gc, label = coarsen_graph(graphs[-1], weight=weight, seed=trial_seed)
+        if Gc.number_of_nodes() == graphs[-1].number_of_nodes():
+            break
+        graphs.append(Gc)
+        maps.append(label)
+    return graphs, maps
