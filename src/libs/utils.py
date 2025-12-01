@@ -132,3 +132,4 @@ def summarize_generic(G, part, label, weight='weight'):
         cut = edge_cut_kway(G, part, weight=weight)
         labs, per, total = kway_balance_info(G, part)
         print(f"{label}: cut={cut:.4f}, parts={labs}, per={per}, total={total:.4f}")
+        print("Per difference: Max per: Min per:", (max(per) - min(per)), max(per), min(per))

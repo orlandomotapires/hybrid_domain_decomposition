@@ -16,7 +16,7 @@ def heavy_edge_matching(G: nx.Graph, weight: str = "weight", seed: int | None = 
 	mate: dict = {}
 
 	for u in nodes:
-		if u in matched:
+		if u in matched: # If the node is already matched with another node, just skip it
 			continue
 		best_v = None
 		best_w = -math.inf
@@ -45,7 +45,7 @@ def coarsen_graph(G: nx.Graph, weight: str = "weight", seed: int | None = None):
 	"""
 	mate = heavy_edge_matching(G, weight=weight, seed=seed)
 
-	# Build coarse nodes (components of pairs)
+	# Build coarse nodes (create the super nodes from matched pairs)
 	coarse_label: dict[int, int] = {}
 	coarse_nodes: list[tuple[int, int]] = []
 	for u in G.nodes():
@@ -56,7 +56,7 @@ def coarsen_graph(G: nx.Graph, weight: str = "weight", seed: int | None = None):
 			coarse_label[u] = cid
 			coarse_label[v] = cid
 
-	# Aggregate edges
+	# Aggregate edges (create the new edges between coarsed nodes summing up weights of the fine edges)
 	agg = defaultdict(float)
 	for u, v, data in G.edges(data=True):
 		cu = coarse_label[u]
@@ -69,7 +69,7 @@ def coarsen_graph(G: nx.Graph, weight: str = "weight", seed: int | None = None):
 		agg[(cu, cv)] += w
 
 	Gc = nx.Graph()
-	# Add coarse nodes and aggregate vertex weights if present
+	# Add coarse nodes and aggregate vertex weights if present (create the final coarse graph getting the super nodes and edges together)
 	for cid, (u, v) in enumerate(coarse_nodes):
 		vw_u = float(G.nodes[u].get('vweight', 1.0))
 		# If unmatched (self-matched), don't double-count

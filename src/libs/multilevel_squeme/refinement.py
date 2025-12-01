@@ -1,4 +1,6 @@
 import networkx as nx
+import heapq
+import math
 
 
 def edge_cut(G: nx.Graph, part: dict, weight: str = "weight") -> float:
@@ -10,12 +12,228 @@ def edge_cut(G: nx.Graph, part: dict, weight: str = "weight") -> float:
     return float(cut)
 
 
+def _id_ed(G: nx.Graph, u, part: dict, weight: str = "weight") -> tuple[float, float]:
+    """Return (id, ed) for node u under partition 'part'."""
+    a = part[u]
+    idw = 0.0
+    edw = 0.0
+    for v, data in G[u].items():
+        w = float(abs(data.get(weight, 1.0)))
+        if part[v] == a:
+            idw += w
+        else:
+            edw += w
+    return idw, edw
+
+
 def _node_gain(G: nx.Graph, u, part: dict, weight: str = "weight") -> float:
+    idw, edw = _id_ed(G, u, part, weight)
+    return edw - idw
+
+
+def refine_partition_fm(
+    G: nx.Graph,
+    part: dict,
+    weight: str = "weight",
+    max_passes: int = 10,
+    balance_tol: float = 0.03,
+):
+    """
+    METIS-nahe 2-Way FM (edge-based):
+    - Boundary-Queues pro Seite mit Schlüssel gain = ed - id
+    - from/to Wahl gemäß Zielgewichtsabweichung
+    - Best-prefix-Rollback mit Limit wie in METIS
+    """
+    # Setup balance
+    vweight = {u: float(G.nodes[u].get('vweight', 1.0)) for u in G.nodes()}
+    total = sum(vweight.values())
+    tp0 = total * 0.5
+    tp1 = total - tp0
+    # initial part weights
+    pw0 = sum(vweight[u] for u in G if part[u] == 0)
+    pw1 = total - pw0
+
+    # helper to get boundary set and id/ed
+    def boundary_set() -> list[int]:
+        B = []
+        for u in G.nodes():
+            a = part[u]
+            for v in G[u].keys():
+                if part[v] != a:
+                    B.append(u)
+                    break
+        return B
+
+    # rpq simulieren mit heap; wir halten zwei heaps (0 und 1)
+    def build_queues(B: list[int]):
+        q0: list[tuple[float, int]] = []  # (-(ed-id), u)
+        q1: list[tuple[float, int]] = []
+        for u in B:
+            idw, edw = _id_ed(G, u, part, weight)
+            g = edw - idw
+            if part[u] == 0:
+                heapq.heappush(q0, (-g, u))
+            else:
+                heapq.heappush(q1, (-g, u))
+        return q0, q1
+
+    def update_after_move(moved_u: int, from_side: int, to_side: int, nbset: set[int]):
+        # Update boundary membership for neighbors; collect potentially affected nodes
+        for v in G[moved_u].keys():
+            nbset.add(v)
+
+    def is_boundary(u: int) -> bool:
+        a = part[u]
+        for v in G[u].keys():
+            if part[v] != a:
+                return True
+        return False
+
+    nv = G.number_of_nodes()
+    limit_base = max(15, int(0.01 * nv))
+    limit = min(limit_base, 100)
+
+    for _pass in range(max_passes):
+        B = boundary_set()
+        q0, q1 = build_queues(B)
+        moved_order: list[int] = []
+        moved_from: dict[int, int] = {}
+        gains_applied: list[float] = []
+        mincut = edge_cut(G, part, weight)
+        initcut = mincut
+        best_cut = mincut
+        best_ord = -1
+
+        # moved flags
+        moved_flag = {u: False for u in G.nodes()}
+        affected: set[int] = set()
+        nswaps = 0
+
+        while True:
+            # choose from-side by current diff to targets
+            d0 = abs(tp0 - pw0)
+            d1 = abs(tp1 - pw1)
+            from_side = 0 if d0 > d1 else 1
+            q = q0 if from_side == 0 else q1
+
+            # pop top valid
+            candidate = None
+            while q:
+                neg_g, u = heapq.heappop(q)
+                if moved_flag[u]:
+                    continue
+                if not is_boundary(u):
+                    continue
+                candidate = (neg_g, u)
+                break
+            if candidate is None:
+                break
+            neg_g, u = candidate
+            g = -neg_g
+            to_side = 1 - from_side
+
+            # balance check
+            wu = vweight[u]
+            new_pw0 = pw0 - wu if from_side == 0 else pw0 + wu
+            new_pw1 = total - new_pw0
+            # allow small slack similar to METIS via avg weight fudge (simplified)
+            # we primarily allow move; strict bounds enforced by outer rebalance
+
+            # apply move
+            part[u] = to_side
+            pw0 = new_pw0
+            pw1 = new_pw1
+
+            moved_flag[u] = True
+            moved_order.append(u)
+            moved_from[u] = from_side
+            gains_applied.append(g)
+            nswaps += 1
+
+            # update current cut
+            mincut -= g
+
+            # track best prefix
+            if mincut < best_cut - 1e-12:
+                best_cut = mincut
+                best_ord = len(moved_order) - 1
+            elif nswaps - (best_ord if best_ord >= 0 else -1) > limit:
+                # undo last move and stop
+                part[u] = from_side
+                pw0 = pw0 + wu if from_side == 0 else pw0 - wu
+                pw1 = total - pw0
+                moved_order.pop()
+                gains_applied.pop()
+                break
+
+            # update neighbor boundary candidates lazily
+            update_after_move(u, from_side, to_side, affected)
+            # push affected into correct queues with refreshed gains
+            for v in list(affected):
+                if moved_flag[v]:
+                    continue
+                if not is_boundary(v):
+                    continue
+                idw, edw = _id_ed(G, v, part, weight)
+                gv = edw - idw
+                if part[v] == 0:
+                    heapq.heappush(q0, (-gv, v))
+                else:
+                    heapq.heappush(q1, (-gv, v))
+            affected.clear()
+
+        # rollback tail to best
+        if best_ord >= 0 and best_cut < initcut - 1e-12:
+            # revert moves after best_ord
+            for i in range(len(moved_order) - 1, best_ord, -1):
+                u = moved_order[i]
+                frm = moved_from[u]
+                wu = vweight[u]
+                if part[u] != frm:
+                    part[u] = frm
+                    pw0 = pw0 + wu if frm == 0 else pw0 - wu
+                    pw1 = total - pw0
+        else:
+            # revert all moves
+            for i in range(len(moved_order) - 1, -1, -1):
+                u = moved_order[i]
+                frm = moved_from[u]
+                wu = vweight[u]
+                if part[u] != frm:
+                    part[u] = frm
+                    pw0 = pw0 + wu if frm == 0 else pw0 - wu
+                    pw1 = total - pw0
+
+        # stop if no improvement in this pass
+        if best_cut >= initcut - 1e-12:
+            break
+
+    return part
+
+
+"""
+Note: The former KL refinement path was removed to streamline the main flow.
+Only FM-like refinement is kept (2-way and K-way).
+"""
+
+# New: Boundary KL-style refinement with best-prefix rollback (2-way)
+def _boundary_nodes(G: nx.Graph, part: dict) -> set:
+    B = set()
+    for u in G.nodes():
+        pu = part[u]
+        for v in G[u].keys():
+            if part[v] != pu:
+                B.add(u)
+                break
+    return B
+
+
+def _gain(G: nx.Graph, u, part: dict, weight: str = 'weight') -> float:
     a = part[u]
     ext_w = 0.0
     int_w = 0.0
     for v, data in G[u].items():
-        w = abs(data.get(weight, 1.0))
+        w = float(abs(data.get(weight, 1.0)))
         if part[v] == a:
             int_w += w
         else:
@@ -23,112 +241,116 @@ def _node_gain(G: nx.Graph, u, part: dict, weight: str = "weight") -> float:
     return ext_w - int_w
 
 
-def refine_partition_fm(
+def refine_partition_bkl(
     G: nx.Graph,
     part: dict,
-    weight: str = "weight",
-    max_moves: int | None = None,
-    balance_tol: float = 0.1,
-):
+    *,
+    weight: str = 'weight',
+    balance_tol: float = 0.03,
+    max_passes: int = 10,
+) -> dict:
     """
-    Simple FM-like refinement: iteratively move nodes with positive gain while preserving approximate balance.
+    Boundary KL-like refinement: uses only boundary vertices, applies best-gain moves
+    with best-prefix rollback each pass while respecting vweight balance tolerance.
     """
-    # Balance based on vertex weights if present
+    # Balance model
     vweight = {u: float(G.nodes[u].get('vweight', 1.0)) for u in G.nodes()}
-    total_w = sum(vweight.values())
-    target = total_w / 2.0
-    max_imbalance = balance_tol * total_w
+    total = sum(vweight.values())
+    target = total / 2.0
+    max_imb = balance_tol * total
 
-    w0 = sum(vweight[u] for u in G if part[u] == 0)
-    w1 = total_w - w0
+    def within_balance(a_w: float, b_w: float) -> bool:
+        return abs(a_w - target) <= max_imb and abs(b_w - target) <= max_imb
 
-    locked = set()
-    moves = 0
+    def side_weights() -> tuple[float, float]:
+        w0 = sum(vweight[u] for u, p in part.items() if p == 0)
+        return w0, total - w0
 
-    while True:
-        best_u = None
-        best_gain = 0.0
-        for u in G.nodes():
-            if u in locked:
+    passes = 0
+    improved = True
+    while improved and passes < max_passes:
+        passes += 1
+        improved = False
+
+        # Build boundary and initial gains
+        boundary = _boundary_nodes(G, part)
+        gains = {u: _gain(G, u, part, weight=weight) for u in boundary}
+        # max-heap of (-gain, seq, u)
+        H: list[tuple[float, int, int]] = []
+        push_id = 0
+        for u, g in gains.items():
+            heapq.heappush(H, (-g, push_id, u))
+            push_id += 1
+
+        w0, w1 = side_weights()
+        move_seq: list[tuple[int, int, float]] = []  # (u, old_part, gain)
+        cum_best = 0.0
+        cum = 0.0
+        best_k = -1
+        visited = set()
+
+        while H:
+            neg_g, _, u = heapq.heappop(H)
+            if u in visited:
                 continue
-            gain = _node_gain(G, u, part, weight=weight)
-            if part[u] == 0:
-                new_w0, new_w1 = w0 - vweight[u], w1 + vweight[u]
-            else:
-                new_w0, new_w1 = w0 + vweight[u], w1 - vweight[u]
-            if abs(new_w0 - target) > max_imbalance or abs(new_w1 - target) > max_imbalance:
+            if u not in boundary:
                 continue
-            if gain > best_gain:
-                best_gain = gain
-                best_u = u
-
-        if best_u is not None and best_gain > 1e-12:
-            a = part[best_u]
-            part[best_u] = 1 - a
+            g = -neg_g
+            a = part[u]
+            b = 1 - a
+            # Check balance
+            wu = vweight.get(u, 1.0)
+            new_w0, new_w1 = (w0 - wu, w1 + wu) if a == 0 else (w0 + wu, w1 - wu)
+            if not within_balance(new_w0, new_w1):
+                continue
+            # Apply move
+            part[u] = b
             if a == 0:
-                w0 -= vweight[best_u]
-                w1 += vweight[best_u]
+                w0, w1 = new_w0, new_w1
             else:
-                w0 += vweight[best_u]
-                w1 -= vweight[best_u]
-            locked.add(best_u)
-            moves += 1
-            if max_moves is not None and moves >= max_moves:
-                break
+                w0, w1 = new_w0, new_w1
+            move_seq.append((u, a, g))
+            visited.add(u)
+            cum += g
+            if cum > cum_best + 1e-12:
+                cum_best = cum
+                best_k = len(move_seq)
+
+            # Update boundary and neighbor gains
+            for v in G[u].keys():
+                # v may change boundary status
+                if part[v] != part[u]:
+                    boundary.add(v)
+                else:
+                    # v might become interior
+                    still_boundary = False
+                    for z in G[v].keys():
+                        if part[z] != part[v]:
+                            still_boundary = True
+                            break
+                    if not still_boundary and v in boundary:
+                        boundary.discard(v)
+                # update gain if in boundary and not visited
+                if v in boundary and v not in visited:
+                    gains[v] = _gain(G, v, part, weight=weight)
+                    heapq.heappush(H, (-gains[v], push_id, v))
+                    push_id += 1
+
+        # Rollback to best prefix if needed
+        if best_k <= 0:
+            # No improving prefix; revert all
+            for u, old_a, _ in reversed(move_seq):
+                part[u] = old_a
         else:
-            break
+            # Revert tail
+            for i in range(len(move_seq) - 1, best_k - 1, -1):
+                u, old_a, _ = move_seq[i]
+                part[u] = old_a
+            if cum_best > 1e-12:
+                improved = True
 
     return part
 
-
-def refine_partition_kl(
-    G: nx.Graph, part: dict, weight: str = "weight", max_pairs: int | None = None
-):
-    """
-    Simplified KL: repeatedly swap the best pair (a in A, b in B) with the highest gain
-    until no positive-gain swap exists or max_pairs reached.
-    """
-    A = {u for u, p in part.items() if p == 0}
-    B = set(G.nodes()) - A
-    if not A or not B:
-        return part
-
-    def D(u):
-        d_ext = 0.0
-        d_int = 0.0
-        for v, data in G[u].items():
-            w = abs(data.get(weight, 1.0))
-            if (v in A) == (u in A):
-                d_int += w
-            else:
-                d_ext += w
-        return d_ext - d_int
-
-    moves = 0
-    while True:
-        Dvals = {u: D(u) for u in G.nodes()}
-        best_gain = 0.0
-        best_pair = None
-        for a in A:
-            for b in B:
-                w_ab = abs(G[a][b][weight]) if G.has_edge(a, b) and weight in G[a][b] else (1.0 if G.has_edge(a, b) else 0.0)
-                gain = Dvals[a] + Dvals[b] - 2.0 * w_ab
-                if gain > best_gain:
-                    best_gain = gain
-                    best_pair = (a, b)
-
-        if best_pair and best_gain > 1e-12:
-            a, b = best_pair
-            A.remove(a); B.add(a)
-            B.remove(b); A.add(b)
-            part[a], part[b] = 1, 0
-            moves += 1
-            if max_pairs is not None and moves >= max_pairs:
-                break
-        else:
-            break
-
-    return part
 
 
 def rebalance_partition(
@@ -269,6 +491,24 @@ def refine_partition_kway_fm(
     per = _part_weights(G, part, k)
     moves = 0
 
+    # METIS-nahe rgain-Heuristik: rgain = ed/sqrt(nnbrs) - id
+    def rgain(u: int, b: int) -> float:
+        a = part[u]
+        if a == b:
+            return 0.0
+        ed = 0.0
+        idw = 0.0
+        nnbrs = 0
+        for v, data in G[u].items():
+            w = float(abs(data.get(weight, 1.0)))
+            nnbrs += 1
+            if part[v] == a:
+                idw += w
+            elif part[v] == b:
+                ed += w
+        scale = 1.0 / math.sqrt(max(1, nnbrs))
+        return ed * scale - idw
+
     while True:
         best = None  # (gain, u, b)
         # scan nodes and candidate target parts
@@ -284,7 +524,10 @@ def refine_partition_kway_fm(
                 # Enforce each part within target ± (balance_tol * target)
                 if abs(new_a - target) > max_imb or abs(new_b - target) > max_imb:
                     continue
-                g = _move_gain_kway(G, u, part, b, weight=weight)
+                # Prefer rgain-Heuristik, fallback auf reinen cut-gain
+                g = rgain(u, b)
+                if g <= 1e-12:
+                    g = _move_gain_kway(G, u, part, b, weight=weight)
                 if g > 1e-12:
                     if best is None or g > best[0]:
                         best = (g, u, b)

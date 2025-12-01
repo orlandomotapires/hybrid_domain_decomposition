@@ -5,7 +5,7 @@ This module implements a modular multilevel graph partitioner with both 2-way an
 ## Contents
 - Coarsening (HEM)
 - Initialization (GGGP, Spectral, Component-aware)
-- Refinement (FM/KL), Rebalancing (2-way)
+- Refinement (FM), Rebalancing (2-way)
 - K-way refinement and K-way rebalancing
 - Drivers (bipartition, recursive K-way, direct K-way)
 - METIS backend
@@ -43,8 +43,6 @@ Rationale: Coarsening reduces problem size while trying to preserve heavy connec
 
 - `refine_partition_fm(G, part, weight='weight', balance_tol=0.03)`
   - Simple FM-like refinement with vweight balance checks.
-- `refine_partition_kl(G, part, weight='weight')`
-  - Simplified KL pair-swapping.
 - `rebalance_partition(G, part, weight='weight', balance_tol=0.03)`
   - Greedy rebalance to enforce global 50/50 ± tol, helpful when graphs are disconnected or initializers overshoot.
 
@@ -73,13 +71,14 @@ Notes:
 ## Drivers
 
 - `multilevel_bipartition(...)`
-  - Coarsen until small; initialize (GGGP/Spectral/Component-aware); uncoarsen with multi-pass FM/KL; final 2-way rebalance. Multi-start trials pick the lowest cut.
+  - Coarsen until small; initialize (GGGP/Spectral/Component-aware); uncoarsen mit multi-pass FM; final 2-way rebalance. Multi-start trials pick the lowest cut.
+  - Note: 2-way refinement is FM-only. The parameter `refine_method` is accepted for API stability but ignored.
 - `k_way_partition(G, k, ...)`
   - Recursive application of the 2-way pipeline to get k parts. Chooses the next block to split by vweight (if available) or by size.
 - `multilevel_kway_partition(G, k, ...)`
-  - Direct K-way multilevel pipeline:
+  - Direct K-way multilevel pipeline (no METIS involved):
     - Coarsen via HEM.
-    - Initialize K labels on the coarsest graph via METIS when available (fallback to recursive bisection bootstrap).
+    - Initialize K labels on the coarsest graph via our internal recursive bisection bootstrap.
     - Uncoarsen with K-way refinement passes per level.
     - Final K-way rebalance to enforce per-part tolerance.
 
@@ -112,7 +111,7 @@ Recommended defaults (starting points):
 
 Differences:
 - Coarsening: METIS uses tuned matching variants and tie-breakers; we use simple HEM.
-- Initialization: METIS does K-aware seeding; we now use METIS to seed the coarsest graph when available.
+- Initialization: We use internal recursive bisection on the coarsest graph (no METIS seeding in the direct K-way path).
 - Refinement: METIS uses boundary queues and best-prefix FM; our K-way FM-like is greedy (no best-prefix yet).
 - Balance handling: METIS integrates balance in move selection with robust feasibility; our per-part bound can get stuck with coarse `vweight` granularity.
 

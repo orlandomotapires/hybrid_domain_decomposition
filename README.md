@@ -17,7 +17,7 @@ Concept Board link: https://fraunhofer.conceptboard.com/board/x7ec-yo4e-gsdk-nxp
 		- `multilevel_squeme/` — Core library (see its README for a deep dive):
 			- `coarsening.py` — Heavy‑Edge Matching (HEM) and contraction.
 			- `partitioning.py` — Initializers: GGGP, Spectral, Component‑aware.
-			- `refinement.py` — 2‑way FM/KL, K‑way FM‑like refinement, balance helpers, cut utilities.
+			- `refinement.py` — 2‑way FM, K‑way FM‑like refinement, balance helpers, cut utilities.
 			- `driver.py` — Orchestrates pipelines: 2‑way, recursive K‑way, direct K‑way.
 			- `metis_backend.py` — Bridges to PyMetis / python‑metis.
 - `requirements.txt` — Python deps; one METIS backend is optional (PyMetis recommended).
@@ -32,13 +32,13 @@ Matrix/graph utilities (`src/libs/utils.py`)
 Multilevel scheme (`src/libs/multilevel_squeme/`)
 - Coarsening: `heavy_edge_matching`, `coarsen_graph` (aggregates `vweight`).
 - Initial partitioning (2‑way): `initial_partition_gggp`, `initial_partition_spectral`, `initial_partition_component_aware`.
-- Refinement (2‑way): `refine_partition_fm`, `refine_partition_kl`; Rebalance (2‑way): `rebalance_partition`.
+- Refinement (2‑way): `refine_partition_fm`; Rebalance (2‑way): `rebalance_partition`.
 - K‑way utilities: `edge_cut_kway`, `kway_balance_info`.
 - K‑way refinement and rebalance: `refine_partition_kway_fm`, `rebalance_partition_kway` (per‑part tolerance relative to target).
 - Drivers:
-	- `multilevel_bipartition(...)` — Full 2‑way pipeline with multi‑start and multi‑pass refinement.
+	- `multilevel_bipartition(...)` — Full 2‑way pipeline with multi‑start and multi‑pass refinement (FM‑only; `refine_method` is ignored for 2‑way).
 	- `k_way_partition(G, k, ...)` — Recursive bisection to K parts via repeated bipartitions.
-	- `multilevel_kway_partition(G, k, ...)` — Direct K‑way multilevel with K‑way refinement and final K‑way rebalance; initializes coarsest labels via METIS when available.
+	- `multilevel_kway_partition(G, k, ...)` — Direct K‑way multilevel with K‑way refinement and final K‑way rebalance; coarsest labels are initialized via internal recursive bisection (no METIS).
 - METIS backend: `partition_graph_metis(G, nparts, ...)` — Calls PyMetis (preferred) or python‑metis; converts float weights to ints; forwards `vweight`.
 
 ## Notebook usage (modes and knobs)
@@ -53,7 +53,7 @@ NPARTS = 5
 
 - bipartition: `multilevel_bipartition` (only for `NPARTS==2`).
 - kway_recursive: `k_way_partition` (stacked 2‑way pipeline).
-- kway_direct: `multilevel_kway_partition` (K‑way refinement + final K‑way rebalance, METIS‑seeded on coarsest if possible).
+- kway_direct: `multilevel_kway_partition` (K‑way refinement + final K‑way rebalance; coarsest init via our own recursive bisection — no METIS).
 - kway_metis: `partition_graph_metis`.
 
 Important parameters:

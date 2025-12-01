@@ -32,12 +32,14 @@ def _to_csr(adjacency: List[List[int]], weights: List[List[float]]):
     return xadj, adjncy, eweights
 
 
-def partition_graph_metis(G: nx.Graph, nparts: int = 2, weight: str = "weight", seed: int | None = None) -> Dict[Any, int]:
+def partition_graph_metis(G: nx.Graph, nparts: int = 2, weight: str = "weight", seed: int | None = None, verbose: bool = False) -> Dict[Any, int]:
     """
     Partition a NetworkX graph using a METIS backend.
     Tries PyMetis first, then python-metis as fallback. Edge weights are currently ignored (unweighted cut).
     Returns a dict {node: part_id}.
     """
+    if verbose:
+        print(f"[metis] call: nparts={nparts}, |V|={G.number_of_nodes()}, |E|={G.number_of_edges()}")
     nodes, index, adjacency, weights = _graph_to_adjacency(G)
 
     # Collect optional node weights (vweight)
