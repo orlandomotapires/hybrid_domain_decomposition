@@ -43,4 +43,3 @@ def build_qubo_from_graph(H: nx.Graph, *, balance_weight: float = 1.0, target_we
                 Q[(u, v)] += coef
 
     return dict(Q)
-
