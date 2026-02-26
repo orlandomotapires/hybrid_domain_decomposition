@@ -3,9 +3,6 @@ import scipy.sparse as sp
 import numpy as np
 import networkx as nx
 
-import matplotlib.pyplot as plt
-from scipy import sparse
-
 def load_mtx(path, label=None):
     A = mmread(path)
     if sp.issparse(A):
@@ -162,36 +159,3 @@ def matrix_to_graph(
 
     return G
 
-def lift_partition_to_finer(graphs: list[nx.Graph], maps: list[dict], coarse_part: dict):
-    """
-    Given graphs[0]=original,...,graphs[L]=coarsest and maps[l] mapping fine(node)->coarse(node) for each l,
-    lift coarse_part defined on graphs[L] back to original graph’s nodes.
-    """ 
-    part = coarse_part
-    # traverse maps in reverse: level L-1 down to 0
-    for l in range(len(maps) - 1, -1, -1):
-        fine_G = graphs[l]
-        label_map = maps[l]          # fine -> coarse
-        # build fine partition by pulling labels from current part via coarse id
-        fine_part = {}
-        for u in fine_G.nodes():
-            cu = label_map[u]
-            fine_part[u] = part.get(cu, 0)
-        part = fine_part
-    return part
-
-def plot_sparsity_panel(A, B, name_a="K", name_b="M", figsize=(12, 5), markersize=0.5):
-    """Plot sparsity patterns of two matrices side-by-side."""
-    fig, axes = plt.subplots(1, 2, figsize=figsize, constrained_layout=True)
-
-    for ax, mat, title in zip(axes, [A, B], [name_a, name_b]):
-        if sparse.issparse(mat):
-            ax.spy(mat, markersize=markersize, color="black")
-        else:
-            ax.spy(mat != 0, markersize=markersize, color="black")
-        ax.set_title(f"Sparsity pattern: {title}")
-        ax.set_xlabel("Column index")
-        ax.set_ylabel("Row index")
-
-    plt.show()
-    return fig, axes

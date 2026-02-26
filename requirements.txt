@@ -3,3 +3,5 @@ scipy
 networkx
 pymetis
 pennylane
+dwave-neal
+matplotlib
