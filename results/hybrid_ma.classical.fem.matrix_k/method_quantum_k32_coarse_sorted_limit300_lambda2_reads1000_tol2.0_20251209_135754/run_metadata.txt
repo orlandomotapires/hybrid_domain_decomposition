@@ -1,0 +1,23 @@
+Run Metadata
+================================================================================
+
+Timestamp: 20251209_135754
+Original matrix: /home/operation/reps/FEM-Graph-Partitioning-Toolkit-Multilevel-METIS-/data/hybrid_ma.classical.fem.matrix_k.mtx
+Matrix size: 960 nodes
+Partition method: quantum
+Number of partitions (k): 32
+
+Coarsening Parameters:
+  strategy: sorted
+  limit: 300
+  ratio: 2
+
+Annealing Parameters:
+  balance_lambda: 2
+  num_reads: 1000
+  balance_tolerance: 2.0
+
+Output Files:
+  K matrix: matrix_k_reordered.mtx
+  M matrix: matrix_m_reordered.mtx
+  Permutation: permutation.txt
