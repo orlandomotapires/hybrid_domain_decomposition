@@ -1,7 +1,15 @@
+from __future__ import annotations
+
 from scipy.io import mmread
+from scipy.io import mmwrite
 import scipy.sparse as sp
 import numpy as np
 import networkx as nx
+
+import json
+from datetime import datetime
+from pathlib import Path
+from typing import Any
 
 def load_mtx(path, label=None):
     A = mmread(path)
@@ -9,153 +17,105 @@ def load_mtx(path, label=None):
         return A.tocsr()
     return sp.csr_matrix(A)
 
-def matrix_to_graph(
-    A,
-    *,
-    directed=False,
-    symmetrize='auto',
-    drop_diagonal=True,
-    threshold=0.0,
-    abs_weights=False,
-    node_vweight: str | None = None,  # 'degree' | 'diag' | None
-    diag: np.ndarray | None = None,
-    dof_per_node: int = 1,
-):
-    """
-    Convert a matrix A (sparse or dense) into a NetworkX graph.
-    If dof_per_node > 1, aggregate DOF blocks into node-level adjacency, ensuring
-    graph partitioning is performed at node granularity (preserving FEM physics).
-    - directed: create DiGraph if True, else Graph
-    - symmetrize: 'auto'|'max'|'sum'|'avg'|'none'
-    - drop_diagonal: remove self-loops
-    - threshold: drop edges with |weight| < threshold
-    Returns a NetworkX graph with edge attribute 'weight'.
-    """
-    if A is None:
-        return None
+def write_json(path: Path, obj: Any) -> None:
+	path.parent.mkdir(parents=True, exist_ok=True)
+	with path.open("w", encoding="utf-8") as f:
+		json.dump(obj, f, indent=2, sort_keys=True)
 
+def writte_results_table_text(path: Path, data: dict[str, Any]) -> None:
+    def _format_value(v: Any) -> str:
+        if isinstance(v, float):
+            return f"{v:.6g}"
+        if isinstance(v, (int, np.integer)):
+            return str(int(v))
+        if isinstance(v, (np.floating,)):
+            return f"{float(v):.6g}"
+        if v is None:
+            return ""
+        return str(v).replace("\n", " ")
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as f:
+        for matrix_name, matrix_metrics in data.items():
+            f.write(f"Matrix {matrix_name} metrics (original x permuted)\n\n")
+
+            structural = {}
+            if isinstance(matrix_metrics, dict):
+                structural = matrix_metrics.get("structural_metrics", {})
+
+            original = structural.get("original", {}) if isinstance(structural, dict) else {}
+            permuted = structural.get("permuted", {}) if isinstance(structural, dict) else {}
+
+            keys = list(dict.fromkeys(list(original.keys()) + list(permuted.keys())))
+            rows: list[tuple[str, str, str]] = []
+            for k in keys:
+                rows.append(
+                    (
+                        str(k),
+                        _format_value(original.get(k, "")),
+                        _format_value(permuted.get(k, "")),
+                    )
+                )
+
+            w_metric = max([len("Metric")] + [len(r[0]) for r in rows])
+            w_orig = max([len("Original")] + [len(r[1]) for r in rows])
+            w_perm = max([len("Permuted")] + [len(r[2]) for r in rows])
+
+            f.write(f"{'Metric'.ljust(w_metric)}  {'Original'.rjust(w_orig)}  {'Permuted'.rjust(w_perm)}\n")
+            for metric, orig_v, perm_v in rows:
+                f.write(
+                    f"{metric.ljust(w_metric)}  {orig_v.rjust(w_orig)}  {perm_v.rjust(w_perm)}\n"
+                )
+
+            perm_check = matrix_metrics.get("permutation_check", {}) if isinstance(matrix_metrics, dict) else {}
+            if isinstance(perm_check, dict) and len(perm_check) > 0:
+                f.write("\nPermutation check\n")
+                pc_rows = [(str(k), _format_value(v)) for k, v in perm_check.items()]
+                w_k = max([len("Metric")] + [len(r[0]) for r in pc_rows])
+                w_v = max([len("Value")] + [len(r[1]) for r in pc_rows])
+                f.write(f"{'Metric'.ljust(w_k)}  {'Value'.rjust(w_v)}\n")
+                for k, v in pc_rows:
+                    f.write(f"{k.ljust(w_k)}  {v.rjust(w_v)}\n")
+
+            f.write("\n\n")
+    
+def save_mtx(path: Path, matrix, *, comment: str = "") -> None:
+	path.parent.mkdir(parents=True, exist_ok=True)
+	mmwrite(path, matrix, comment=comment)
+
+def save_permutation_txt(path: Path, permutation: np.ndarray) -> None:
+	path.parent.mkdir(parents=True, exist_ok=True)
+	np.savetxt(path, np.asarray(permutation, dtype=np.int64), fmt="%d")
+
+def matrix_to_graph(A, dof_per_node: int = 1):
+    """Convert a (sparse/dense) matrix into an undirected NetworkX graph.
+
+    Minimal behavior:
+    - If dof_per_node > 1, aggregate DOF blocks to node-level adjacency
+    - Uses absolute values for edge weights
+    - Symmetrizes by sum (A + A^T)
+    - Drops diagonal/self-loops
+    - Edge weights stored under attribute 'weight'
+    """
     if not sp.issparse(A):
         A = sp.csr_matrix(A)
-    A = A.asformat('csr')
+    A = A.tocsr()
 
-    d = int(dof_per_node) if dof_per_node is not None else 1
+    d = int(dof_per_node)
+    if d > 1:
+        C = A.tocoo()
+        values = np.abs(C.data)
+        node_row = (C.row // d).astype(int)
+        node_col = (C.col // d).astype(int)
+        n = A.shape[0] // d
+        A = sp.coo_matrix((values, (node_row, node_col)), shape=(n, n)).tocsr()
+    else:
+        C = A.tocoo()
+        C.data = np.abs(C.data)
+        A = C.tocsr()
 
-    if d <= 1:
-        # Original scalar-DOF path
-        # Symmetrization
-        if symmetrize == 'auto':
-            if (A - A.T).nnz != 0:
-                A = A.maximum(A.T)
-        elif symmetrize == 'max':
-            A = A.maximum(A.T)
-        elif symmetrize == 'sum':
-            A = A + A.T
-        elif symmetrize == 'avg':
-            A = (A + A.T) * 0.5
-        elif symmetrize == 'none':
-            pass
+    A = A + A.T
+    A.setdiag(0)
+    A.eliminate_zeros()
 
-        if drop_diagonal:
-            A.setdiag(0)
-            A.eliminate_zeros()
-
-        if abs_weights:
-            C = A.tocoo()
-            C.data = np.abs(C.data)
-            A = C.tocsr()
-
-        if threshold and threshold > 0:
-            C = A.tocoo()
-            mask = np.abs(C.data) >= threshold
-            A = sp.coo_matrix((C.data[mask], (C.row[mask], C.col[mask])), shape=C.shape).tocsr()
-
-        Gtype = nx.DiGraph if directed else nx.Graph
-        try:
-            G = nx.from_scipy_sparse_array(A, create_using=Gtype, edge_attribute='weight')
-        except AttributeError:
-            G = nx.from_scipy_sparse_matrix(A, create_using=Gtype, edge_attribute='weight')
-
-        if node_vweight:
-            if node_vweight == 'degree':
-                degrees = np.ravel(A.sum(axis=1))
-                for i, u in enumerate(G.nodes()):
-                    G.nodes[u]['vweight'] = float(degrees[i])
-            elif node_vweight == 'diag':
-                if diag is None:
-                    dvec = A.diagonal()
-                else:
-                    dvec = np.asarray(diag).ravel()
-                for i, u in enumerate(G.nodes()):
-                    G.nodes[u]['vweight'] = float(dvec[i])
-        return G
-
-    # DOF-aggregating path (build node-level graph of size N x N)
-    N_total = A.shape[0]
-    if N_total % d != 0:
-        raise ValueError(
-            f"matrix_to_graph: shape[0]={N_total} is not divisible by dof_per_node={d}"
-        )
-    N = N_total // d
-
-    C = A.tocoo()
-
-    # Optionally take absolute values before aggregation (consistent with scalar path)
-    values = np.abs(C.data) if abs_weights else C.data
-    node_row = (C.row // d).astype(int)
-    node_col = (C.col // d).astype(int)
-
-    # Build aggregated node-level adjacency by summing DOF-coupling magnitudes per node pair
-    B = sp.coo_matrix((values, (node_row, node_col)), shape=(N, N)).tocsr()
-
-    # Symmetrize at node level
-    if symmetrize == 'auto':
-        if (B - B.T).nnz != 0:
-            B = B.maximum(B.T)
-    elif symmetrize == 'max':
-        B = B.maximum(B.T)
-    elif symmetrize == 'sum':
-        B = B + B.T
-    elif symmetrize == 'avg':
-        B = (B + B.T) * 0.5
-    elif symmetrize == 'none':
-        pass
-
-    # Drop self-loops at node level
-    if drop_diagonal:
-        B.setdiag(0)
-        B.eliminate_zeros()
-
-    # Thresholding at node level
-    if threshold and threshold > 0:
-        Cb = B.tocoo()
-        mask = np.abs(Cb.data) >= threshold
-        B = sp.coo_matrix((Cb.data[mask], (Cb.row[mask], Cb.col[mask])), shape=Cb.shape).tocsr()
-
-    Gtype = nx.DiGraph if directed else nx.Graph
-    try:
-        G = nx.from_scipy_sparse_array(B, create_using=Gtype, edge_attribute='weight')
-    except AttributeError:
-        G = nx.from_scipy_sparse_matrix(B, create_using=Gtype, edge_attribute='weight')
-
-    # Assign node weights if requested
-    if node_vweight:
-        if node_vweight == 'degree':
-            degrees = np.ravel(B.sum(axis=1))
-            for i, u in enumerate(G.nodes()):
-                G.nodes[u]['vweight'] = float(degrees[i])
-        elif node_vweight == 'diag':
-            # Aggregate diagonal entries per node (trace of each node block)
-            if diag is None:
-                dvec = A.diagonal()
-            else:
-                dvec = np.asarray(diag).ravel()
-            if len(dvec) != N_total:
-                raise ValueError(
-                    f"diag length {len(dvec)} does not match matrix size {N_total}"
-                )
-            node_diag = np.add.reduceat(dvec, np.arange(0, N_total, d))
-            for i, u in enumerate(G.nodes()):
-                G.nodes[u]['vweight'] = float(node_diag[i])
-
-    return G
-
+    return nx.from_scipy_sparse_array(A, create_using=nx.Graph, edge_attribute='weight')
