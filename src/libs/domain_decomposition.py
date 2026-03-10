@@ -70,9 +70,8 @@ def decompose_matrices_m_k(matrix_m, matrix_k,
     if max_node_weight is None and k_target is not None and int(k_target) > 1:
         total_vw = sum(float(G_K.nodes[u].get('vweight', 1.0)) for u in G_K.nodes())
         max_node_weight = 1.5 * (total_vw / float(int(k_target)))
-        info(f"Auto max_node_weight heuristic: {max_node_weight:.6g}")
 
-    info(f"Graph G_K with {G_K.number_of_nodes()} nodes and {G_K.number_of_edges()} edges created from K matrix.")
+    info(f"Graph G_K with {G_K.number_of_nodes()} nodes and {G_K.number_of_edges()} edges created from K matrix")
 
     if partitioning_strategy == 'metis_partitioning':
         start = start_timer()
@@ -83,7 +82,7 @@ def decompose_matrices_m_k(matrix_m, matrix_k,
 
     elif partitioning_strategy == 'qa_partitioning':
         start = start_timer()
-        progress("Coarsening using Heavy Edge Matching")
+        progress("Coarsening Heavy Edge Matching")
         graphs, maps = coarsen_chain(
             G_K,
             trial_seed=seed,
@@ -95,8 +94,8 @@ def decompose_matrices_m_k(matrix_m, matrix_k,
             max_node_weight=max_node_weight
         )
 
-        finished("Coarsening using Heavy Edge Matching", start)
-        info(f"Coarsening produced {len(graphs)} levels. Final graph has {graphs[-1].number_of_nodes()} nodes and {graphs[-1].number_of_edges()} edges.")
+        finished("Coarsening Heavy Edge Matching", start)
+        info(f"Final graph has {graphs[-1].number_of_nodes()} nodes and {graphs[-1].number_of_edges()} edges with {len(graphs)} levels")
 
         Gc = graphs[-1]
         # Handle case where coarsening didn't happen (small graph)
@@ -104,7 +103,7 @@ def decompose_matrices_m_k(matrix_m, matrix_k,
             info("Warning: No coarsening occurred (graph too small or already at target size)")
 
         start = start_timer()
-        progress("Partitioning coarsest graph using Quantum Annealing")
+        progress("Partitioning Quantum Annealing")
         part_k_coarse = recursive_kway_anneal(
             Gc,
             k=k_target,
@@ -117,11 +116,11 @@ def decompose_matrices_m_k(matrix_m, matrix_k,
             select_balance_lambda=qa_select_balance_lambda,
         )
 
-        finished("Partitioning coarsest graph using Quantum Annealing", start)
-        info(f"Partitioning on coarsest graph produced {len(set(part_k_coarse.values()))} parts.")
+        finished("Partitioning Quantum Annealing", start)
+        info(f"Partitioning on coarsest graph produced {len(set(part_k_coarse.values()))} parts")
 
         start = start_timer()
-        progress(f"Uncoarsening + Refining with Kernighan-Lin")
+        progress(f"Uncoarsening Kernighan-Lin")
         part_k = uncoarsen_and_refine(
             graphs,
             maps,
@@ -137,12 +136,12 @@ def decompose_matrices_m_k(matrix_m, matrix_k,
             seed=seed,
         )
 
-        finished("Uncoarsening + Refining with Kernighan-Lin", start)
-        info(f"Final partition on original graph has {len(set(part_k.values()))} parts.")
+        finished("Uncoarsening Kernighan-Lin", start)
+        info(f"Final partition on original graph has {len(set(part_k.values()))} parts")
 
     start = start_timer()
-    progress("Permuting matrices based on partition")
-    # Permute matrices based on partition
+    progress("Permuting matrices")
+    # Permute matrices
     permute_result = permute_matrices(
         matrix_k=matrix_k,
         matrix_m=matrix_m,
@@ -155,11 +154,5 @@ def decompose_matrices_m_k(matrix_m, matrix_k,
     matrix_k_permuted = permute_result['matrix_k_permuted']
     matrix_m_permuted = permute_result['matrix_m_permuted']
 
-    finished("Permuting matrices based on partition", start)
-    info(f"Original K Shape: {matrix_k.shape}, Original K Nonzeros: {matrix_k.nnz}")
-    info(f"Permuted K Shape: {matrix_k_permuted.shape}, Permuted K Nonzeros: {matrix_k_permuted.nnz}")
-
-    info(f"Original M Shape: {matrix_m.shape}, Original M Nonzeros: {matrix_m.nnz}")
-    info(f"Permuted M Shape: {matrix_m_permuted.shape}, Permuted M Nonzeros: {matrix_m_permuted.nnz}")
-
+    finished("Permuting matrices", start)
     return matrix_m_permuted, matrix_k_permuted, permutation

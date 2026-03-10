@@ -108,11 +108,8 @@ def run_simulation(
 	validate_node_weights = uncoarsening_parameters.get("VALIDATE_NODE_WEIGHTS", True)
 
 	# Load matrices
-	start = start_timer()
-	progress("Loading Matrices")
 	matrix_k = load_mtx(str(matrix_k_path), "K")
 	matrix_m = load_mtx(str(matrix_m_path), "M")
-	finished("Loading Matrices", start)
 
 	# Run decomposition and permutation
 	start = start_timer()
@@ -144,7 +141,6 @@ def run_simulation(
 	# Save results
 	if "matrix_k_permuted" in save_output or "matrix_m_permuted" in save_output or "permutation" in save_output:
 		start = start_timer()
-		progress("Writing permuted outputs")
 		if "matrix_k_permuted" in save_output:
 			save_mtx(
 				result_run_dir / "matrix_k_permuted.mtx",
@@ -159,11 +155,9 @@ def run_simulation(
 			)
 		if "permutation" in save_output:
 			save_permutation_txt(result_run_dir / "permutation.txt", permutation)
-		finished("Writing permuted outputs", start)
 
 	if "matrix_sparsity_comparison" in save_output:
 		start = start_timer()
-		progress("Saving sparsity image")
 		save_matrices_sparsity_comparison(
 			matrix_k,
 			perm_matrix_k,
@@ -172,11 +166,8 @@ def run_simulation(
 			markersize=0.5,
 			save_path=str(result_run_dir / "matrix_sparsity_comparison.png")
 		)
-		finished("Saving sparsity image", start)
 
 	if "run_metrics" in save_output:
-		start = start_timer()
-		progress("Profiling matrix")
 		metrics = {
 			"K": collect_metrics(
 				matrix_name="K",
@@ -201,7 +192,6 @@ def run_simulation(
 		}
 		write_results_table_text(result_run_dir / "run_metrics.txt", metrics)
 		write_json(result_run_dir / "run_metrics.json", metrics)
-		finished("Profiling matrix", start)
 		if metrics["K"]["permutation_check"]["mismatches"] > 0:
 			info(f"Permutation check found {metrics['K']['permutation_check']['mismatches']} mismatches with max abs error {metrics['K']['permutation_check']['max_abs_err']}")
 		else:
