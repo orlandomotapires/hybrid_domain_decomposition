@@ -4,8 +4,6 @@ from libs.permutation import *
 from libs.multilevel_scheme.coarsening import *
 from libs.multilevel_scheme.partitioning import *
 from libs.multilevel_scheme.uncoarsening import uncoarsen_and_refine
-from libs.multilevel_scheme.metis_partitioning import partition_graph_metis
-
 import numpy as np
 
 def _set_edge_weight_attr(G, attr_name: str):
@@ -40,7 +38,6 @@ def decompose_matrices_m_k(matrix_m, matrix_k,
                refine_method: str = 'greedy',
                refine_max_passes_per_level: int = 5,
                refine_max_moves_per_pass: int | None = None,
-               validate_node_weights: bool = True,
                seed: int = 42):
 
     if matrix_k.shape != matrix_m.shape:
@@ -59,9 +56,7 @@ def decompose_matrices_m_k(matrix_m, matrix_k,
     # Build graphs from matrices
     diag_K = matrix_k.diagonal()
     diag_M = matrix_m.diagonal()
-
     progress("Converting matrices to graphs")
-    # Convert matrices to node-level graphs (DOF aggregation handled inside matrix_to_graph).
     G_K = matrix_to_graph(matrix_k, dof_per_node=dof_per_node)
     G_M = matrix_to_graph(matrix_m, dof_per_node=dof_per_node)
     finished("Converting matrices to graphs", start_timer())
@@ -71,35 +66,19 @@ def decompose_matrices_m_k(matrix_m, matrix_k,
     _set_edge_weight_attr(G_K, weight)
     _set_edge_weight_attr(G_M, weight)
 
-    # Validate node weights (vweight) for balance; fall back to degree-based weights if invalid.
-    if validate_node_weights:
-        vweights = []
-        for u in G_K.nodes():
-            vw = G_K.nodes[u].get('vweight', None)            
-            f = float(vw)
-            vweights.append(f)
-
-    # If user didn't provide a max_node_weight, compute a simple METIS-like heuristic.
     # Common rule of thumb: ~1.5 * (total_node_weight / k_target)
     if max_node_weight is None and k_target is not None and int(k_target) > 1:
-        total_vw = 0.0
-        ok = True
-        for u in G_K.nodes():
-            vw = float(G_K.nodes[u].get('vweight', 1.0))
-            total_vw += vw
-
-        if ok and total_vw > 0:
-            max_node_weight = 1.5 * (total_vw / float(int(k_target)))
-            info(f"Auto max_node_weight heuristic: {max_node_weight:.6g}")
+        total_vw = sum(float(G_K.nodes[u].get('vweight', 1.0)) for u in G_K.nodes())
+        max_node_weight = 1.5 * (total_vw / float(int(k_target)))
+        info(f"Auto max_node_weight heuristic: {max_node_weight:.6g}")
 
     info(f"Graph G_K with {G_K.number_of_nodes()} nodes and {G_K.number_of_edges()} edges created from K matrix.")
 
-    # METIS baseline should be called on the original graph (fair comparison vs. whole METIS pipeline)
     if partitioning_strategy == 'metis_partitioning':
         start = start_timer()
-        progress("Partitioning using METIS")
-        part_k = partition_graph_metis(G_K, nparts=k_target, weight=weight, seed=seed, verbose=True)
-        finished("Partitioning using METIS", start)
+        progress("Multilevel Partitioning Scheme using METIS")
+        part_k = partition_graph_metis(G_K, nparts=k_target)
+        finished("Multilevel Partitioning Scheme using METIS", start)
         info(f"Partitioning on original graph produced {len(set(part_k.values()))} parts.")
 
     elif partitioning_strategy == 'qa_partitioning':
@@ -120,27 +99,25 @@ def decompose_matrices_m_k(matrix_m, matrix_k,
         info(f"Coarsening produced {len(graphs)} levels. Final graph has {graphs[-1].number_of_nodes()} nodes and {graphs[-1].number_of_edges()} edges.")
 
         Gc = graphs[-1]
-
         # Handle case where coarsening didn't happen (small graph)
         if len(maps) < 1:
             info("Warning: No coarsening occurred (graph too small or already at target size)")
 
         start = start_timer()
         progress("Partitioning coarsest graph using Quantum Annealing")
-        part_k_coarse, first_qubo, first_subgraph = recursive_kway_anneal(
+        part_k_coarse = recursive_kway_anneal(
             Gc,
             k=k_target,
-            balance_weight=balance_lambda,
+            balance_lambda=balance_lambda,
             num_reads=num_reads,
             choose_by='vweight',
             balance_tolerance=balance_tolerance,
             seed=seed,
             num_starts=qa_num_starts,
             select_balance_lambda=qa_select_balance_lambda,
-            return_first_qubo=True  # Return QUBO for validation
         )
 
-        finished("Partitioning using Quantum Annealing", start)
+        finished("Partitioning coarsest graph using Quantum Annealing", start)
         info(f"Partitioning on coarsest graph produced {len(set(part_k_coarse.values()))} parts.")
 
         start = start_timer()
@@ -155,7 +132,6 @@ def decompose_matrices_m_k(matrix_m, matrix_k,
             node_weight_attr='vweight',
             refine_objective=refine_objective,
             refine_balance_lambda=refine_balance_lambda,
-            refine_method=refine_method,
             max_passes_per_level=refine_max_passes_per_level,
             max_moves_per_pass=refine_max_moves_per_pass,
             seed=seed,
@@ -179,7 +155,7 @@ def decompose_matrices_m_k(matrix_m, matrix_k,
     matrix_k_permuted = permute_result['matrix_k_permuted']
     matrix_m_permuted = permute_result['matrix_m_permuted']
 
-    finished("Permuting Matrices", start)
+    finished("Permuting matrices based on partition", start)
     info(f"Original K Shape: {matrix_k.shape}, Original K Nonzeros: {matrix_k.nnz}")
     info(f"Permuted K Shape: {matrix_k_permuted.shape}, Permuted K Nonzeros: {matrix_k_permuted.nnz}")
 

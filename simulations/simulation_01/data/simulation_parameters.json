@@ -1,26 +1,33 @@
 {
-    "DOF_PER_NODE": 3,
-    "SEED": 42,
+    "general_parameters":{
+        "DOF_PER_NODE": 3,
+        "SEED": 42
+    },
 
-    "COARSEN_LIMIT": 50, 
-    "MAX_LEVELS": 10, 
-    "WEIGHT": "weight", 
-    "STRATEGY": "sorted",  
-    "COARSEN_RATIO": 0.85, 
+    "coarsening_parameters": {
+        "COARSEN_LIMIT": 50, 
+        "MAX_LEVELS": 10, 
+        "WEIGHT": "weight", 
+        "STRATEGY": "sorted",  
+        "COARSEN_RATIO": 0.85
+    },
 
-    "K_TARGET": 8, 
-    "BALANCE_LAMBDA": 2, 
-    "NUM_READS": 1000, 
-    "BALANCE_TOLERANCE": 2.0,  
-    "PARTITIONING_STRATEGY": "qa_partitioning", 
+    "partitioning_parameters": {
+        "K_TARGET": 8, 
+        "BALANCE_LAMBDA": 2, 
+        "NUM_READS": 5, 
+        "BALANCE_TOLERANCE": 2.0,  
+        "PARTITIONING_STRATEGY": "qa_partitioning",
+        "QA_NUM_STARTS": 50,  
+        "QA_SELECT_BALANCE_LAMBDA": 1.0e6
+    },
 
-    "QA_NUM_STARTS": 50,  
-    "QA_SELECT_BALANCE_LAMBDA": 1.0e6,  
-
-    "REFINE_METHOD": "fm",  
-    "REFINE_OBJECTIVE": "cut_balance", 
-    "REFINE_BALANCE_LAMBDA": 1.0,
-    "REFINE_MAX_PASSES_PER_LEVEL": 50, 
-    "REFINE_MAX_MOVES_PER_PASS": 5000, 
-    "VALIDATE_NODE_WEIGHTS": "True" 
+    "uncoarsening_parameters": {
+        "REFINE_METHOD": "fm",  
+        "REFINE_OBJECTIVE": "cut_balance", 
+        "REFINE_BALANCE_LAMBDA": 1.0,
+        "REFINE_MAX_PASSES_PER_LEVEL": 50, 
+        "REFINE_MAX_MOVES_PER_PASS": 5000, 
+        "VALIDATE_NODE_WEIGHTS": "True"
+    } 
 }

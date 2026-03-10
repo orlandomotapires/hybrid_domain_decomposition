@@ -4,20 +4,24 @@ import argparse
 from datetime import datetime
 import json
 from pathlib import Path
-
-# Important: set a non-interactive backend before importing pyplot anywhere.
 import matplotlib
 
 matplotlib.use("Agg")
 
-import matplotlib.pyplot as plt
-
 from libs.domain_decomposition import decompose_matrices_m_k
-from libs.utils import load_mtx, writte_results_table_text
-from libs.vizualization import plot_sparsity_panel
+from libs.utils import load_mtx, write_results_table_text
 
-from libs.utils import save_mtx, save_permutation_txt, write_json
-from libs.log import start_sim, progress, finished, start_timer
+from libs.utils import save_mtx, save_permutation_txt, write_json, save_matrices_sparsity_comparison
+from libs.log import (
+	close_log_file,
+	finished,
+	info,
+	progress,
+	set_log_file,
+	simulation_finished,
+	simulation_started,
+	start_timer,
+)
 
 from libs.matrix_metrics import collect_metrics
 
@@ -29,58 +33,79 @@ def run_simulation(
 	Saves the result at the created results directory.
 	"""
 
-	start_sim(f"Running simulation {simulation_name}")
-
 	# Defining paths
 	repo_root = Path(__file__).resolve().parent.parent
-	sim_dir = repo_root / simulation_name
+	sim_dir = repo_root / "simulations" / simulation_name
 	data_dir = sim_dir / "data"
-	params_path = data_dir / "simulation_parameters.json"
 
-	with params_path.open("r", encoding="utf-8") as f:
-		params = json.load(f)
-
-	matrices_dir = data_dir / "matrices"
-	matrix_k_path = matrices_dir / str(params.get("MATRIX_K_NAME", "matrix_k.mtx"))
-	matrix_m_path = matrices_dir / str(params.get("MATRIX_M_NAME", "matrix_m.mtx"))
-
+	# Defining results directory paths (create early so we can log to file)
 	results_dir = sim_dir / "results"
 	results_dir.mkdir(parents=True, exist_ok=True)
-	results_run_dir = results_dir / datetime.now().strftime("%Y%m%d_%H%M%S")
-	results_run_dir.mkdir(parents=True, exist_ok=True)
+	run_number = len(list(results_dir.glob("run_*")))
+	result_run__name = f"run_{run_number}_{datetime.now().strftime('%d.%m.%Y_%H:%M:%S')}"
+	result_run_dir = results_dir / result_run__name
+	result_run_dir.mkdir(parents=True, exist_ok=True)
+	set_log_file(result_run_dir / "run_log")
+
+	simulation_started(f"Running simulation {simulation_name}")
+
+	# Load simulation configuration
+	simulation_config_file_path = data_dir / "simulation_config.json"
+	with simulation_config_file_path.open("r", encoding="utf-8") as f:
+		simulation_config = json.load(f)
+
+	# Load simulation parameters
+	simulation_parameters_path = data_dir / simulation_config.get("PARAMETERS_FILE_NAME", "simulation_parameters.json")
+	with simulation_parameters_path.open("r", encoding="utf-8") as f:
+		simulation_parameters = json.load(f)
+	
+	# Defining matrices paths
+	matrices_dir = data_dir / "matrices"
+	input_matrices = simulation_config.get("input_matrices", {})
+	matrix_k_path = matrices_dir / str(input_matrices.get("MATRIX_K_NAME", "matrix_k.mtx"))
+	matrix_m_path = matrices_dir / str(input_matrices.get("MATRIX_M_NAME", "matrix_m.mtx"))
 
 	# General parameters
-	dof_per_node = int(params.get("DOF_PER_NODE", 1))
-	seed = int(params.get("SEED", 42))
+	general_parameters = simulation_parameters.get("general_parameters", {})
+	dof_per_node = int(general_parameters.get("DOF_PER_NODE", 1))
+	seed = int(general_parameters.get("SEED", 42))
+
+	# Parameters
+	coarsening_parameters = simulation_parameters.get("coarsening_parameters", {})
+	partitioning_parameters = simulation_parameters.get("partitioning_parameters", {})
+	uncoarsening_parameters = simulation_parameters.get("uncoarsening_parameters", {})
+
+	# Which outputs to save
+	save_output = set(simulation_config.get("save_output", []))
 
 	# Coarsening parameters
-	coarsen_limit = int(params.get("COARSEN_LIMIT", 300))
-	max_levels = int(params.get("MAX_LEVELS", 10))
-	weight = str(params.get("WEIGHT", "weight"))
-	strategy = str(params.get("STRATEGY", "sorted"))
-	coarsen_ratio = float(params.get("COARSEN_RATIO", 0.85))
-	max_node_weight = params.get("MAX_NODE_WEIGHT", None)
+	coarsen_limit = int(coarsening_parameters.get("COARSEN_LIMIT", 300))
+	max_levels = int(coarsening_parameters.get("MAX_LEVELS", 10))
+	weight = str(coarsening_parameters.get("WEIGHT", "weight"))
+	strategy = str(coarsening_parameters.get("STRATEGY", "sorted"))
+	coarsen_ratio = float(coarsening_parameters.get("COARSEN_RATIO", 0.85))
+	max_node_weight = coarsening_parameters.get("MAX_NODE_WEIGHT", None)
 	if max_node_weight is not None:
 		max_node_weight = float(max_node_weight)
 
 	# Partitioning parameters
-	k_target = int(params.get("K_TARGET", 2))
-	balance_lambda = float(params.get("BALANCE_LAMBDA", 2.0))
-	num_reads = int(params.get("NUM_READS", 1000))
-	balance_tolerance = float(params.get("BALANCE_TOLERANCE", 2.0))
-	partitioning_strategy = str(params.get("PARTITIONING_STRATEGY", "qa_partitioning")).strip().lower()
-	qa_num_starts = int(params.get("QA_NUM_STARTS", 1))
-	qa_select_balance_lambda = float(params.get("QA_SELECT_BALANCE_LAMBDA", 1.0e6))
+	k_target = int(partitioning_parameters.get("K_TARGET", 2))
+	balance_lambda = float(partitioning_parameters.get("BALANCE_LAMBDA", 2.0))
+	num_reads = int(partitioning_parameters.get("NUM_READS", 1000))
+	balance_tolerance = float(partitioning_parameters.get("BALANCE_TOLERANCE", 2.0))
+	partitioning_strategy = str(partitioning_parameters.get("PARTITIONING_STRATEGY", "qa_partitioning")).strip().lower()
+	qa_num_starts = int(partitioning_parameters.get("QA_NUM_STARTS", 1))
+	qa_select_balance_lambda = float(partitioning_parameters.get("QA_SELECT_BALANCE_LAMBDA", 1.0e6))
 
 	# Uncoarsening parameters
-	refine_method = str(params.get("REFINE_METHOD", "greedy"))
-	refine_objective = str(params.get("REFINE_OBJECTIVE", "cut"))
-	refine_balance_lambda = float(params.get("REFINE_BALANCE_LAMBDA", 1.0))
-	refine_max_passes_per_level = int(params.get("REFINE_MAX_PASSES_PER_LEVEL", 5))
-	refine_max_moves_per_pass = params.get("REFINE_MAX_MOVES_PER_PASS", None)
+	refine_method = str(uncoarsening_parameters.get("REFINE_METHOD", "greedy"))
+	refine_objective = str(uncoarsening_parameters.get("REFINE_OBJECTIVE", "cut"))
+	refine_balance_lambda = float(uncoarsening_parameters.get("REFINE_BALANCE_LAMBDA", 1.0))
+	refine_max_passes_per_level = int(uncoarsening_parameters.get("REFINE_MAX_PASSES_PER_LEVEL", 5))
+	refine_max_moves_per_pass = uncoarsening_parameters.get("REFINE_MAX_MOVES_PER_PASS", None)
 	if refine_max_moves_per_pass is not None:
 		refine_max_moves_per_pass = int(refine_max_moves_per_pass)
-	validate_node_weights = params.get("VALIDATE_NODE_WEIGHTS", True)
+	validate_node_weights = uncoarsening_parameters.get("VALIDATE_NODE_WEIGHTS", True)
 
 	# Load matrices
 	start = start_timer()
@@ -91,7 +116,7 @@ def run_simulation(
 
 	# Run decomposition and permutation
 	start = start_timer()
-	m_perm, k_perm, permutation = decompose_matrices_m_k(
+	perm_matrix_m, perm_matrix_k, permutation = decompose_matrices_m_k(
 		matrix_m=matrix_m,
 		matrix_k=matrix_k,
 		dof_per_node=dof_per_node,
@@ -113,86 +138,103 @@ def run_simulation(
 		refine_balance_lambda=refine_balance_lambda,
 		refine_max_passes_per_level=refine_max_passes_per_level,
 		refine_max_moves_per_pass=refine_max_moves_per_pass,
-		validate_node_weights=validate_node_weights,
 		seed=seed,
 	)
 
 	# Save results
-	start = start_timer()
-	progress("Writing permuted outputs")
-	save_mtx(results_run_dir / "matrix_k_permuted.mtx", k_perm, comment=f"Permuted K ({partitioning_strategy})")
-	save_mtx(results_run_dir / "matrix_m_permuted.mtx", m_perm, comment=f"Permuted M ({partitioning_strategy})")
-	save_permutation_txt(results_run_dir / "permutation.txt", permutation)
-	finished("Written permuted outputs", start)
+	if "matrix_k_permuted" in save_output or "matrix_m_permuted" in save_output or "permutation" in save_output:
+		start = start_timer()
+		progress("Writing permuted outputs")
+		if "matrix_k_permuted" in save_output:
+			save_mtx(
+				result_run_dir / "matrix_k_permuted.mtx",
+				perm_matrix_k,
+				comment=f"Permuted K ({partitioning_strategy})",
+			)
+		if "matrix_m_permuted" in save_output:
+			save_mtx(
+				result_run_dir / "matrix_m_permuted.mtx",
+				perm_matrix_m,
+				comment=f"Permuted M ({partitioning_strategy})",
+			)
+		if "permutation" in save_output:
+			save_permutation_txt(result_run_dir / "permutation.txt", permutation)
+		finished("Writing permuted outputs", start)
 
-	start = start_timer()
-	progress("Plotting sparsity image")
-	fig, _ = plot_sparsity_panel(
-		matrix_k,
-		k_perm,
-		name_a="K (original)",
-		name_b=f"K (permuted_{partitioning_strategy})",
-		markersize=0.5,
-		show=False,
-		save_path=str(results_run_dir / f"sparsity_k_original_vs_k_permuted.png"),
-		dpi=200,
-	)
-	plt.close(fig)
-	finished("Plotted sparsity image", start)
+	if "matrix_sparsity_comparison" in save_output:
+		start = start_timer()
+		progress("Saving sparsity image")
+		save_matrices_sparsity_comparison(
+			matrix_k,
+			perm_matrix_k,
+			name_a="K (original)",
+			name_b=f"K (permuted_{partitioning_strategy})",
+			markersize=0.5,
+			save_path=str(result_run_dir / "matrix_sparsity_comparison.png")
+		)
+		finished("Saving sparsity image", start)
 
-	start = start_timer()
-	progress("Computing metrics")
-	metrics = {
-		"K": collect_metrics(
-			matrix_name="K",
-			method_name=partitioning_strategy,
-			original=matrix_k,
-			permuted=k_perm,
-			permutation=permutation,
-			perm_check_samples=20000,
-			perm_check_seed=0,
-			perm_check_tol=0.0,
-		),
-		"M": collect_metrics(
-			matrix_name="M",
-			method_name=partitioning_strategy,
-			original=matrix_m,
-			permuted=m_perm,
-			permutation=permutation,
-			perm_check_samples=5000,
-			perm_check_seed=0,
-			perm_check_tol=0.0,
-		),
-	}
-	writte_results_table_text(results_run_dir / "run_metrics.txt", metrics)
-	write_json(results_run_dir / "run_metrics.json", metrics)
-	write_json(results_run_dir / "run_simulation_parameters.json", params)
-	finished("Computed metrics", start)
+	if "run_metrics" in save_output:
+		start = start_timer()
+		progress("Profiling matrix")
+		metrics = {
+			"K": collect_metrics(
+				matrix_name="K",
+				method_name=partitioning_strategy,
+				original=matrix_k,
+				permuted=perm_matrix_k,
+				permutation=permutation,
+				perm_check_samples=20000,
+				perm_check_seed=0,
+				perm_check_tol=0.0,
+			),
+			"M": collect_metrics(
+				matrix_name="M",
+				method_name=partitioning_strategy,
+				original=matrix_m,
+				permuted=perm_matrix_m,
+				permutation=permutation,
+				perm_check_samples=5000,
+				perm_check_seed=0,
+				perm_check_tol=0.0,
+			),
+		}
+		write_results_table_text(result_run_dir / "run_metrics.txt", metrics)
+		write_json(result_run_dir / "run_metrics.json", metrics)
+		finished("Profiling matrix", start)
+		if metrics["K"]["permutation_check"]["mismatches"] > 0:
+			info(f"Permutation check found {metrics['K']['permutation_check']['mismatches']} mismatches with max abs error {metrics['K']['permutation_check']['max_abs_err']}")
+		else:
+			info(f"Permutation check passed with no mismatches")
 
-	return results_run_dir
+	if "run_simulation_parameters" in save_output:
+		write_json(result_run_dir / "run_simulation_parameters.json", simulation_parameters)
 
+	return result_run_dir
 
 def cli_main(argv: list[str] | None = None) -> None:
 	parser = argparse.ArgumentParser(
 		description=(
-			"Run the permutation strategy from partitioning_STRATEGY in ./simulations/<name>/simulation_parameters.json. "
-			"Writes results to ./simulations/<name>/results/<timestamp>/ with the following files: \n"
-			"  - matrix_k_permuted.mtx\n"
-			"  - matrix_m_permuted.mtx\n"
-			"  - permutation.txt\n"
-			"  - run_metrics.json\n"
-			"  - run_simulation_parameters.json\n"
-			"  - sparsity_k_original_vs_<strategy>.png\n"
+			"Reads ./simulations/<name>/data/simulation_config.json and the referenced parameters JSON. "
+			"Runs the strategy from partitioning_parameters.PARTITIONING_STRATEGY. "
+			"Only writes outputs listed in simulation_config.save_output into ./simulations/<name>/results/<timestamp>/."
 		)
 	)
 	parser.add_argument(
 		"simulation",
-		help="Simulation folder name, e.g. ./simulations/simulation_01 (under ./simulations)",
+		help="Simulation name, e.g. simulation_01 (under ./simulations)",
 	)
 
 	args = parser.parse_args(argv)
-	out_dir = run_simulation(args.simulation)
-	print(f"\nDone. Results written to: {out_dir}")
+
+	total_simulation_time = start_timer()
+	out_dir: Path | None = None
+	try:
+		out_dir = run_simulation(args.simulation)
+		simulation_finished("Simulation Completed Successfully", total_simulation_time)
+		info(f"Results saved in {out_dir}")
+	finally:
+		close_log_file()
 
 if __name__ == "__main__":
 	cli_main()

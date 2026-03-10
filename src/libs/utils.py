@@ -7,9 +7,11 @@ import numpy as np
 import networkx as nx
 
 import json
-from datetime import datetime
 from pathlib import Path
 from typing import Any
+
+import matplotlib.pyplot as plt
+from scipy import sparse
 
 def load_mtx(path, label=None):
     A = mmread(path)
@@ -22,7 +24,7 @@ def write_json(path: Path, obj: Any) -> None:
 	with path.open("w", encoding="utf-8") as f:
 		json.dump(obj, f, indent=2, sort_keys=True)
 
-def writte_results_table_text(path: Path, data: dict[str, Any]) -> None:
+def write_results_table_text(path: Path, data: dict[str, Any]) -> None:
     def _format_value(v: Any) -> str:
         if isinstance(v, float):
             return f"{v:.6g}"
@@ -119,3 +121,27 @@ def matrix_to_graph(A, dof_per_node: int = 1):
     A.eliminate_zeros()
 
     return nx.from_scipy_sparse_array(A, create_using=nx.Graph, edge_attribute='weight')
+
+def save_matrices_sparsity_comparison(
+    A,
+    B,
+    name_a: str = "K",
+    name_b: str = "M",
+    figsize=(12, 5),
+    markersize: float = 0.5,
+    *,
+    save_path: str | None = None,
+    dpi: int = 200,
+):
+    fig, axes = plt.subplots(1, 2, figsize=figsize, constrained_layout=True)
+
+    for ax, mat, title in zip(axes, [A, B], [name_a, name_b]):
+        if sparse.issparse(mat):
+            ax.spy(mat, markersize=markersize, color="black")
+        else:
+            ax.spy(mat != 0, markersize=markersize, color="black")
+        ax.set_title(f"Sparsity pattern: {title}")
+        ax.set_xlabel("Column index")
+        ax.set_ylabel("Row index")
+
+    fig.savefig(save_path, dpi=dpi)

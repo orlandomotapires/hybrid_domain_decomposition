@@ -1,8 +1,8 @@
 import numpy as np
 from scipy.sparse import coo_matrix, issparse
+from libs.log import info
 
-
-def create_permutation_from_partition(partition: dict, n_nodes: int) -> np.ndarray:
+def _create_permutation_from_partition(partition: dict, n_nodes: int) -> np.ndarray:
     partition_nodes = set(partition.keys())
     expected_nodes = set(range(n_nodes))
     
@@ -32,8 +32,7 @@ def create_permutation_from_partition(partition: dict, n_nodes: int) -> np.ndarr
     
     return np.array(permutation, dtype=int)
 
-
-def permute_sparse_matrix(matrix, permutation):
+def _permute_sparse_matrix(matrix, permutation):
     permutation = np.asarray(permutation, dtype=int)
 
     if matrix.shape[0] != matrix.shape[1]:
@@ -56,6 +55,16 @@ def permute_sparse_matrix(matrix, permutation):
         # Dense path: advanced indexing with np.ix_
         return matrix[np.ix_(permutation, permutation)]
 
+def _node_to_dof_permutation(node_perm: np.ndarray, dof_per_node: int) -> np.ndarray:
+    N = int(len(node_perm))
+    d = int(dof_per_node)
+    dof_perm = np.empty(N * d, dtype=int)
+    for new_node_idx, old_node_idx in enumerate(node_perm):
+        base_new = new_node_idx * d
+        base_old = old_node_idx * d
+        for r in range(d):
+            dof_perm[base_new + r] = base_old + r
+    return dof_perm
 
 def permute_matrices(
     matrix_k,
@@ -81,34 +90,22 @@ def permute_matrices(
     n_nodes = n_total // dof_per_node
 
     # Build node-level permutation (new_node -> old_node)
-    node_perm = create_permutation_from_partition(partition, n_nodes)
+    node_perm = _create_permutation_from_partition(partition, n_nodes)
 
     # Expand to DOF-level permutation if needed
     if dof_per_node == 1:
         permutation = node_perm
     else:
-        permutation = node_to_dof_permutation(node_perm, dof_per_node)
+        permutation = _node_to_dof_permutation(node_perm, dof_per_node)
 
     if verbose:
-        print(f"Permutation built: nodes={n_nodes}, dof_per_node={dof_per_node}, total_dofs={n_total}")
+        info(f"Permutation built: nodes={n_nodes}, dof_per_node={dof_per_node}, total_dofs={n_total}")
     
-    matrix_k_permuted = permute_sparse_matrix(matrix_k, permutation)
-    matrix_m_permuted = permute_sparse_matrix(matrix_m, permutation)
+    matrix_k_permuted = _permute_sparse_matrix(matrix_k, permutation)
+    matrix_m_permuted = _permute_sparse_matrix(matrix_m, permutation)
     
     return {
         'permutation': permutation,
         'matrix_k_permuted': matrix_k_permuted,
         'matrix_m_permuted': matrix_m_permuted
     }
-
-
-def node_to_dof_permutation(node_perm: np.ndarray, dof_per_node: int) -> np.ndarray:
-    N = int(len(node_perm))
-    d = int(dof_per_node)
-    dof_perm = np.empty(N * d, dtype=int)
-    for new_node_idx, old_node_idx in enumerate(node_perm):
-        base_new = new_node_idx * d
-        base_old = old_node_idx * d
-        for r in range(d):
-            dof_perm[base_new + r] = base_old + r
-    return dof_perm

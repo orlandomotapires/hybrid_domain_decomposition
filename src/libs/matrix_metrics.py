@@ -37,7 +37,6 @@ def _check_permutation_matrix_relation(matrix_name, A_original, A_permuted, perm
     return mismatches, max_abs_err
 
 def _sparsity_metrics(A, band: int = 200):
-    """Simple structural metrics that can be computed from the matrix alone."""
     A = _as_csr(A)
     coo = A.tocoo()
     r = coo.row
@@ -60,7 +59,7 @@ def _sparsity_metrics(A, band: int = 200):
         f"frac_within_|i-j|<={band}": frac_in_band,
     }
 
-def check_structural_metrics(matrix_name, method_name, A0, Ap):
+def _check_structural_metrics(matrix_name, method_name, A0, Ap):
     m0 = _sparsity_metrics(A0, band=200)
     mp = _sparsity_metrics(Ap, band=200)
 
@@ -77,38 +76,7 @@ def check_structural_metrics(matrix_name, method_name, A0, Ap):
         vp = mp.get(k, "")
         rows.append((k, _fmt(v0), _fmt(vp)))
 
-    # Jupyter-friendly HTML table (fallback to plain text if IPython isn't available)
-    try:
-        from IPython.display import display, HTML  # type: ignore
-
-        html = [f"<h4>{matrix_name}: structural metrics for method '{method_name}'</h4>"]
-        html.append("<table style='border-collapse:collapse; border:1px solid #ccc;'>")
-        html.append(
-            "<thead><tr>"
-            "<th style='border:1px solid #ccc; padding:6px; text-align:left;'>metric</th>"
-            "<th style='border:1px solid #ccc; padding:6px; text-align:right;'>original</th>"
-            "<th style='border:1px solid #ccc; padding:6px; text-align:right;'>permuted</th>"
-            "</tr></thead><tbody>"
-        )
-        for metric, original, permuted in rows:
-            html.append(
-                "<tr>"
-                f"<td style='border:1px solid #ccc; padding:6px; text-align:left;'>{metric}</td>"
-                f"<td style='border:1px solid #ccc; padding:6px; text-align:right;'>{original}</td>"
-                f"<td style='border:1px solid #ccc; padding:6px; text-align:right;'>{permuted}</td>"
-                "</tr>"
-            )
-        html.append("</tbody></table>")
-        display(HTML("".join(html)))
-    except Exception:
-        #print(f"\n{matrix_name}: structural metrics for method '{method_name}'")
-        w = max(len(r[0]) for r in rows) if rows else 10
-        #print(f"{'metric'.ljust(w)}  {'original':>12}  {'permuted':>12}")
-        # for metric, original, permuted in rows:
-        #     print(f"{metric.ljust(w)}  {original:>12}  {permuted:>12}")
-
     return m0, mp
-
 
 def collect_metrics(
 	*,
@@ -131,7 +99,7 @@ def collect_metrics(
 		tol=perm_check_tol,
 	)
 
-	m0, mp = check_structural_metrics(matrix_name, method_name, original, permuted)
+	m0, mp = _check_structural_metrics(matrix_name, method_name, original, permuted)
 	m0_band200 = _sparsity_metrics(original, band=200)
 	mp_band200 = _sparsity_metrics(permuted, band=200)
 
