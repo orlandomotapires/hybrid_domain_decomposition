@@ -2,3 +2,7 @@
 *results*
 *METIS*
 *pycache*
+*.pyc*
+*ocean*
+*simulation_03_ansys_v0_without_base*
+*simulation_04_ansys_v0_with_base*

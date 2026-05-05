@@ -1,0 +1,26 @@
+nohup: ignoring input
+[34m[05 May 2026 13:15:45 UTC INFO] Running [0m
+[34m[05 May 2026 13:15:45 UTC INFO] Converting matrices to graphs[0m
+[34m[05 May 2026 13:15:45 UTC INFO] Graph G_K with 320 nodes and 1523 edges created from K matrix[0m
+[34m[05 May 2026 13:15:45 UTC INFO] Coarsening Heavy Edge Matching[0m
+[37m[05 May 2026 13:15:45 UTC VERBOSE] Coarse graph has 4 nodes and 5 edges with 8 levels[0m
+[34m[05 May 2026 13:15:45 UTC INFO] Partitioning QAOA[0m
+[34m[05 May 2026 13:15:45 UTC INFO] Running QAOA on QLM backend qat.qpus:Jiqcer5QPU[0m
+[37m[05 May 2026 13:15:47 UTC VERBOSE] QLM backend resolved QPU name: qat.qpus:Jiqcer5QPU[0m
+[37m[05 May 2026 13:15:47 UTC VERBOSE] QLM backend service type: QLMServiceType.QPU[0m
+[37m[05 May 2026 13:15:47 UTC VERBOSE] QLM backend specs description: JuSpark - IQMBackend v2 - 5 qubit QPU [0m
+[37m[05 May 2026 13:15:47 UTC VERBOSE] QLM backend topology: Topology(type=2, graph={0: [2], 2: [0, 1, 3, 4], 1: [2], 3: [2], 4: [2]}, _nbqbits=None)[0m
+[37m[05 May 2026 13:15:47 UTC VERBOSE] Current coarse QAOA problem size: 4[0m
+[37m[05 May 2026 13:15:47 UTC VERBOSE] Estimated QLM job count: 6 (num_starts=1 * bipartitions_per_start=3 * (num_steps + final_sample=2))[0m
+Submitted a new batch: SJob208335
+Submitted a new batch: SJob208336
+Submitted a new batch: SJob208337
+Submitted a new batch: SJob208338
+Submitted a new batch: SJob208340
+Submitted a new batch: SJob208341
+[37m[05 May 2026 13:17:52 UTC VERBOSE] Partitioning on coarse graph produced 4 parts[0m
+[34m[05 May 2026 13:17:52 UTC INFO] Uncoarsening Kernighan-Lin[0m
+[34m[05 May 2026 13:17:52 UTC INFO] Permuting matrices[0m
+[37m[05 May 2026 13:17:53 UTC VERBOSE] Permutation check passed with no mismatches[0m
+[34m[05 May 2026 13:17:54 UTC INFO] Simulation Completed Successfully[0m
+[37m[05 May 2026 13:17:54 UTC VERBOSE] Results saved in /home/operation/Thesis/hybrid_domain_decomposition/simulations/simulation_01_yannick/results/run_3_05.05.2026_13:15:45[0m

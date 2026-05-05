@@ -1,6 +1,6 @@
 import numpy as np
 from scipy.sparse import coo_matrix, issparse
-from libs.log import info
+from libs.log import log
 
 def _create_permutation_from_partition(partition: dict, n_nodes: int) -> np.ndarray:
     partition_nodes = set(partition.keys())
@@ -71,7 +71,6 @@ def permute_matrices(
     matrix_m,
     partition,
     dof_per_node: int = 1,
-    verbose: bool = False,
 ):
     
     if matrix_k.shape != matrix_m.shape:
@@ -97,9 +96,6 @@ def permute_matrices(
         permutation = node_perm
     else:
         permutation = _node_to_dof_permutation(node_perm, dof_per_node)
-
-    if verbose:
-        info(f"Permutation built: nodes={n_nodes}, dof_per_node={dof_per_node}, total_dofs={n_total}")
     
     matrix_k_permuted = _permute_sparse_matrix(matrix_k, permutation)
     matrix_m_permuted = _permute_sparse_matrix(matrix_m, permutation)

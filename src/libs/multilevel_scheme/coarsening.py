@@ -110,7 +110,7 @@ def coarsen_graph(G: nx.Graph, weight: str = "weight", seed: int | None = None, 
 	"""
 	mate = heavy_edge_matching(G, weight=weight, seed=seed, strategy=strategy, max_node_weight=max_node_weight)
 
-	# Build coarse nodes (create the super nodes from matched pairs)
+	# Build supernodes from the selected matches.
 	coarse_label: dict[int, int] = {}
 	coarse_nodes: list[tuple[int, int]] = []
 	for u in G.nodes():
@@ -121,7 +121,7 @@ def coarsen_graph(G: nx.Graph, weight: str = "weight", seed: int | None = None, 
 			coarse_label[u] = cid
 			coarse_label[v] = cid
 
-	# Aggregate edges (create the new edges between coarsed nodes summing up weights of the fine edges)
+	# Aggregate fine edges between supernodes by summing their weights.
 	agg = defaultdict(float)
 	for u, v, data in G.edges(data=True):
 		cu = coarse_label[u]
@@ -145,13 +145,13 @@ def coarsen_graph(G: nx.Graph, weight: str = "weight", seed: int | None = None, 
 			vw = vw_u + vw_v
 		Gc.add_node(cid, vweight=vw)
 
-	# Add coarse edges with aggregated weights to the coarsed nodes
+	# Connect the coarse graph with the aggregated edge weights.
 	for (cu, cv), w in agg.items():
 		Gc.add_edge(cu, cv, **{weight: w})
 
 	return Gc, coarse_label
 
-# Apply coarsening repeatedly to build a chain and store it in graphs, maps
+
 def coarsen_chain(
 	H, 
 	trial_seed: int | None, 
@@ -168,7 +168,8 @@ def coarsen_chain(
 	Args:
 		H: Input graph
 		trial_seed: Random seed
-		coarsen_limit: Stop when graph has <= this many nodes
+		coarsen_limit: Minimum accepted coarse size. A new level is only kept if it
+			still has at least this many nodes.
 		max_levels: Maximum coarsening levels
 		weight: Edge weight attribute
 		strategy: Matching strategy ('random', 'sorted', 'modified', 'light')
@@ -189,8 +190,12 @@ def coarsen_chain(
 		
 		Gc, label = coarsen_graph(G_prev, weight=weight, seed=trial_seed, strategy=strategy, max_node_weight=max_node_weight)
 		n_coarse = Gc.number_of_nodes()
+
+		if n_coarse < coarsen_limit:
+			# Do not accept a coarsening level that would overshoot below the requested limit.
+			break
 		
-		# METIS-like stopping criterion: check reduction ratio
+		# Stop if a new level does not shrink enough to justify another refinement stage.
 		reduction_ratio = n_coarse / n_prev if n_prev > 0 else 1.0
 		
 		if n_coarse >= n_prev:

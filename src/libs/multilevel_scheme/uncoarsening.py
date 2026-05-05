@@ -6,6 +6,7 @@ from typing import Any, Dict
 import networkx as nx
 import numpy as np
 
+
 def _tol_to_ratio(balance_tolerance: float) -> float:
     """Convert tolerance to a ratio.
 
@@ -22,10 +23,11 @@ def _tol_to_ratio(balance_tolerance: float) -> float:
 
 
 def _node_weight(G: nx.Graph, u: Any, node_weight_attr: str) -> float:
+    """Read a node weight defensively because input graphs may contain mixed types."""
     w = G.nodes[u].get(node_weight_attr, 1.0)
     try:
         wf = float(w)
-    except Exception:
+    except (TypeError, ValueError):
         wf = 1.0
     if not math.isfinite(wf):
         wf = 1.0
@@ -34,10 +36,11 @@ def _node_weight(G: nx.Graph, u: Any, node_weight_attr: str) -> float:
 
 
 def _edge_weight(data: Dict[str, Any], weight_attr: str) -> float:
+    """Normalize edge weights so refinement logic can work with imperfect input data."""
     w = data.get(weight_attr, 1.0)
     try:
         wf = float(w)
-    except Exception:
+    except (TypeError, ValueError):
         wf = 1.0
     if not math.isfinite(wf):
         wf = 1.0
