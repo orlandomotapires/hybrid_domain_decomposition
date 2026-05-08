@@ -1,0 +1,57 @@
+{
+    "general_parameters":{
+        "dof_per_node": 3,
+        "seed": 42
+    },
+
+    "coarsening_parameters": {
+        "coarsen_inferior_limit": 100,
+        "coarsen_superior_limit": 175,
+        "max_levels": 15, 
+        "weight": "weight", 
+        "strategy": "modified",  
+        "coarsen_ratio": 0.85
+    },
+
+    "partitioning_parameters": {
+        "partitioning_strategy": "quantum_annealing",
+        "common": {
+            "k_target": 8,
+            "balance_tolerance": 2.0
+        },
+        "strategies": {
+            "metis_partitioning": {
+
+            },
+            "quantum_annealing": {
+                "qubo_balance_lambda": 2,
+                "num_starts": 20,
+                "num_reads": 2,
+                "balance_violation_lambda": 1.0e6,
+                "simulated": true,
+                "qpu_region": "eu-central-1",
+                "qpu_solver_name": "Advantage2_system2.1",
+                "qpu_problem_label": "DD_ansys_v0_with_base"
+            },
+            "quantum_approximation_optimizer": {
+                "qubo_balance_lambda": 2,
+                "num_starts": 5,
+                "num_steps": 5,
+                "num_shots": 5,
+                "balance_violation_lambda": 1.0e6,
+                "circuit_depth": 1,
+                "adam_learning_rate": 0.2,
+                "simulated": true
+                
+            }
+        }
+    },
+
+    "uncoarsening_parameters": {
+        "refine_objective": "cut_balance", 
+        "refine_balance_lambda": 1.0,
+        "refine_max_passes_per_level": 50, 
+        "refine_max_moves_per_pass": 5000, 
+        "validate_node_weights": true
+    } 
+}

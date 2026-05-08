@@ -3,11 +3,11 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 import traceback
-from libs.log import (
+from libs.runtime.log import (
 	log,
 	close_log_file,
 )
-from runtime import run_simulation
+from libs.runtime.runtime import run_simulation
 
 def cli_main(argv: list[str] | None = None) -> None:
 	parser = argparse.ArgumentParser(
@@ -18,7 +18,7 @@ def cli_main(argv: list[str] | None = None) -> None:
 		),
 		epilog=(
 			"Run in background:\n"
-			"  nohup ./run simulations/simulation_01_yannick > simulation_01_yannick.log 2>&1 &"
+			"  nohup ./scripts/run simulations/simulation_01_yannick > simulation_01_yannick.log 2>&1 &"
 		),
 		formatter_class=argparse.RawTextHelpFormatter,
 	)

@@ -5,7 +5,8 @@
     },
 
     "coarsening_parameters": {
-        "coarsen_limit": 5, 
+        "coarsen_inferior_limit": 4,
+        "coarsen_superior_limit": 5,
         "max_levels": 30, 
         "weight": "weight", 
         "strategy": "modified",  

@@ -1,11 +1,25 @@
-from libs.log import log
-from libs.utils import *
-from libs.permutation import *
-from libs.multilevel_scheme.coarsening import *
-from libs.multilevel_scheme.partitioning import *
-from libs.multilevel_scheme.partitioning_backends import get_qpu_dense_clique_capacity, get_qlm_qpu_api_summary, uses_dense_balance_qubo
-from libs.multilevel_scheme.uncoarsening import uncoarsen_and_refine
+from libs.runtime.log import log
+from libs.runtime.utils import matrix_to_graph
+from libs.permutation import permute_matrices
+from libs.multilevel_scheme.coarsening.coarsening import coarsen_chain
+from libs.multilevel_scheme.partitioning.partitioning import (
+    partition_graph_metis,
+    recursive_kway_anneal,
+    recursive_kway_qaoa,
+)
+from libs.multilevel_scheme.partitioning.qa import (
+    get_qpu_dense_clique_capacity,
+    get_qlm_qpu_api_summary,
+    uses_dense_balance_qubo,
+)
+from libs.multilevel_scheme.uncoarsening.uncoarsening import uncoarsen_and_refine
 import numpy as np
+
+
+def _clamp_partition_count(requested_k: int, available_nodes: int) -> int:
+    if available_nodes <= 0:
+        raise ValueError("Cannot partition an empty coarse graph")
+    return max(1, min(int(requested_k), int(available_nodes)))
 
 def _set_edge_weight_attr(G, attr_name: str):
     if attr_name == 'weight':
@@ -30,7 +44,10 @@ def decompose_matrices_m_k(matrix_m, matrix_k, general_parameters, coarsening_pa
     seed = int(general_parameters.get("seed"))
 
     # Coarsening parameters
-    coarsen_limit = int(coarsening_parameters.get("coarsen_limit"))
+    coarsen_inferior_limit = int(coarsening_parameters.get("coarsen_inferior_limit"))
+    coarsen_superior_limit = coarsening_parameters.get("coarsen_superior_limit")
+    if coarsen_superior_limit is not None:
+        coarsen_superior_limit = int(coarsen_superior_limit)
     max_levels = int(coarsening_parameters.get("max_levels"))
     weight = str(coarsening_parameters.get("weight"))
     strategy = str(coarsening_parameters.get("strategy"))
@@ -66,15 +83,11 @@ def decompose_matrices_m_k(matrix_m, matrix_k, general_parameters, coarsening_pa
 
     # Build graphs from matrices
     diag_K = matrix_k.diagonal()
-    diag_M = matrix_m.diagonal()
     log("INFO", "Converting matrices to graphs")
     G_K = matrix_to_graph(matrix_k, dof_per_node=dof_per_node)
-    G_M = matrix_to_graph(matrix_m, dof_per_node=dof_per_node)
 
     _set_node_vweight_diag(G_K, diag_K, dof_per_node)
-    _set_node_vweight_diag(G_M, diag_M, dof_per_node)
     _set_edge_weight_attr(G_K, weight)
-    _set_edge_weight_attr(G_M, weight)
 
     # Common rule of thumb: ~1.5 * (total_node_weight / k_target)
     if max_node_weight is None and k_target is not None and int(k_target) > 1:
@@ -87,7 +100,8 @@ def decompose_matrices_m_k(matrix_m, matrix_k, general_parameters, coarsening_pa
     graphs, maps = coarsen_chain(
         G_K,
         trial_seed=seed,
-        coarsen_limit=coarsen_limit,
+        coarsen_inferior_limit=coarsen_inferior_limit,
+        coarsen_superior_limit=coarsen_superior_limit,
         max_levels=max_levels,
         weight=weight,
         strategy=strategy,
@@ -97,14 +111,24 @@ def decompose_matrices_m_k(matrix_m, matrix_k, general_parameters, coarsening_pa
     log("VERBOSE", f"Coarse graph has {graphs[-1].number_of_nodes()} nodes and {graphs[-1].number_of_edges()} edges with {len(graphs)} levels")
 
     Gc = graphs[-1]
+    effective_k_target = _clamp_partition_count(k_target, Gc.number_of_nodes())
+    if effective_k_target != k_target:
+        log(
+            "WARNING",
+            f"Requested k_target={k_target} exceeds the available coarse nodes {Gc.number_of_nodes()}; clamping to {effective_k_target}",
+        )
+
     # Small inputs can stop before any contraction map is produced.
     if len(maps) < 1:
-        log("VERBOSE", "Warning: No coarsening occurred (graph already small enough or the next level would fall below coarsen_limit)")
+        log(
+            "VERBOSE",
+            "Warning: No coarsening occurred (graph already satisfied the requested range, or the next level would fall below the inferior coarsening limit)",
+        )
 
     part_k_coarse = 0
     if partitioning_strategy == 'metis_partitioning':
         log("INFO", "Multilevel Partitioning Scheme using METIS")
-        part_k_coarse = partition_graph_metis(Gc, nparts=k_target)
+        part_k_coarse = partition_graph_metis(Gc, nparts=effective_k_target)
 
     elif partitioning_strategy == 'quantum_annealing':
 
@@ -137,7 +161,7 @@ def decompose_matrices_m_k(matrix_m, matrix_k, general_parameters, coarsening_pa
                     )
 
             if not dense_qpu_too_large:
-                bipartitions_per_start = max(1, int(k_target) - 1)
+                bipartitions_per_start = max(1, int(effective_k_target) - 1)
                 expected_submissions = max(1, num_starts) * bipartitions_per_start
                 expected_reads = expected_submissions * max(1, num_reads)
                 log(
@@ -155,7 +179,7 @@ def decompose_matrices_m_k(matrix_m, matrix_k, general_parameters, coarsening_pa
 
         part_k_coarse = recursive_kway_anneal(
             Gc,
-            k=k_target,
+            k=effective_k_target,
             balance_lambda=balance_lambda,
             num_reads=num_reads,
             weight='vweight',
@@ -181,7 +205,9 @@ def decompose_matrices_m_k(matrix_m, matrix_k, general_parameters, coarsening_pa
         num_shots = int(strategy_partitioning_parameters.get("num_shots"))
         simulated = bool(strategy_partitioning_parameters.get("simulated", True))
         qlm_qpu_name = strategy_partitioning_parameters.get("qlm_qpu_name")
+        qlm_job_timeout_raw = strategy_partitioning_parameters.get("qlm_job_timeout_seconds")
         adam_learning_rate = None if adam_learning_rate_raw is None else float(adam_learning_rate_raw)
+        qlm_job_timeout_seconds = None if qlm_job_timeout_raw is None else float(qlm_job_timeout_raw)
 
         if not simulated:
             log("INFO", f"Running QAOA on QLM backend {qlm_qpu_name or 'qat.qpus:QSolidQPU10'}")
@@ -202,13 +228,15 @@ def decompose_matrices_m_k(matrix_m, matrix_k, general_parameters, coarsening_pa
                 if "topology" in qlm_summary:
                     log("VERBOSE", f"QLM backend topology: {qlm_summary['topology']}")
             log("VERBOSE", f"Current coarse QAOA problem size: {Gc.number_of_nodes()}")
-            bipartitions_per_start = max(1, int(k_target) - 1)
+            bipartitions_per_start = max(1, int(effective_k_target) - 1)
             expected_remote_jobs = max(1, num_starts) * bipartitions_per_start * (max(1, num_steps) + 1)
             log(
                 "VERBOSE",
                 "Estimated QLM job count: "
                 f"{expected_remote_jobs} (num_starts={num_starts} * bipartitions_per_start={bipartitions_per_start} * (num_steps + final_sample={max(1, num_steps) + 1}))",
             )
+            if qlm_job_timeout_seconds is not None:
+                log("VERBOSE", f"QLM job timeout: {qlm_job_timeout_seconds:.1f}s per submit/join step")
             if expected_remote_jobs > 100:
                 log(
                     "WARNING",
@@ -221,7 +249,7 @@ def decompose_matrices_m_k(matrix_m, matrix_k, general_parameters, coarsening_pa
 
         part_k_coarse = recursive_kway_qaoa(
             Gc,
-            k=k_target,
+            k=effective_k_target,
             balance_lambda=balance_lambda,
             weight='vweight',
             num_starts=num_starts,
@@ -234,6 +262,7 @@ def decompose_matrices_m_k(matrix_m, matrix_k, general_parameters, coarsening_pa
             num_shots=num_shots,
             simulated=simulated,
             qlm_qpu_name=qlm_qpu_name,
+            qlm_job_timeout_seconds=qlm_job_timeout_seconds,
         )
 
     log("VERBOSE", f"Partitioning on coarse graph produced {len(set(part_k_coarse.values()))} parts")
@@ -243,7 +272,7 @@ def decompose_matrices_m_k(matrix_m, matrix_k, general_parameters, coarsening_pa
         graphs,
         maps,
         part_k_coarse,
-        k=k_target,
+        k=effective_k_target,
         balance_tolerance=balance_tolerance,
         weight_attr=weight,
         node_weight_attr='vweight',
@@ -267,4 +296,10 @@ def decompose_matrices_m_k(matrix_m, matrix_k, general_parameters, coarsening_pa
     matrix_k_permuted = permute_result['matrix_k_permuted']
     matrix_m_permuted = permute_result['matrix_m_permuted']
 
-    return matrix_m_permuted, matrix_k_permuted, permutation
+    return matrix_m_permuted, matrix_k_permuted, permutation, {
+        "initial_graph": G_K,
+        "coarse_graph": Gc,
+        "coarsening_maps": list(maps),
+        "coarse_partition": dict(part_k_coarse),
+        "final_partition": dict(part_k),
+    }
