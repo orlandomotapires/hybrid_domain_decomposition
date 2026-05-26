@@ -3,24 +3,20 @@ from __future__ import annotations
 from datetime import datetime
 import json
 from pathlib import Path
+from typing import Any
 import matplotlib
 
 matplotlib.use("Agg")
 
 from libs.domain_decomposition import decompose_matrices_m_k
 from libs.runtime.log import log, set_log_file
-from libs.post_processing.matrix_metrics import collect_metrics, save_frac_within_band_plot
+from libs.profiling.matrix_metrics import collect_metrics
 from libs.runtime.utils import (
-    PARTITION_MATRIX_OUTPUTS,
-	build_graph_chain_from_maps,
 	load_mtx,
-	matrix_to_graph,
 	resolve_parameters_file_path,
 	resolve_matrix_input_path,
 	save_coarse_graph_outputs,
-	save_matrices_sparsity_comparison,
 	save_mtx,
-	save_partition_outputs_for_both_matrices,
 	save_permutation_txt,
 	validate_and_normalize_simulation_config,
 	validate_and_normalize_simulation_parameters,
@@ -44,27 +40,43 @@ def _create_result_run_dir(results_dir: Path) -> Path:
 	return result_run_dir
 
 
+def _write_partition_artifacts(result_run_dir: Path, decomposition_artifacts: dict) -> Path:
+	coarse_partition = decomposition_artifacts.get("coarse_partition")
+	final_partition = decomposition_artifacts.get("final_partition")
+	if coarse_partition is None or final_partition is None:
+		raise ValueError("Decomposition did not return partition artifacts for export")
+
+	partition_artifacts = {
+		"coarse_partition": {str(node): int(partition_id) for node, partition_id in dict(coarse_partition).items()},
+		"final_partition": {str(node): int(partition_id) for node, partition_id in dict(final_partition).items()},
+	}
+	partition_artifacts_path = result_run_dir / "partition_artifacts.json"
+	write_json(partition_artifacts_path, partition_artifacts)
+	return partition_artifacts_path
+
+
 def run_simulation(
-	sim_dir: str,
+	demonstrator_dir: str,
 	parameters_file_override: str | None = None,
+	simulation_parameters_override: dict[str, Any] | None = None,
 ) -> Path:
-	"""Run the simulation for specified name (e.g. simulation_01) as defined by ./simulations/<name>/simulation_parameters.json.
+	"""Run the simulation for specified name (e.g. demonstrator_01) as defined by ./demonstrators/<demonstrator>/simulation_parameters.json.
 
 	Saves the result at the created results directory.
 	"""
 
 	# Defining paths
 	project_root = Path(__file__).resolve().parents[3]
-	simulations_dir = project_root / sim_dir
-	data_dir = simulations_dir / "data"
+	demonstrators_dir = project_root / demonstrator_dir
+	data_dir = demonstrators_dir / "data"
 
 	# Defining results directory paths (create early so we can log to file)
-	results_dir = simulations_dir / "results"
+	results_dir = demonstrators_dir / "results"
 	results_dir.mkdir(parents=True, exist_ok=True)
 	result_run_dir = _create_result_run_dir(results_dir)
 	set_log_file(result_run_dir / "run_log")
 
-	sim_name = sim_dir.split("/")[-2] if sim_dir.endswith("/") else sim_dir.split("/")[-1]
+	sim_name = demonstrator_dir.split("/")[-2] if demonstrator_dir.endswith("/") else demonstrator_dir.split("/")[-1]
 	log("INFO", f"Running {sim_name}")
 
 	# Load simulation configuration
@@ -73,13 +85,16 @@ def run_simulation(
 		simulation_config = validate_and_normalize_simulation_config(json.load(f))
 
 	# Load simulation parameters
-	parameters_file_reference = parameters_file_override or simulation_config.get("parameters_file_path")
-	simulation_parameters_path = resolve_parameters_file_path(
-		data_dir,
-		parameters_file_reference,
-	)
-	with simulation_parameters_path.open("r", encoding="utf-8") as f:
-		simulation_parameters = validate_and_normalize_simulation_parameters(json.load(f))
+	if simulation_parameters_override is not None:
+		simulation_parameters = validate_and_normalize_simulation_parameters(simulation_parameters_override)
+	else:
+		parameters_file_reference = parameters_file_override or simulation_config.get("parameters_file_path")
+		simulation_parameters_path = resolve_parameters_file_path(
+			data_dir,
+			parameters_file_reference,
+		)
+		with simulation_parameters_path.open("r", encoding="utf-8") as f:
+			simulation_parameters = validate_and_normalize_simulation_parameters(json.load(f))
 
 	# Defining matrices paths
 	matrices_dir = data_dir / "matrices"
@@ -99,7 +114,6 @@ def run_simulation(
 
 	# Which outputs to save
 	save_output = set(simulation_config.get("save_output", []))
-	requested_partition_outputs = save_output & PARTITION_MATRIX_OUTPUTS
 
 	# Load matrices
 	matrix_k = load_mtx(str(matrix_k_path), "K")
@@ -121,57 +135,19 @@ def run_simulation(
 	)
 
 	partitioning_strategy = partitioning_parameters["partitioning_strategy"]
+	_write_partition_artifacts(result_run_dir, decomposition_artifacts)
 
 	# Save results
-	if "coarsened_graph" in save_output or requested_partition_outputs:
-		initial_graph = decomposition_artifacts.get("initial_graph")
+	if "coarsened_graph" in save_output:
 		coarse_graph = decomposition_artifacts.get("coarse_graph")
-		coarsening_maps = decomposition_artifacts.get("coarsening_maps")
-		coarse_partition = decomposition_artifacts.get("coarse_partition")
-		final_partition = decomposition_artifacts.get("final_partition")
-		if initial_graph is None:
-			raise ValueError("Decomposition did not return the initial graph for export")
 		if coarse_graph is None:
 			raise ValueError("Decomposition did not return the final coarse graph for export")
-		if coarsening_maps is None:
-			raise ValueError("Decomposition did not return the coarsening maps for export")
-		if coarse_partition is None or final_partition is None:
-			raise ValueError("Decomposition did not return the coarse and final partitions for export")
 
-		if "coarsened_graph" in save_output:
-			save_coarse_graph_outputs(
-				result_run_dir,
-				coarse_graph,
-				weight_attr=coarsening_parameters["weight"],
-			)
-
-		if requested_partition_outputs:
-			initial_graph_m = matrix_to_graph(matrix_m, dof_per_node=general_parameters["dof_per_node"])
-			coarse_graph_chain_m = build_graph_chain_from_maps(
-				initial_graph_m,
-				coarsening_maps,
-				weight_attr=coarsening_parameters["weight"],
-			)
-			coarse_graph_m = coarse_graph_chain_m[-1]
-			save_partition_outputs_for_both_matrices(
-				result_run_dir,
-				enabled_outputs=requested_partition_outputs,
-				initial_graph_k=initial_graph,
-				initial_graph_m=initial_graph_m,
-				coarse_graph_k=coarse_graph,
-				coarse_graph_m=coarse_graph_m,
-				final_graph_k=initial_graph,
-				final_graph_m=initial_graph_m,
-				original_matrix_k=matrix_k,
-				original_matrix_m=matrix_m,
-				permuted_matrix_k=perm_matrix_k,
-				permuted_matrix_m=perm_matrix_m,
-				coarse_partition=coarse_partition,
-				final_partition=final_partition,
-				permutation=permutation,
-				dof_per_node=general_parameters["dof_per_node"],
-				weight_attr=coarsening_parameters["weight"],
-			)
+		save_coarse_graph_outputs(
+			result_run_dir,
+			coarse_graph,
+			weight_attr=coarsening_parameters["weight"],
+		)
 
 	if "matrix_k_permuted" in save_output or "matrix_m_permuted" in save_output or "permutation" in save_output:
 		if "matrix_k_permuted" in save_output:
@@ -189,18 +165,8 @@ def run_simulation(
 		if "permutation" in save_output:
 			save_permutation_txt(result_run_dir / "permutation.txt", permutation)
 
-	if "matrix_sparsity_comparison" in save_output:
-		save_matrices_sparsity_comparison(
-			matrix_k,
-			perm_matrix_k,
-			name_a="K (original)",
-			name_b=f"K (permuted_{partitioning_strategy})",
-			markersize=0.5,
-			save_path=str(result_run_dir / "matrix_sparsity_comparison.png")
-		)
-
 	metrics = None
-	if "run_metrics" in save_output or "frac_within_band_plot" in save_output:
+	if "run_metrics" in save_output:
 		metrics = {
 			"K": collect_metrics(
 				matrix_name="K",
@@ -231,12 +197,6 @@ def run_simulation(
 			log("VERBOSE", f"Permutation check found {metrics['K']['permutation_check']['mismatches']} mismatches with max abs error {metrics['K']['permutation_check']['max_abs_err']}")
 		else:
 			log("VERBOSE", f"Permutation check passed with no mismatches")
-
-	if "frac_within_band_plot" in save_output and metrics is not None:
-		save_frac_within_band_plot(
-			metrics,
-			result_run_dir / "frac_within_band_plot.png",
-		)
 
 	if "run_simulation_parameters" in save_output:
 		write_json(result_run_dir / "run_simulation_parameters.json", simulation_parameters)

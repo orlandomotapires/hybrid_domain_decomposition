@@ -6,9 +6,12 @@ __pycache__/
 *.pyd
 
 batch_runs/
-simulations/*/results/
-simulations/*/data/matrices/
+demonstrators/*/results/
+demonstrators/*/data/matrices/
 threash_can/staged_deletions/
+results_images/
 
 METIS/
 ocean/
+
+*egg-info/

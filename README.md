@@ -65,6 +65,13 @@ python -m json.tool simulations/simulation_01_yannick/data/simulation_parameters
 ./scripts/run simulations/simulation_01_yannick
 ```
 
+The same wrapper also forwards batch and QLM inspection runs:
+
+```sh
+./scripts/run --run_batch --dry-run
+./scripts/run --qlm_inspect --help
+```
+
 4. Inspect the created timestamped results folder and the `run_log` file.
 
 ```sh
@@ -90,7 +97,7 @@ Typical outputs for one run are:
 - `permutation.txt`
 - `matrix_k_permuted.mtx`
 - `matrix_m_permuted.mtx`
-- optional plots such as `matrix_sparsity_comparison.png`
+- no PNG plots are written by the pipeline; plots are intended to be generated later from saved data
 
 Example log excerpt:
 
@@ -117,19 +124,21 @@ To move generated batch outputs and all simulation `results/` folders into the r
 ./threash_can/clean_generated_outputs.sh
 ```
 
-This moves `batch_runs/` and every `simulations/*/results/` directory into a timestamped folder under `threash_can/staged_deletions/`, so you can review or delete them later.
+This moves `batch/batch_runs/` and every `simulations/*/results/` directory into a timestamped folder under `threash_can/staged_deletions/`, so you can review or delete them later.
 
 ## Repository Structure
 
 - `scripts/`
-	- `run` — shell wrapper for single simulations.
-	- `run_batch` — shell wrapper for the batch runner.
+	- `run` — single shell wrapper for simulations, batch runs, and QLM inspection.
+- `batch/`
+	- `run_batch.py` — batch-study entry point.
+	- `batch_configuration.json` — editable batch matrix, geometry, and algorithm presets.
+	- `batch_runs/` — generated batch manifests, logs, summaries, and async worker outputs.
 - `threash_can/`
 	- `clean_generated_outputs.sh` — removes generated batch outputs and simulation result folders.
 - `src/`
 	- `README.md` — runtime flow and source-file guide.
 	- `main.py` — CLI entry point.
-	- `run_batch.py` — batch-study entry point.
 	- `libs/`
 		- `runtime/` — runtime helpers such as logging, config validation, and artifact writers.
 		- `post_processing/` — metrics and plotting helpers.
@@ -193,17 +202,8 @@ Important partitioning fields:
 Depending on `save_output`, a run can generate:
 
 - `coarsened_graph` saves final coarse graph adjacency as `coarsened_graph.mtx`
-- `matrix_k_initial_graph_partitions.png` saves the initial K graph colored by final partition
-- `matrix_k_coarsened_graph_partitions.png` saves the coarse K graph colored by coarse partition
-- `matrix_k_uncoarsened_graph_partitions.png` saves the uncoarsened K graph colored by final partition
-- `matrix_k_original_vs_permuted_colored.png` saves the side-by-side original versus permuted K comparison
-- `matrix_m_initial_graph_partitions.png` saves the initial M graph colored by final partition
-- `matrix_m_coarsened_graph_partitions.png` saves the coarse M graph colored by coarse partition
-- `matrix_m_uncoarsened_graph_partitions.png` saves the uncoarsened M graph colored by final partition
-- `matrix_m_original_vs_permuted_colored.png` saves the side-by-side original versus permuted M comparison
 - permuted K and M matrices
 - permutation vector
-- sparsity comparison plot
 - run metrics in text and JSON form
 - fraction-within-band plot
 - normalized runtime parameter snapshot

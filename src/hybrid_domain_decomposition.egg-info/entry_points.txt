@@ -1,4 +1,0 @@
-[console_scripts]
-hdd-qlm-inspect = libs.multilevel_scheme.partitioning.qaoa.qlm_inspect:cli_main
-hdd-run = main:cli_main
-hdd-run-batch = run_batch:main

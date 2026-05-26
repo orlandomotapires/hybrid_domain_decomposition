@@ -23,8 +23,8 @@ Each run creates a timestamped folder under `simulations/<name>/results/`.
 - [main.py](/home/operation/Thesis/hybrid_domain_decomposition/src/main.py)
   - minimal CLI wrapper around the simulation runtime.
 
-- [run_batch.py](/home/operation/Thesis/hybrid_domain_decomposition/src/run_batch.py)
-  - batch-study entry point for generated parameter sweeps.
+- [batch/run_batch.py](/home/operation/Thesis/hybrid_domain_decomposition/batch/run_batch.py)
+  - batch-study entry point that loads presets from batch/batch_configuration.json.
 
 - [runtime.py](/home/operation/Thesis/hybrid_domain_decomposition/src/libs/runtime/runtime.py)
   - resolves paths, validates JSON inputs, runs the decomposition, and saves output artifacts.

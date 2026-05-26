@@ -1,0 +1,17 @@
+{
+    "parameters_file_path": "simulation_parameters.json",
+    
+    "input_matrices":{
+        "matrix_k_file_path": "Ksparse_SimpleBlade_t14mm_h60_files.mtx",
+        "matrix_m_file_path": "Msparse_SimpleBlade_t14mm_h60_files.mtx"
+    },
+
+    "save_output": [
+        "coarsened_graph",
+        "matrix_k_permuted",
+		"matrix_m_permuted",
+	    "permutation",
+		"run_metrics",
+        "run_simulation_parameters"
+    ]
+}

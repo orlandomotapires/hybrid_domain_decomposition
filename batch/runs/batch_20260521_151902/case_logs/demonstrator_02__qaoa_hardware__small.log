@@ -1,0 +1,33 @@
+[21 May 2026 16:38:16 UTC INFO] Running demonstrator_02
+[21 May 2026 16:38:18 UTC INFO] Converting matrices to graphs
+[21 May 2026 16:38:30 UTC INFO] Graph G_K with 91080 nodes and 2195175 edges created from K matrix
+[21 May 2026 16:38:30 UTC INFO] Coarsening Heavy Edge Matching
+[21 May 2026 16:38:42 UTC VERBOSE] Coarse graph has 4 nodes and 5 edges with 17 levels
+[21 May 2026 16:38:42 UTC INFO] Partitioning QAOA
+[21 May 2026 16:38:42 UTC INFO] Running QAOA on QLM backend qat.qpus:Jiqcer5QPU
+[21 May 2026 16:38:49 UTC WARNING] QLM backend inspection failed: QLMServiceException: QLMServiceException(message="QPUException: TTransportException: Could not connect to any of [('127.0.0.1', 20602)]", service_name=None)
+[21 May 2026 16:38:49 UTC VERBOSE] Current coarse QAOA problem size: 4
+[21 May 2026 16:38:49 UTC VERBOSE] Estimated QLM job count: 420 (num_starts=20 * bipartitions_per_start=3 * (num_steps + final_sample=7))
+[21 May 2026 16:38:49 UTC WARNING] This QAOA run will create many remote QLM jobs. Reduce num_starts/num_steps, coarsen more aggressively, or use a local/emulated backend for pilot runs.
+Traceback (most recent call last):
+  File "/home/operation/Thesis/hybrid_domain_decomposition/batch/run_batch.py", line 246, in _run_one_case_worker
+    result_dir = run_simulation(demonstrator_dir, simulation_parameters_override=simulation_parameters)
+  File "/home/operation/Thesis/hybrid_domain_decomposition/src/libs/runtime/runtime.py", line 128, in run_simulation
+    perm_matrix_m, perm_matrix_k, permutation, decomposition_artifacts = decompose_matrices_m_k(
+  File "/home/operation/Thesis/hybrid_domain_decomposition/src/libs/domain_decomposition.py", line 250, in decompose_matrices_m_k
+    part_k_coarse = recursive_kway_qaoa(
+  File "/home/operation/Thesis/hybrid_domain_decomposition/src/libs/multilevel_scheme/partitioning/partitioning.py", line 152, in recursive_kway_qaoa
+    return recursive_kway_via_bipartition(
+  File "/home/operation/Thesis/hybrid_domain_decomposition/src/libs/multilevel_scheme/partitioning/utils/recursive.py", line 138, in recursive_kway_via_bipartition
+    part_i = run_once(run_seed)
+  File "/home/operation/Thesis/hybrid_domain_decomposition/src/libs/multilevel_scheme/partitioning/utils/recursive.py", line 106, in run_once
+    x = bipartition(G, target_weight, split_seed, simulated=simulated)
+  File "/home/operation/Thesis/hybrid_domain_decomposition/src/libs/multilevel_scheme/partitioning/partitioning.py", line 137, in _bipartition
+    x, _ = qaoa_bipartition(
+  File "/home/operation/Thesis/hybrid_domain_decomposition/src/libs/multilevel_scheme/partitioning/qaoa/qaoa.py", line 318, in qaoa_bipartition
+    return _qaoa_bipartition_on_qlm(
+  File "/home/operation/Thesis/hybrid_domain_decomposition/src/libs/multilevel_scheme/partitioning/qaoa/qaoa.py", line 230, in _qaoa_bipartition_on_qlm
+    validate_qlm_problem_size(
+  File "/home/operation/Thesis/hybrid_domain_decomposition/src/libs/multilevel_scheme/partitioning/qaoa/qlm_access.py", line 368, in validate_qlm_problem_size
+    raise RuntimeError(f"QLM backend inspection failed for {target_name}: {summary['inspection_error']}")
+RuntimeError: QLM backend inspection failed for qat.qpus:Jiqcer5QPU: QLMServiceException: QLMServiceException(message="QPUException: TTransportException: Could not connect to any of [('127.0.0.1', 20602)]", service_name=None)

@@ -1,8 +1,0 @@
-numpy
-scipy
-networkx
-pymetis
-pennylane
-dwave-neal
-dwave-system
-matplotlib

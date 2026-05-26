@@ -1,0 +1,269 @@
+Prepared 20 batch cases.
+01. demonstrator_01__metis__big
+02. demonstrator_01__metis__medium
+03. demonstrator_01__metis__small
+04. demonstrator_01__qa_hardware__medium
+05. demonstrator_01__qa_hardware__small
+06. demonstrator_01__qa_emulated__big
+07. demonstrator_01__qa_emulated__medium
+08. demonstrator_01__qa_emulated__small
+09. demonstrator_01__qaoa_hardware__small
+10. demonstrator_01__qaoa_emulated__small
+11. demonstrator_02__metis__big
+12. demonstrator_02__metis__medium
+13. demonstrator_02__metis__small
+14. demonstrator_02__qa_hardware__medium
+15. demonstrator_02__qa_hardware__small
+16. demonstrator_02__qa_emulated__big
+17. demonstrator_02__qa_emulated__medium
+18. demonstrator_02__qa_emulated__small
+19. demonstrator_02__qaoa_hardware__small
+20. demonstrator_02__qaoa_emulated__small
+[01/20] Running demonstrator_01__metis__big
+[21 May 2026 15:19:03 UTC INFO] Running demonstrator_01
+[21 May 2026 15:19:04 UTC INFO] Converting matrices to graphs
+[21 May 2026 15:19:08 UTC INFO] Graph G_K with 104145 nodes and 1153409 edges created from K matrix
+[21 May 2026 15:19:08 UTC INFO] Coarsening Heavy Edge Matching
+[21 May 2026 15:19:17 UTC VERBOSE] Coarse graph has 2050 nodes and 12258 edges with 7 levels
+[21 May 2026 15:19:17 UTC INFO] Multilevel Partitioning Scheme using METIS
+[21 May 2026 15:19:17 UTC VERBOSE] Partitioning on coarse graph produced 4 parts
+[21 May 2026 15:19:17 UTC INFO] Uncoarsening Kernighan-Lin
+[21 May 2026 15:19:19 UTC INFO] Permuting matrices
+[21 May 2026 15:19:29 UTC VERBOSE] Permutation check passed with no mismatches
+  Result: demonstrators/demonstrator_01/results/run_20260521_151903_874001
+[02/20] Running demonstrator_01__metis__medium
+[21 May 2026 15:19:29 UTC INFO] Running demonstrator_01
+[21 May 2026 15:19:29 UTC INFO] Converting matrices to graphs
+[21 May 2026 15:19:34 UTC INFO] Graph G_K with 104145 nodes and 1153409 edges created from K matrix
+[21 May 2026 15:19:34 UTC INFO] Coarsening Heavy Edge Matching
+[21 May 2026 15:19:43 UTC VERBOSE] Coarse graph has 164 nodes and 671 edges with 11 levels
+[21 May 2026 15:19:43 UTC INFO] Multilevel Partitioning Scheme using METIS
+[21 May 2026 15:19:43 UTC VERBOSE] Partitioning on coarse graph produced 4 parts
+[21 May 2026 15:19:43 UTC INFO] Uncoarsening Kernighan-Lin
+[21 May 2026 15:19:45 UTC INFO] Permuting matrices
+[21 May 2026 15:19:55 UTC VERBOSE] Permutation check passed with no mismatches
+  Result: demonstrators/demonstrator_01/results/run_20260521_151929_512542
+[03/20] Running demonstrator_01__metis__small
+[21 May 2026 15:19:55 UTC INFO] Running demonstrator_01
+[21 May 2026 15:19:55 UTC INFO] Converting matrices to graphs
+[21 May 2026 15:20:00 UTC INFO] Graph G_K with 104145 nodes and 1153409 edges created from K matrix
+[21 May 2026 15:20:00 UTC INFO] Coarsening Heavy Edge Matching
+[21 May 2026 15:20:09 UTC VERBOSE] Coarse graph has 5 nodes and 7 edges with 17 levels
+[21 May 2026 15:20:09 UTC INFO] Multilevel Partitioning Scheme using METIS
+[21 May 2026 15:20:09 UTC VERBOSE] Partitioning on coarse graph produced 4 parts
+[21 May 2026 15:20:09 UTC INFO] Uncoarsening Kernighan-Lin
+[21 May 2026 15:20:11 UTC INFO] Permuting matrices
+[21 May 2026 15:20:21 UTC VERBOSE] Permutation check passed with no mismatches
+  Result: demonstrators/demonstrator_01/results/run_20260521_151955_233659
+[04/20] Running demonstrator_01__qa_hardware__medium
+[21 May 2026 15:20:21 UTC INFO] Running demonstrator_01
+[21 May 2026 15:20:21 UTC INFO] Converting matrices to graphs
+[21 May 2026 15:20:27 UTC INFO] Graph G_K with 104145 nodes and 1153409 edges created from K matrix
+[21 May 2026 15:20:27 UTC INFO] Coarsening Heavy Edge Matching
+[21 May 2026 15:20:35 UTC VERBOSE] Coarse graph has 164 nodes and 671 edges with 11 levels
+[21 May 2026 15:20:35 UTC INFO] Running quantum annealing for bipartitioning on Advantage_system6.4
+[21 May 2026 15:20:35 UTC VERBOSE] QPU problem label: demonstrator_01__qa_hardware__medium
+[21 May 2026 15:20:36 UTC VERBOSE] Solver Advantage_system6.4 largest dense QUBO clique capacity: 175
+[21 May 2026 15:20:36 UTC VERBOSE] Current coarse dense QUBO size: 164
+[21 May 2026 15:20:36 UTC VERBOSE] Expected QPU problem submissions: 150 (num_starts=50 * bipartitions_per_start=3); num_reads per submission: 100; total QPU reads: 15000
+[21 May 2026 15:20:36 UTC WARNING] This run will submit many QPU problems. If Leap resets the connection, reduce num_starts/num_reads or set simulated=True for a local run.
+[21 May 2026 15:26:02 UTC VERBOSE] Partitioning on coarse graph produced 4 parts
+[21 May 2026 15:26:02 UTC INFO] Uncoarsening Kernighan-Lin
+[21 May 2026 15:26:05 UTC INFO] Permuting matrices
+[21 May 2026 15:26:14 UTC VERBOSE] Permutation check passed with no mismatches
+  Result: demonstrators/demonstrator_01/results/run_20260521_152021_370033
+[05/20] Running demonstrator_01__qa_hardware__small
+[21 May 2026 15:26:14 UTC INFO] Running demonstrator_01
+[21 May 2026 15:26:15 UTC INFO] Converting matrices to graphs
+[21 May 2026 15:26:19 UTC INFO] Graph G_K with 104145 nodes and 1153409 edges created from K matrix
+[21 May 2026 15:26:19 UTC INFO] Coarsening Heavy Edge Matching
+[21 May 2026 15:26:29 UTC VERBOSE] Coarse graph has 5 nodes and 7 edges with 17 levels
+[21 May 2026 15:26:29 UTC INFO] Running quantum annealing for bipartitioning on Advantage_system6.4
+[21 May 2026 15:26:29 UTC VERBOSE] QPU problem label: demonstrator_01__qa_hardware__small
+[21 May 2026 15:26:29 UTC VERBOSE] Solver Advantage_system6.4 largest dense QUBO clique capacity: 175
+[21 May 2026 15:26:29 UTC VERBOSE] Current coarse dense QUBO size: 5
+[21 May 2026 15:26:29 UTC VERBOSE] Expected QPU problem submissions: 150 (num_starts=50 * bipartitions_per_start=3); num_reads per submission: 100; total QPU reads: 15000
+[21 May 2026 15:26:29 UTC WARNING] This run will submit many QPU problems. If Leap resets the connection, reduce num_starts/num_reads or set simulated=True for a local run.
+[21 May 2026 15:31:01 UTC VERBOSE] Partitioning on coarse graph produced 4 parts
+[21 May 2026 15:31:01 UTC INFO] Uncoarsening Kernighan-Lin
+[21 May 2026 15:31:04 UTC INFO] Permuting matrices
+[21 May 2026 15:31:13 UTC VERBOSE] Permutation check passed with no mismatches
+  Result: demonstrators/demonstrator_01/results/run_20260521_152614_677357
+[06/20] Running demonstrator_01__qa_emulated__big
+[21 May 2026 15:31:13 UTC INFO] Running demonstrator_01
+[21 May 2026 15:31:14 UTC INFO] Converting matrices to graphs
+[21 May 2026 15:31:19 UTC INFO] Graph G_K with 104145 nodes and 1153409 edges created from K matrix
+[21 May 2026 15:31:19 UTC INFO] Coarsening Heavy Edge Matching
+[21 May 2026 15:31:27 UTC VERBOSE] Coarse graph has 2050 nodes and 12258 edges with 7 levels
+[21 May 2026 15:31:27 UTC INFO] Running simulated quantum annealing for bipartitioning
+[21 May 2026 16:06:09 UTC VERBOSE] Partitioning on coarse graph produced 4 parts
+[21 May 2026 16:06:09 UTC INFO] Uncoarsening Kernighan-Lin
+[21 May 2026 16:06:11 UTC INFO] Permuting matrices
+[21 May 2026 16:06:17 UTC VERBOSE] Permutation check passed with no mismatches
+  Result: demonstrators/demonstrator_01/results/run_20260521_153113_827339
+[07/20] Running demonstrator_01__qa_emulated__medium
+[21 May 2026 16:06:17 UTC INFO] Running demonstrator_01
+[21 May 2026 16:06:17 UTC INFO] Converting matrices to graphs
+[21 May 2026 16:06:23 UTC INFO] Graph G_K with 104145 nodes and 1153409 edges created from K matrix
+[21 May 2026 16:06:23 UTC INFO] Coarsening Heavy Edge Matching
+[21 May 2026 16:06:31 UTC VERBOSE] Coarse graph has 164 nodes and 671 edges with 11 levels
+[21 May 2026 16:06:31 UTC INFO] Running simulated quantum annealing for bipartitioning
+[21 May 2026 16:06:44 UTC VERBOSE] Partitioning on coarse graph produced 4 parts
+[21 May 2026 16:06:44 UTC INFO] Uncoarsening Kernighan-Lin
+[21 May 2026 16:06:46 UTC INFO] Permuting matrices
+[21 May 2026 16:06:52 UTC VERBOSE] Permutation check passed with no mismatches
+  Result: demonstrators/demonstrator_01/results/run_20260521_160617_381335
+[08/20] Running demonstrator_01__qa_emulated__small
+[21 May 2026 16:06:52 UTC INFO] Running demonstrator_01
+[21 May 2026 16:06:52 UTC INFO] Converting matrices to graphs
+[21 May 2026 16:06:56 UTC INFO] Graph G_K with 104145 nodes and 1153409 edges created from K matrix
+[21 May 2026 16:06:56 UTC INFO] Coarsening Heavy Edge Matching
+[21 May 2026 16:07:06 UTC VERBOSE] Coarse graph has 5 nodes and 7 edges with 17 levels
+[21 May 2026 16:07:06 UTC INFO] Running simulated quantum annealing for bipartitioning
+[21 May 2026 16:07:06 UTC VERBOSE] Partitioning on coarse graph produced 4 parts
+[21 May 2026 16:07:06 UTC INFO] Uncoarsening Kernighan-Lin
+[21 May 2026 16:07:10 UTC INFO] Permuting matrices
+[21 May 2026 16:07:16 UTC VERBOSE] Permutation check passed with no mismatches
+  Result: demonstrators/demonstrator_01/results/run_20260521_160652_562888
+[09/20] Launched async demonstrator_01__qaoa_hardware__small with PID 1828885
+  Async log: batch/runs/batch_20260521_151902/case_logs/demonstrator_01__qaoa_hardware__small.log
+[10/20] Running demonstrator_01__qaoa_emulated__small
+[21 May 2026 16:07:16 UTC INFO] Running demonstrator_01
+[21 May 2026 16:07:17 UTC INFO] Converting matrices to graphs
+[21 May 2026 16:07:23 UTC INFO] Graph G_K with 104145 nodes and 1153409 edges created from K matrix
+[21 May 2026 16:07:23 UTC INFO] Coarsening Heavy Edge Matching
+[21 May 2026 16:07:32 UTC VERBOSE] Coarse graph has 5 nodes and 7 edges with 17 levels
+[21 May 2026 16:07:32 UTC INFO] Partitioning QAOA
+[21 May 2026 16:07:32 UTC INFO] Running QAOA on local PennyLane backend
+/home/operation/Thesis/hybrid_domain_decomposition/.env_ocean/lib/python3.10/site-packages/pennylane/_grad.py:310: UserWarning: Attempted to differentiate a function with no trainable parameters. If this is unintended, please add trainable parameters via the 'requires_grad' attribute or 'argnum' keyword.
+  warnings.warn(
+[21 May 2026 16:07:38 UTC VERBOSE] Partitioning on coarse graph produced 4 parts
+[21 May 2026 16:07:38 UTC INFO] Uncoarsening Kernighan-Lin
+[21 May 2026 16:07:40 UTC INFO] Permuting matrices
+[21 May 2026 16:07:49 UTC VERBOSE] Permutation check passed with no mismatches
+  Result: demonstrators/demonstrator_01/results/run_20260521_160716_560041
+  FAILED: QLM backend inspection failed for qat.qpus:Jiqcer5QPU: QLMServiceException: QLMServiceException(message="QPUException: TTransportException: Could not connect to any of [('127.0.0.1', 20602)]", service_name=None)
+[11/20] Running demonstrator_02__metis__big
+[21 May 2026 16:07:49 UTC INFO] Running demonstrator_02
+[21 May 2026 16:07:50 UTC INFO] Converting matrices to graphs
+[21 May 2026 16:07:58 UTC INFO] Graph G_K with 91080 nodes and 2195175 edges created from K matrix
+[21 May 2026 16:07:58 UTC INFO] Coarsening Heavy Edge Matching
+[21 May 2026 16:08:11 UTC VERBOSE] Coarse graph has 1610 nodes and 11094 edges with 7 levels
+[21 May 2026 16:08:11 UTC INFO] Multilevel Partitioning Scheme using METIS
+[21 May 2026 16:08:11 UTC VERBOSE] Partitioning on coarse graph produced 4 parts
+[21 May 2026 16:08:11 UTC INFO] Uncoarsening Kernighan-Lin
+[21 May 2026 16:08:13 UTC INFO] Permuting matrices
+[21 May 2026 16:08:27 UTC VERBOSE] Permutation check passed with no mismatches
+  Result: demonstrators/demonstrator_02/results/run_20260521_160749_701332
+[12/20] Running demonstrator_02__metis__medium
+[21 May 2026 16:08:27 UTC INFO] Running demonstrator_02
+[21 May 2026 16:08:28 UTC INFO] Converting matrices to graphs
+[21 May 2026 16:08:36 UTC INFO] Graph G_K with 91080 nodes and 2195175 edges created from K matrix
+[21 May 2026 16:08:36 UTC INFO] Coarsening Heavy Edge Matching
+[21 May 2026 16:08:47 UTC VERBOSE] Coarse graph has 123 nodes and 371 edges with 11 levels
+[21 May 2026 16:08:47 UTC INFO] Multilevel Partitioning Scheme using METIS
+[21 May 2026 16:08:47 UTC VERBOSE] Partitioning on coarse graph produced 4 parts
+[21 May 2026 16:08:47 UTC INFO] Uncoarsening Kernighan-Lin
+[21 May 2026 16:08:52 UTC INFO] Permuting matrices
+[21 May 2026 16:09:07 UTC VERBOSE] Permutation check passed with no mismatches
+  Result: demonstrators/demonstrator_02/results/run_20260521_160827_395104
+[13/20] Running demonstrator_02__metis__small
+[21 May 2026 16:09:07 UTC INFO] Running demonstrator_02
+[21 May 2026 16:09:08 UTC INFO] Converting matrices to graphs
+[21 May 2026 16:09:16 UTC INFO] Graph G_K with 91080 nodes and 2195175 edges created from K matrix
+[21 May 2026 16:09:16 UTC INFO] Coarsening Heavy Edge Matching
+[21 May 2026 16:09:28 UTC VERBOSE] Coarse graph has 4 nodes and 5 edges with 17 levels
+[21 May 2026 16:09:28 UTC INFO] Multilevel Partitioning Scheme using METIS
+[21 May 2026 16:09:28 UTC VERBOSE] Partitioning on coarse graph produced 4 parts
+[21 May 2026 16:09:28 UTC INFO] Uncoarsening Kernighan-Lin
+[21 May 2026 16:09:32 UTC INFO] Permuting matrices
+[21 May 2026 16:09:48 UTC VERBOSE] Permutation check passed with no mismatches
+  Result: demonstrators/demonstrator_02/results/run_20260521_160907_686304
+[14/20] Running demonstrator_02__qa_hardware__medium
+[21 May 2026 16:09:48 UTC INFO] Running demonstrator_02
+[21 May 2026 16:09:48 UTC INFO] Converting matrices to graphs
+[21 May 2026 16:09:57 UTC INFO] Graph G_K with 91080 nodes and 2195175 edges created from K matrix
+[21 May 2026 16:09:57 UTC INFO] Coarsening Heavy Edge Matching
+[21 May 2026 16:10:09 UTC VERBOSE] Coarse graph has 123 nodes and 371 edges with 11 levels
+[21 May 2026 16:10:09 UTC INFO] Running quantum annealing for bipartitioning on Advantage_system6.4
+[21 May 2026 16:10:09 UTC VERBOSE] QPU problem label: demonstrator_02__qa_hardware__medium
+[21 May 2026 16:10:09 UTC VERBOSE] Solver Advantage_system6.4 largest dense QUBO clique capacity: 175
+[21 May 2026 16:10:09 UTC VERBOSE] Current coarse dense QUBO size: 123
+[21 May 2026 16:10:09 UTC VERBOSE] Expected QPU problem submissions: 150 (num_starts=50 * bipartitions_per_start=3); num_reads per submission: 100; total QPU reads: 15000
+[21 May 2026 16:10:09 UTC WARNING] This run will submit many QPU problems. If Leap resets the connection, reduce num_starts/num_reads or set simulated=True for a local run.
+[21 May 2026 16:15:20 UTC VERBOSE] Partitioning on coarse graph produced 4 parts
+[21 May 2026 16:15:20 UTC INFO] Uncoarsening Kernighan-Lin
+[21 May 2026 16:15:24 UTC INFO] Permuting matrices
+[21 May 2026 16:15:40 UTC VERBOSE] Permutation check passed with no mismatches
+  Result: demonstrators/demonstrator_02/results/run_20260521_160948_319312
+[15/20] Running demonstrator_02__qa_hardware__small
+[21 May 2026 16:15:40 UTC INFO] Running demonstrator_02
+[21 May 2026 16:15:41 UTC INFO] Converting matrices to graphs
+[21 May 2026 16:15:50 UTC INFO] Graph G_K with 91080 nodes and 2195175 edges created from K matrix
+[21 May 2026 16:15:50 UTC INFO] Coarsening Heavy Edge Matching
+[21 May 2026 16:16:02 UTC VERBOSE] Coarse graph has 4 nodes and 5 edges with 17 levels
+[21 May 2026 16:16:02 UTC INFO] Running quantum annealing for bipartitioning on Advantage_system6.4
+[21 May 2026 16:16:02 UTC VERBOSE] QPU problem label: demonstrator_02__qa_hardware__small
+[21 May 2026 16:16:02 UTC VERBOSE] Solver Advantage_system6.4 largest dense QUBO clique capacity: 175
+[21 May 2026 16:16:02 UTC VERBOSE] Current coarse dense QUBO size: 4
+[21 May 2026 16:16:02 UTC VERBOSE] Expected QPU problem submissions: 150 (num_starts=50 * bipartitions_per_start=3); num_reads per submission: 100; total QPU reads: 15000
+[21 May 2026 16:16:02 UTC WARNING] This run will submit many QPU problems. If Leap resets the connection, reduce num_starts/num_reads or set simulated=True for a local run.
+[21 May 2026 16:20:39 UTC VERBOSE] Partitioning on coarse graph produced 4 parts
+[21 May 2026 16:20:39 UTC INFO] Uncoarsening Kernighan-Lin
+[21 May 2026 16:20:43 UTC INFO] Permuting matrices
+[21 May 2026 16:20:57 UTC VERBOSE] Permutation check passed with no mismatches
+  Result: demonstrators/demonstrator_02/results/run_20260521_161540_770705
+[16/20] Running demonstrator_02__qa_emulated__big
+[21 May 2026 16:20:57 UTC INFO] Running demonstrator_02
+[21 May 2026 16:20:58 UTC INFO] Converting matrices to graphs
+[21 May 2026 16:21:07 UTC INFO] Graph G_K with 91080 nodes and 2195175 edges created from K matrix
+[21 May 2026 16:21:07 UTC INFO] Coarsening Heavy Edge Matching
+[21 May 2026 16:21:20 UTC VERBOSE] Coarse graph has 1610 nodes and 11094 edges with 7 levels
+[21 May 2026 16:21:20 UTC INFO] Running simulated quantum annealing for bipartitioning
+[21 May 2026 16:36:32 UTC VERBOSE] Partitioning on coarse graph produced 4 parts
+[21 May 2026 16:36:32 UTC INFO] Uncoarsening Kernighan-Lin
+[21 May 2026 16:36:36 UTC INFO] Permuting matrices
+[21 May 2026 16:36:50 UTC VERBOSE] Permutation check passed with no mismatches
+  Result: demonstrators/demonstrator_02/results/run_20260521_162057_855394
+[17/20] Running demonstrator_02__qa_emulated__medium
+[21 May 2026 16:36:50 UTC INFO] Running demonstrator_02
+[21 May 2026 16:36:51 UTC INFO] Converting matrices to graphs
+[21 May 2026 16:37:00 UTC INFO] Graph G_K with 91080 nodes and 2195175 edges created from K matrix
+[21 May 2026 16:37:00 UTC INFO] Coarsening Heavy Edge Matching
+[21 May 2026 16:37:12 UTC VERBOSE] Coarse graph has 123 nodes and 371 edges with 11 levels
+[21 May 2026 16:37:12 UTC INFO] Running simulated quantum annealing for bipartitioning
+[21 May 2026 16:37:19 UTC VERBOSE] Partitioning on coarse graph produced 4 parts
+[21 May 2026 16:37:19 UTC INFO] Uncoarsening Kernighan-Lin
+[21 May 2026 16:37:23 UTC INFO] Permuting matrices
+[21 May 2026 16:37:37 UTC VERBOSE] Permutation check passed with no mismatches
+  Result: demonstrators/demonstrator_02/results/run_20260521_163650_525056
+[18/20] Running demonstrator_02__qa_emulated__small
+[21 May 2026 16:37:37 UTC INFO] Running demonstrator_02
+[21 May 2026 16:37:38 UTC INFO] Converting matrices to graphs
+[21 May 2026 16:37:46 UTC INFO] Graph G_K with 91080 nodes and 2195175 edges created from K matrix
+[21 May 2026 16:37:46 UTC INFO] Coarsening Heavy Edge Matching
+[21 May 2026 16:37:58 UTC VERBOSE] Coarse graph has 4 nodes and 5 edges with 17 levels
+[21 May 2026 16:37:58 UTC INFO] Running simulated quantum annealing for bipartitioning
+[21 May 2026 16:37:58 UTC VERBOSE] Partitioning on coarse graph produced 4 parts
+[21 May 2026 16:37:58 UTC INFO] Uncoarsening Kernighan-Lin
+[21 May 2026 16:38:03 UTC INFO] Permuting matrices
+[21 May 2026 16:38:16 UTC VERBOSE] Permutation check passed with no mismatches
+  Result: demonstrators/demonstrator_02/results/run_20260521_163737_426152
+[19/20] Launched async demonstrator_02__qaoa_hardware__small with PID 1835563
+  Async log: batch/runs/batch_20260521_151902/case_logs/demonstrator_02__qaoa_hardware__small.log
+[20/20] Running demonstrator_02__qaoa_emulated__small
+[21 May 2026 16:38:16 UTC INFO] Running demonstrator_02
+[21 May 2026 16:38:18 UTC INFO] Converting matrices to graphs
+[21 May 2026 16:38:30 UTC INFO] Graph G_K with 91080 nodes and 2195175 edges created from K matrix
+[21 May 2026 16:38:30 UTC INFO] Coarsening Heavy Edge Matching
+[21 May 2026 16:38:42 UTC VERBOSE] Coarse graph has 4 nodes and 5 edges with 17 levels
+[21 May 2026 16:38:42 UTC INFO] Partitioning QAOA
+[21 May 2026 16:38:42 UTC INFO] Running QAOA on local PennyLane backend
+[21 May 2026 16:38:46 UTC VERBOSE] Partitioning on coarse graph produced 4 parts
+[21 May 2026 16:38:46 UTC INFO] Uncoarsening Kernighan-Lin
+[21 May 2026 16:38:50 UTC INFO] Permuting matrices
+[21 May 2026 16:39:04 UTC VERBOSE] Permutation check passed with no mismatches
+  Result: demonstrators/demonstrator_02/results/run_20260521_163816_955257
+  FAILED: QLM backend inspection failed for qat.qpus:Jiqcer5QPU: QLMServiceException: QLMServiceException(message="QPUException: TTransportException: Could not connect to any of [('127.0.0.1', 20602)]", service_name=None)
+Batch manifest: batch/runs/batch_20260521_151902/batch_manifest.json
+Batch summary: batch/runs/batch_20260521_151902/batch_summary.json

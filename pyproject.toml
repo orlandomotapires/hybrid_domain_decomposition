@@ -22,12 +22,11 @@ dependencies = [
 
 [project.scripts]
 hdd-run = "main:cli_main"
-hdd-run-batch = "run_batch:main"
 hdd-qlm-inspect = "libs.multilevel_scheme.partitioning.qaoa.qlm_inspect:cli_main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
-py-modules = ["main", "run_batch"]
+py-modules = ["main"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
