@@ -6,7 +6,7 @@ This directory contains the backend-specific partitioning implementations used o
 
 ### METIS
 
-- Implemented through `pymetis` in [partitioning.py](/home/operation/Thesis/hybrid_domain_decomposition/src/libs/multilevel_scheme/partitioning/partitioning.py).
+- Implemented through `pymetis` in [partitioning.py](../partitioning.py).
 - Used as the classical baseline on the coarse graph.
 - The repository passes weighted coarse graphs into METIS so the baseline is comparable to the weighted quantum formulations.
 
@@ -14,16 +14,16 @@ This directory contains the backend-specific partitioning implementations used o
 
 - Builds a balanced-cut QUBO and solves recursive bipartitions.
 - Supports:
-  - local simulated annealing through [annealing.py](/home/operation/Thesis/hybrid_domain_decomposition/src/libs/multilevel_scheme/partitioning/qa/annealing.py)
-  - remote D-Wave QPU access through [dwave_access.py](/home/operation/Thesis/hybrid_domain_decomposition/src/libs/multilevel_scheme/partitioning/qa/dwave_access.py)
+  - local simulated annealing through [annealing.py](annealing.py)
+  - remote D-Wave QPU access through [dwave_access.py](dwave_access.py)
 
 ### QAOA
 
 - Builds recursive bipartitions from a balanced-cut QUBO.
 - Supports:
   - local PennyLane simulation
-  - QLM/myQLM execution through [qaoa.py](/home/operation/Thesis/hybrid_domain_decomposition/src/libs/multilevel_scheme/partitioning/qaoa/qaoa.py)
-- QLM backend connection and probing helpers live in [qlm_access.py](/home/operation/Thesis/hybrid_domain_decomposition/src/libs/multilevel_scheme/partitioning/qaoa/qlm_access.py).
+  - QLM/myQLM execution through [qaoa.py](../qaoa/qaoa.py)
+- QLM backend connection and probing helpers live in [qlm_access.py](../qaoa/qlm_access.py).
 
 ## Configuring D-Wave Access
 
@@ -77,7 +77,7 @@ Minimal example:
 Important note:
 
 - solver visibility is account- and region-dependent
-- if the configured solver is not visible, [dwave_access.py](/home/operation/Thesis/hybrid_domain_decomposition/src/libs/multilevel_scheme/partitioning/qa/dwave_access.py) will fail before job submission during the capacity pre-check
+- if the configured solver is not visible, [dwave_access.py](dwave_access.py) will fail before job submission during the capacity pre-check
 
 Official references:
 
@@ -165,7 +165,7 @@ print(conn.get_qpus())
 
 6. Run the simulation and check `run_log` for `Running QAOA on QLM backend ...`.
 
-For interactive backend inspection, use [qlm_inspect.py](/home/operation/Thesis/hybrid_domain_decomposition/src/libs/multilevel_scheme/partitioning/qaoa/qlm_inspect.py).
+For interactive backend inspection, use [qlm_inspect.py](../qaoa/qlm_inspect.py).
 
 Official references:
 

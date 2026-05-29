@@ -1,3 +1,4 @@
+
 from pathlib import Path
 import json
 import sys
@@ -546,3 +547,151 @@ def _build_partition_color_map(partitions: set[int]) -> dict[int, str]:
         partition: to_hex(palette[index], keep_alpha=False)
         for index, partition in enumerate(sorted_partitions)
     }
+
+def render_m_curve_comparison(
+    backend_case: dict,
+    metis_case: dict,
+    *,
+    title: str,
+    backend_label: str,
+    metis_label: str,
+    display_width: int | None = None,
+    display_height: int | None = None,
+    title_fontsize: float = 16,
+    label_fontsize: float = 14,
+    tick_labelsize: float = 12,
+    save_path: str | Path | None = None,
+    dpi: int = 200,
+) -> None:
+    backend_row = backend_case["row"]
+    metis_row = metis_case["row"]
+    if backend_row["geometry"] != metis_row["geometry"]:
+        raise ValueError("Curve comparisons must use the same geometry")
+    if backend_row["coarsening_size"] != metis_row["coarsening_size"]:
+        raise ValueError("Curve comparisons must use the same coarsening size")
+
+    if backend_case["run_metrics"] is None or metis_case["run_metrics"] is None:
+        raise ValueError("Both curve comparison cases must have run_metrics.json")
+
+    percent_values, backend_original_curve, backend_permuted_curve = _curve_points_from_metrics(
+        backend_case["run_metrics"]["M"]["structural_metrics"]
+    )
+    _, _, metis_permuted_curve = _curve_points_from_metrics(metis_case["run_metrics"]["M"]["structural_metrics"])
+
+    fig, ax = plt.subplots(1, 1, figsize=_figure_size_from_display_width(display_width, display_height, square=False), constrained_layout=True)
+    if display_height is not None:
+        fig.set_size_inches(fig.get_size_inches()[0], max(1.0, float(display_height) / 100.0))
+    curves = [
+        (backend_original_curve, "Original M"),
+        (backend_permuted_curve, f"{backend_label} permuted M"),
+        (metis_permuted_curve, f"{metis_label} permuted M"),
+    ]
+    for curve_values, curve_label in curves:
+        ax.plot(percent_values, curve_values, linewidth=2.0, label=curve_label)
+    ax.set_title(f"{title}: fraction within bandwidth (M)", fontsize=title_fontsize)
+    ax.set_xlabel("Band range (% of n)", fontsize=label_fontsize)
+    ax.set_ylabel("Fraction of nonzeros within band", fontsize=label_fontsize)
+    ax.set_xlim(0.0, 2.0)
+    ax.set_ylim(0.0, 1.02)
+    ax.grid(True, alpha=0.3)
+    ax.tick_params(axis="both", labelsize=tick_labelsize)
+    ax.legend()
+    if save_path:
+        fig.savefig(str(save_path), dpi=dpi, bbox_inches="tight")
+        plt.close(fig)
+    else:
+        plt.show()
+        plt.close(fig)
+def build_matrix_summary_lines(prefix, DEMONSTRATOR, demo_rows, demo_suffix=None):
+    """
+    Generate LaTeX table lines for K or M matrix metrics from batch summary rows.
+    prefix: 'K' or 'M'
+    DEMONSTRATOR: demonstrator name (e.g. 'demonstrator_01')
+    demo_rows: filtered rows for this demonstrator
+    demo_suffix: string of digits for display/label (optional)
+    """
+    def fmt_int(value):
+        return str(int(round(float(value)))) if value is not None else "N/A"
+
+    def fmt_avg(value):
+        return f"{float(value):.2f}" if value is not None else "N/A"
+
+    def fmt_frac(value):
+        return f"{float(value):.4f}" if value is not None else "N/A"
+
+    def pretty_method(method: str) -> str:
+        return {
+            "metis": "METIS",
+            "qa_hardware": "QA hardware",
+            "qa_emulated": "QA emulated",
+            "qaoa_emulated": "QAOA emulated",
+            "qaoa_hardware": "QAOA hardware",
+        }.get(method, method)
+
+    method_order = ["metis", "qa_hardware", "qa_emulated", "qaoa_emulated", "qaoa_hardware"]
+    size_order = ["big", "medium", "small"]
+    row_end = chr(92) * 2
+
+    row_by_case = {row["case_key"]: row for row in demo_rows}
+    original_row = demo_rows[0] if demo_rows else None
+
+    table_rows = []
+    if original_row:
+        table_rows.append(
+            (
+                "Original",
+                "N/A",
+                fmt_int(original_row.get(f"{prefix}_bandwidth_original")),
+                fmt_avg(original_row.get(f"{prefix}_avg_bandwidth_original")),
+                fmt_frac(original_row.get(f"{prefix}_frac_0_1pct_original")),
+                fmt_frac(original_row.get(f"{prefix}_frac_0_4pct_original")),
+                fmt_frac(original_row.get(f"{prefix}_frac_0_7pct_original")),
+                fmt_frac(original_row.get(f"{prefix}_frac_1_0pct_original")),
+            )
+        )
+
+    for method in method_order:
+        for size in size_order:
+            case_key = f"{DEMONSTRATOR}__{method}__{size}"
+            row = row_by_case.get(case_key)
+            if row is None:
+                continue
+            table_rows.append(
+                (
+                    pretty_method(method),
+                    size,
+                    fmt_int(row.get(f"{prefix}_bandwidth_permuted")),
+                    fmt_avg(row.get(f"{prefix}_avg_bandwidth_permuted")),
+                    fmt_frac(row.get(f"{prefix}_frac_0_1pct_permuted")),
+                    fmt_frac(row.get(f"{prefix}_frac_0_4pct_permuted")),
+                    fmt_frac(row.get(f"{prefix}_frac_0_7pct_permuted")),
+                    fmt_frac(row.get(f"{prefix}_frac_1_0pct_permuted")),
+                )
+            )
+
+    demo_display = f"Demonstrator~{demo_suffix}" if demo_suffix else DEMONSTRATOR
+    demo_label = f"tab:results_demo{int(demo_suffix)}_{prefix.lower()}" if demo_suffix else f"tab:results_{prefix.lower()}"
+
+    lines = [
+        "\\begin{table}[H]",
+        f"\\caption{{{prefix}-matrix numerical summary for {demo_display}}}",
+        "\\scriptsize",
+        "\\renewcommand{\\arraystretch}{1.15}",
+        "\\begin{tabularx}{\\textwidth}{X l r r r r r r}",
+        "\\toprule",
+        "\\textbf{Method} & \\textbf{Size} & \\textbf{Bandwidth} & \\textbf{Avg. Bandwidth} & \\textbf{$\\mathrm{frac}_{0.1\\%}$} & \\textbf{$\\mathrm{frac}_{0.4\\%}$} & \\textbf{$\\mathrm{frac}_{0.7\\%}$} & \\textbf{$\\mathrm{frac}_{1.0\\%}$}" + row_end,
+        "\\midrule",
+    ]
+    for method_name, size_name, bandwidth, avg_bandwidth, frac_01, frac_04, frac_07, frac_10 in table_rows:
+        lines.append(
+            f"{method_name} & {size_name} & {bandwidth} & {avg_bandwidth} & {frac_01} & {frac_04} & {frac_07} & {frac_10}" + row_end
+        )
+    lines.extend([
+        "\\bottomrule",
+        "\\end{tabularx}",
+        "\\centering",
+        "Source: Author (2026)",
+        f"\\label{{{demo_label}}}",
+        "\\end{table}",
+    ])
+    return lines

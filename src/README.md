@@ -1,54 +1,29 @@
 # Runtime And Source Layout
 
-This document summarizes the runtime flow and the main source files.
+This document summarizes the runtime flow and the core pipeline files.
 
 ## Runtime Flow
 
 The main runtime path is:
 
-1. [main.py](/home/operation/Thesis/hybrid_domain_decomposition/src/main.py) reads the simulation directory argument.
-2. [runtime.py](/home/operation/Thesis/hybrid_domain_decomposition/src/libs/runtime/runtime.py) loads `simulation_config.json` and the referenced parameters file.
-3. [domain_decomposition.py](/home/operation/Thesis/hybrid_domain_decomposition/src/libs/domain_decomposition.py) runs:
-   - matrix to graph conversion using K only
+1. [main.py](main.py) reads the demonstrator directory argument.
+2. [runtime.py](libs/runtime/runtime.py) loads `simulation_config.json` and the referenced parameters file, validates inputs, and resolves matrix paths.
+3. [domain_decomposition.py](libs/domain_decomposition.py) runs:
+   - matrix to graph conversion (K-based graph)
    - graph coarsening
    - coarse partitioning
    - uncoarsening and refinement
-   - matrix permutation for both K and M
-4. [runtime.py](/home/operation/Thesis/hybrid_domain_decomposition/src/libs/runtime/runtime.py) writes only the outputs listed in `save_output`.
+   - permutation of both K and M matrices
+4. [runtime.py](libs/runtime/runtime.py) writes only the outputs listed in `save_output` to `demonstrators/<name>/results/<timestamp>/`.
 
-Each run creates a timestamped folder under `simulations/<name>/results/`.
+## Core Pipeline Modules
 
-## Important Files
-
-- [main.py](/home/operation/Thesis/hybrid_domain_decomposition/src/main.py)
-  - minimal CLI wrapper around the simulation runtime.
-
-- [batch/run_batch.py](/home/operation/Thesis/hybrid_domain_decomposition/batch/run_batch.py)
-  - batch-study entry point that loads presets from batch/batch_configuration.json.
-
-- [runtime.py](/home/operation/Thesis/hybrid_domain_decomposition/src/libs/runtime/runtime.py)
-  - resolves paths, validates JSON inputs, runs the decomposition, and saves output artifacts.
-
-- [domain_decomposition.py](/home/operation/Thesis/hybrid_domain_decomposition/src/libs/domain_decomposition.py)
-  - central pipeline that connects graph construction, coarsening, partitioning, refinement, and permutation.
-
-- [utils.py](/home/operation/Thesis/hybrid_domain_decomposition/src/libs/runtime/utils.py)
-  - configuration validation, matrix IO, graph helpers, and result writers.
-
-- [permutation.py](/home/operation/Thesis/hybrid_domain_decomposition/src/libs/permutation.py)
-  - applies the computed partition ordering to both K and M.
-
-- [matrix_metrics.py](/home/operation/Thesis/hybrid_domain_decomposition/src/libs/post_processing/matrix_metrics.py)
-  - computes structural metrics and plots for original versus permuted matrices.
-
-- [coarsening.py](/home/operation/Thesis/hybrid_domain_decomposition/src/libs/multilevel_scheme/coarsening/coarsening.py)
-  - builds the coarsening chain used to reduce the partitioning problem size.
-
-- [partitioning.py](/home/operation/Thesis/hybrid_domain_decomposition/src/libs/multilevel_scheme/partitioning/partitioning.py)
-  - public partitioning entry points and recursive orchestration.
-
-- [uncoarsening.py](/home/operation/Thesis/hybrid_domain_decomposition/src/libs/multilevel_scheme/uncoarsening/uncoarsening.py)
-  - projects the coarse partition back through the hierarchy and refines it.
-
-- [README.md](/home/operation/Thesis/hybrid_domain_decomposition/src/libs/multilevel_scheme/partitioning/qa/README.md)
-  - backend-specific documentation for METIS, D-Wave quantum annealing, and QLM/PennyLane QAOA.
+- [main.py](main.py) — CLI entry point.
+- [libs/runtime/runtime.py](libs/runtime/runtime.py) — orchestrates a run and writes outputs.
+- [libs/runtime/utils.py](libs/runtime/utils.py) — configuration validation, matrix IO, and artifact writers.
+- [libs/domain_decomposition.py](libs/domain_decomposition.py) — end-to-end pipeline (graph, coarsen, partition, uncoarsen, permute).
+- [libs/permutation.py](libs/permutation.py) — applies the computed ordering to K and M.
+- [libs/post_processing/matrix_metrics.py](libs/post_processing/matrix_metrics.py) — computes metrics and plots for original vs permuted matrices.
+- [libs/multilevel_scheme/coarsening/](libs/multilevel_scheme/coarsening/) — graph coarsening implementations.
+- [libs/multilevel_scheme/partitioning/](libs/multilevel_scheme/partitioning/) — METIS, QA, and QAOA partitioning backends.
+- [libs/multilevel_scheme/uncoarsening/](libs/multilevel_scheme/uncoarsening/) — uncoarsening and refinement steps.
