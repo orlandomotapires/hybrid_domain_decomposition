@@ -9,7 +9,7 @@ batch_runs/
 demonstrators/*/results/
 demonstrators/*/data/matrices/
 threash_can/staged_deletions/
-results_images/
+results/
 
 METIS/
 ocean/

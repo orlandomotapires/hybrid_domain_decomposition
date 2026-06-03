@@ -2,6 +2,7 @@
 from pathlib import Path
 import json
 import sys
+import math
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -86,6 +87,40 @@ def _figure_size_from_display_width(display_width: int | None, display_height: i
     return (width_inches, height_inches)
 
 
+def _quarter_ticks(size: int) -> list[int]:
+    if size <= 1:
+        return [0]
+    last = size - 1
+    ticks = [
+        0,
+        int(round(last * 0.25)),
+        int(round(last * 0.50)),
+        int(round(last * 0.75)),
+        last,
+    ]
+    deduped: list[int] = []
+    for tick in ticks:
+        if not deduped or tick != deduped[-1]:
+            deduped.append(tick)
+    return deduped
+
+
+def _rounded_tick_labels(ticks: list[int], size: int) -> list[str]:
+    if size <= 0:
+        return ["0" for _ in ticks]
+
+    # Round labels to readable "clean" values (example: 78108 -> 80000).
+    rounding_base = 10 ** max(len(str(int(size))) - 2, 0)
+    labels: list[str] = []
+    for value in ticks:
+        if value <= 0:
+            labels.append("0")
+            continue
+        rounded = int(math.floor((value / rounding_base) + 0.5) * rounding_base)
+        labels.append(str(rounded))
+    return labels
+
+
 def _render_partition_matrix_plot(
     matrix,
     labels: np.ndarray,
@@ -112,7 +147,10 @@ def _render_partition_matrix_plot(
     row_colors = np.array([color_map[int(label)] for label in normalized_labels], dtype=object)
 
     figsize = _figure_size_from_display_width(display_width, display_height) if display_width is not None else ((10.0, 10.0) if matrix_size <= 500 else (12.0, 12.0))
-    fig, ax = plt.subplots(figsize=figsize, constrained_layout=True)
+    fig, ax = plt.subplots(figsize=figsize, constrained_layout=False)
+    # Keep a fixed axes box so the plotted graph area is identical across files
+    # (independent of whether y-axis labels are shown).
+    fig.subplots_adjust(left=0.16, right=0.98, bottom=0.06, top=0.94)
 
     marker_size = 18.0 if matrix_size <= 200 else 8.0 if matrix_size <= 2000 else 2.5
     if matrix_coo.nnz > 0:
@@ -137,20 +175,27 @@ def _render_partition_matrix_plot(
         )
 
     ax.set_title(title, fontsize=title_fontsize)
-    ax.set_xlabel("Column index", fontsize=label_fontsize)
+    ax.set_xlabel("")
     ax.set_aspect("equal", adjustable="box")
     ax.invert_yaxis()
     ax.tick_params(axis="both", labelsize=tick_labelsize)
     ax.set_xlim(-0.5, max(matrix_size - 0.5, 0.5))
     ax.set_ylim(max(matrix_size - 0.5, 0.5), -0.5)
+    ax.tick_params(axis="x", bottom=False, top=False, labelbottom=False, labeltop=False)
+    ax.set_xticks([])
     if show_y_axis:
         ax.set_ylabel("Row index", fontsize=label_fontsize)
+        y_ticks = _quarter_ticks(matrix_size)
+        ax.set_yticks(y_ticks)
+        ax.set_yticklabels(_rounded_tick_labels(y_ticks, matrix_size))
         ax.tick_params(axis="y", left=True, labelleft=True)
     else:
         ax.set_ylabel("")
+        ax.set_yticks([])
         ax.tick_params(axis="y", left=False, labelleft=False)
     if save_path:
-        fig.savefig(str(save_path), dpi=dpi, bbox_inches="tight")
+        # Keep the full figure canvas so images with/without y-axis have identical file dimensions.
+        fig.savefig(str(save_path), dpi=dpi)
         plt.close(fig)
     else:
         plt.show()
@@ -500,7 +545,7 @@ def render_k_curve_comparison(
     ax.tick_params(axis="both", labelsize=tick_labelsize)
     ax.legend()
     if save_path:
-        fig.savefig(str(save_path), dpi=dpi, bbox_inches="tight")
+        fig.savefig(str(save_path), dpi=dpi)
         plt.close(fig)
     else:
         plt.show()
@@ -597,7 +642,7 @@ def render_m_curve_comparison(
     ax.tick_params(axis="both", labelsize=tick_labelsize)
     ax.legend()
     if save_path:
-        fig.savefig(str(save_path), dpi=dpi, bbox_inches="tight")
+        fig.savefig(str(save_path), dpi=dpi)
         plt.close(fig)
     else:
         plt.show()
