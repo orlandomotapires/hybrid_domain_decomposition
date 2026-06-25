@@ -76,7 +76,52 @@ class RunBatchTest(unittest.TestCase):
 
     def test_build_case_parameters_stays_in_memory(self) -> None:
         case = run_batch.build_cases()[0]
-        _, base_parameters, _ = run_batch._load_validated_base_inputs(case.geometry)
+        # Keep this test independent from repository data files present on CI.
+        # We only need a valid in-memory parameters payload to verify that
+        # _build_case_parameters does not write to disk.
+        base_parameters = {
+            "general_parameters": {"dof_per_node": 1, "seed": 0},
+            "coarsening_parameters": {
+                "coarsen_inferior_limit": 1,
+                "coarsen_superior_limit": 2,
+                "max_levels": 1,
+                "weight": "weight",
+                "strategy": "random",
+                "coarsen_ratio": 0.5,
+                "max_node_weight": None,
+            },
+            "partitioning_parameters": {
+                "partitioning_strategy": "metis_partitioning",
+                "common": {"k_target": 2, "balance_tolerance": 0.1},
+                "strategies": {
+                    "metis_partitioning": {},
+                    "quantum_annealing": {
+                        "qubo_balance_lambda": 1.0,
+                        "num_reads": 10,
+                        "num_starts": 1,
+                        "balance_violation_lambda": 0.0,
+                        "simulated": True,
+                    },
+                    "quantum_approximation_optimizer": {
+                        "qubo_balance_lambda": 1.0,
+                        "num_starts": 1,
+                        "balance_violation_lambda": 0.0,
+                        "circuit_depth": 1,
+                        "num_steps": 1,
+                        "adam_learning_rate": 0.01,
+                        "num_shots": 16,
+                        "simulated": True,
+                    },
+                },
+            },
+            "uncoarsening_parameters": {
+                "refine_objective": "cut",
+                "refine_balance_lambda": 0.0,
+                "refine_max_passes_per_level": 0,
+                "refine_max_moves_per_pass": None,
+                "validate_node_weights": None,
+            },
+        }
 
         with patch.object(run_batch, "write_json") as write_json_mock:
             simulation_parameters = run_batch._build_case_parameters(case, base_parameters)
