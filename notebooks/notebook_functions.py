@@ -133,6 +133,7 @@ def _render_partition_matrix_plot(
     title_fontsize: float = 25,
     label_fontsize: float = 20,
     tick_labelsize: float = 20,
+    margin_mode: str | None = None,
     save_path: str | Path | None = None,
     dpi: int = 200,
 ) -> None:
@@ -148,9 +149,23 @@ def _render_partition_matrix_plot(
 
     figsize = _figure_size_from_display_width(display_width, display_height) if display_width is not None else ((10.0, 10.0) if matrix_size <= 500 else (12.0, 12.0))
     fig, ax = plt.subplots(figsize=figsize, constrained_layout=False)
-    # Keep a fixed axes box so the plotted graph area is identical across files
-    # (independent of whether y-axis labels are shown).
-    fig.subplots_adjust(left=0.16, right=0.98, bottom=0.06, top=0.94)
+    # Keep a fixed inner square size across all plots.
+    graph_frac = 0.82
+    vertical_pad = (1.0 - graph_frac) / 2.0
+    if show_y_axis:
+        left = 0.16
+        right = left + graph_frac
+    else:
+        if margin_mode == "coarsened_right_margin":
+            left = 0.0
+            right = 0.98
+        elif margin_mode == "uncoarsened_match":
+            left = 0.0
+            right = graph_frac
+        else:
+            left = 0.0
+            right = left + graph_frac
+    fig.subplots_adjust(left=left, right=right, bottom=vertical_pad, top=1.0 - vertical_pad)
 
     marker_size = 18.0 if matrix_size <= 200 else 8.0 if matrix_size <= 2000 else 2.5
     if matrix_coo.nnz > 0:
@@ -214,6 +229,7 @@ def render_partition_graph_preview(
     title_fontsize: float = 25,
     label_fontsize: float = 20,
     tick_labelsize: float = 20,
+    margin_mode: str | None = None,
     show_y_axis: bool = True,
     save_path: str | Path | None = None,
     dpi: int = 200,
@@ -235,6 +251,7 @@ def render_partition_graph_preview(
         display_width=display_width,
         display_height=display_height,
         show_y_axis=show_y_axis,
+        margin_mode=margin_mode,
         save_path=save_path,
         dpi=dpi,
         title_fontsize=title_fontsize,
@@ -255,6 +272,7 @@ def render_partition_matrix(
     title_fontsize: float = 16,
     label_fontsize: float = 14,
     tick_labelsize: float = 12,
+    margin_mode: str | None = None,
     show_y_axis: bool = True,
     save_path: str | Path | None = None,
     dpi: int = 200,
@@ -272,6 +290,7 @@ def render_partition_matrix(
         display_width=display_width,
         display_height=display_height,
         show_y_axis=show_y_axis,
+        margin_mode=margin_mode,
         save_path=save_path,
         dpi=dpi,
         title_fontsize=title_fontsize,
@@ -356,6 +375,7 @@ _CASE_PLOT_SPECS = {
         "matrix_key": "coarsened_graph_matrix",
         "partition_key": "coarse_partition",
         "title": "Coarsened K graph",
+        "margin_mode": "coarsened_right_margin",
         "dof_per_node": 1,
     },
     "k_uncoarsened_graph_partitioned": {
@@ -363,6 +383,7 @@ _CASE_PLOT_SPECS = {
         "matrix_key": "matrix_k_original",
         "partition_key": "final_partition",
         "title": "Uncoarsened K graph",
+        "margin_mode": "uncoarsened_match",
         "use_partition_order": True,
     },
     "m_original_matrix_partitioned": {
@@ -389,6 +410,7 @@ _CASE_PLOT_SPECS = {
         "matrix_key": "coarsened_graph_matrix",
         "partition_key": "coarse_partition",
         "title": "Coarsened M graph",
+        "margin_mode": "coarsened_right_margin",
         "dof_per_node": 1,
     },
     "m_uncoarsened_graph_partitioned": {
@@ -396,6 +418,7 @@ _CASE_PLOT_SPECS = {
         "matrix_key": "matrix_m_original",
         "partition_key": "final_partition",
         "title": "Uncoarsened M graph",
+        "margin_mode": "uncoarsened_match",
         "use_partition_order": True,
     },
 }
@@ -434,6 +457,7 @@ def _render_case_plot_from_spec(
             title_fontsize=title_fontsize,
             label_fontsize=label_fontsize,
             tick_labelsize=tick_labelsize,
+            margin_mode=spec.get("margin_mode"),
             show_y_axis=show_y_axis,
             save_path=save_path,
             dpi=dpi,
@@ -454,6 +478,7 @@ def _render_case_plot_from_spec(
             title_fontsize=title_fontsize,
             label_fontsize=label_fontsize,
             tick_labelsize=tick_labelsize,
+            margin_mode=spec.get("margin_mode"),
             show_y_axis=show_y_axis,
             save_path=save_path,
             dpi=dpi,

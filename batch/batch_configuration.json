@@ -1,117 +1,132 @@
 {
-    "async_remote_case_keys": [
-        "qaoa_hardware"
-    ],
-    "summary_percent_bands": [
-        0.1,
-        0.4,
-        0.7,
-        1.0
-    ],
-    "common_defaults": {
-        "general_parameters": {
-            "seed": 42
-        },
-        "coarsening_parameters": {
-            "max_levels": 30,
-            "weight": "weight",
-            "strategy": "modified",
-            "coarsen_ratio": 0.99,
-            "max_node_weight": 1.0e18
-        },
-        "partitioning_common": {
-            "k_target": 4,
-            "balance_tolerance": 2.0
-        }
+  "algorithm_presets": [
+    {
+      "allowed_sizes": [
+        "big",
+        "medium",
+        "small"
+      ],
+      "key": "metis",
+      "partitioning_strategy": "metis_partitioning",
+      "strategy_parameters": {}
     },
-    "geometries": [
-        {
-            "key": "demonstrator_01",
-            "demonstrator_dir": "demonstrators/demonstrator_01"
-        },
-        {
-            "key": "demonstrator_02",
-            "demonstrator_dir": "demonstrators/demonstrator_02"
-        }
-    ],
-    "coarsening_presets": [
-        {
-            "key": "big",
-            "coarsen_inferior_limit": 1500,
-            "coarsen_superior_limit": 2500
-        },
-        {
-            "key": "medium",
-            "coarsen_inferior_limit": 100,
-            "coarsen_superior_limit": 175
-        },
-        {
-            "key": "small",
-            "coarsen_inferior_limit": 4,
-            "coarsen_superior_limit": 5
-        }
-    ],
-    "algorithm_presets": [
-        {
-            "key": "metis",
-            "partitioning_strategy": "metis_partitioning",
-            "allowed_sizes": ["big", "medium", "small"],
-            "strategy_parameters": {}
-        },
-        {
-            "key": "qa_hardware",
-            "partitioning_strategy": "quantum_annealing",
-            "allowed_sizes": ["medium", "small"],
-            "strategy_parameters": {
-                "qubo_balance_lambda": 2.0,
-                "num_starts": 50,
-                "num_reads": 100,
-                "balance_violation_lambda": 5.0,
-                "simulated": false,
-                "qpu_solver_name": "Advantage_system6.4"
-            }
-        },
-        {
-            "key": "qa_emulated",
-            "partitioning_strategy": "quantum_annealing",
-            "allowed_sizes": ["big", "medium", "small"],
-            "strategy_parameters": {
-                "qubo_balance_lambda": 2.0,
-                "num_starts": 50,
-                "num_reads": 20,
-                "balance_violation_lambda": 5.0,
-                "simulated": true
-            }
-        },
-        {
-            "key": "qaoa_hardware",
-            "partitioning_strategy": "quantum_approximation_optimizer",
-            "allowed_sizes": ["small"],
-            "strategy_parameters": {
-                "qubo_balance_lambda": 2.0,
-                "num_starts": 20,
-                "num_steps": 6,
-                "num_shots": 20,
-                "balance_violation_lambda": 5.0,
-                "circuit_depth": 5,
-                "simulated": false,
-                "qlm_qpu_name": "qat.qpus:Jiqcer5QPU"
-            }
-        },
-        {
-            "key": "qaoa_emulated",
-            "partitioning_strategy": "quantum_approximation_optimizer",
-            "allowed_sizes": ["small"],
-            "strategy_parameters": {
-                "qubo_balance_lambda": 2.0,
-                "num_starts": 20,
-                "num_steps": 6,
-                "num_shots": 20,
-                "balance_violation_lambda": 5.0,
-                "circuit_depth": 5,
-                "adam_learning_rate": 0.1,
-                "simulated": true
-            }
-        }
-    ]
+    {
+      "allowed_sizes": [
+        "medium",
+        "small"
+      ],
+      "key": "qa_hardware",
+      "partitioning_strategy": "quantum_annealing",
+      "strategy_parameters": {
+        "balance_violation_lambda": 5.0,
+        "num_reads": 100,
+        "num_starts": 50,
+        "qpu_solver_name": "Advantage_system6.4",
+        "qubo_balance_lambda": 2.0,
+        "simulated": false
+      }
+    },
+    {
+      "allowed_sizes": [
+        "big",
+        "medium",
+        "small"
+      ],
+      "key": "qa_emulated",
+      "partitioning_strategy": "quantum_annealing",
+      "strategy_parameters": {
+        "balance_violation_lambda": 5.0,
+        "num_reads": 20,
+        "num_starts": 50,
+        "qubo_balance_lambda": 2.0,
+        "simulated": true
+      }
+    },
+    {
+      "allowed_sizes": [
+        "small"
+      ],
+      "key": "qaoa_hardware",
+      "partitioning_strategy": "quantum_approximation_optimizer",
+      "strategy_parameters": {
+        "balance_violation_lambda": 5.0,
+        "circuit_depth": 5,
+        "num_shots": 20,
+        "num_starts": 20,
+        "num_steps": 6,
+        "qlm_qpu_name": "qat.qpus:Jiqcer5QPU",
+        "qubo_balance_lambda": 2.0,
+        "simulated": false
+      }
+    },
+    {
+      "allowed_sizes": [
+        "small"
+      ],
+      "key": "qaoa_emulated",
+      "partitioning_strategy": "quantum_approximation_optimizer",
+      "strategy_parameters": {
+        "adam_learning_rate": 0.1,
+        "balance_violation_lambda": 5.0,
+        "circuit_depth": 5,
+        "num_shots": 20,
+        "num_starts": 20,
+        "num_steps": 6,
+        "qubo_balance_lambda": 2.0,
+        "simulated": true
+      }
+    }
+  ],
+  "async_remote_case_keys": [
+    "qaoa_hardware"
+  ],
+  "coarsening_presets": [
+    {
+      "coarsen_inferior_limit": 1500,
+      "coarsen_superior_limit": 2500,
+      "key": "big"
+    },
+    {
+      "coarsen_inferior_limit": 100,
+      "coarsen_superior_limit": 175,
+      "key": "medium"
+    },
+    {
+      "coarsen_inferior_limit": 4,
+      "coarsen_superior_limit": 5,
+      "key": "small"
+    }
+  ],
+  "common_defaults": {
+    "coarsening_parameters": {
+      "coarsen_ratio": 0.99,
+      "max_levels": 30,
+      "max_node_weight": 1e+18,
+      "strategy": "modified",
+      "weight": "weight"
+    },
+    "general_parameters": {
+      "seed": 42
+    },
+    "partitioning_common": {
+      "balance_tolerance": 2.0,
+      "k_target": 4
+    }
+  },
+  "geometries": [
+    {
+      "demonstrator_dir": "demonstrators/demonstrator_01",
+      "key": "demonstrator_01"
+    },
+    {
+      "demonstrator_dir": "demonstrators/demonstrator_02",
+      "key": "demonstrator_02"
+    }
+  ],
+  "summary_percent_bands": [
+    0.1,
+    0.4,
+    0.7,
+    1.0
+  ]
 }

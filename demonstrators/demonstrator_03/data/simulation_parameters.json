@@ -5,18 +5,19 @@
     },
 
     "coarsening_parameters": {
-        "coarsen_inferior_limit": 100,
-        "coarsen_superior_limit": 175,
-        "max_levels": 15, 
+        "coarsen_inferior_limit": 1,
+        "coarsen_superior_limit": 300,
+        "max_levels": 30, 
         "weight": "weight", 
         "strategy": "modified",  
-        "coarsen_ratio": 0.85
+        "coarsen_ratio": 1.0,
+        "max_node_weight": 1.0e18
     },
 
     "partitioning_parameters": {
-        "partitioning_strategy": "quantum_annealing",
+        "partitioning_strategy": "metis_partitioning",
         "common": {
-            "k_target": 8,
+            "k_target": 16,
             "balance_tolerance": 2.0
         },
         "strategies": {
@@ -25,23 +26,23 @@
             },
             "quantum_annealing": {
                 "qubo_balance_lambda": 2,
-                "num_starts": 20,
-                "num_reads": 2,
-                "balance_violation_lambda": 1.0e6,
-                "simulated": true,
-                "qpu_region": "eu-central-1",
-                "qpu_solver_name": "Advantage2_system2.1",
-                "qpu_problem_label": "DD_ansys_v0_with_base"
+                "num_starts": 30,
+                "num_reads": 100,
+                "balance_violation_lambda": 5.0,
+                "simulated": false,
+                "qpu_region": "na-west-1",
+                "qpu_solver_name": "Advantage_system6",
+                "qpu_problem_label": "DD_ansys_v0_without_base"
             },
             "quantum_approximation_optimizer": {
                 "qubo_balance_lambda": 2,
-                "num_starts": 5,
-                "num_steps": 5,
-                "num_shots": 5,
-                "balance_violation_lambda": 1.0e6,
+                "num_starts": 1,
+                "num_steps": 1,
+                "num_shots": 8,
+                "balance_violation_lambda": 5.0,
                 "circuit_depth": 1,
-                "adam_learning_rate": 0.2,
-                "simulated": true
+                "simulated": false,
+                "qlm_qpu_name": "qat.qpus:Jiqcer5QPU"
                 
             }
         }

@@ -1,0 +1,17 @@
+{
+    "parameters_file_path": "simulation_parameters.json",
+    
+    "input_matrices":{
+        "matrix_k_file_path": "hybrid_ma.classical.fem.matrix_k.mtx",
+        "matrix_m_file_path": "hybrid_ma.classical.fem.matrix_m.mtx"
+    },
+
+    "save_output": [
+        "coarsened_graph",
+        "matrix_k_permuted",
+		"matrix_m_permuted",
+	    "permutation",
+		"run_metrics",
+        "run_simulation_parameters"
+    ]
+}
