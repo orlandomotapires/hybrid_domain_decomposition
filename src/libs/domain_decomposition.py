@@ -121,8 +121,13 @@ def decompose_matrices_m_k(matrix_m, matrix_k, general_parameters, coarsening_pa
     # Small inputs can stop before any contraction map is produced.
     if len(maps) < 1:
         log(
-            "VERBOSE",
-            "Warning: No coarsening occurred (graph already satisfied the requested range, or the next level would fall below the inferior coarsening limit)",
+            "WARNING",
+            "No coarsening occurred (graph already satisfied the requested range, or the next level would fall below the inferior coarsening limit)",
+        )
+    elif coarsen_superior_limit is not None and Gc.number_of_nodes() > coarsen_superior_limit:
+        log(
+            "WARNING",
+            f"Coarsening stopped at {Gc.number_of_nodes()} nodes, above coarsen_superior_limit={coarsen_superior_limit}",
         )
 
     part_k_coarse = 0

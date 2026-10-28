@@ -6,3 +6,6 @@ pennylane
 dwave-neal
 dwave-system
 matplotlib
+fastapi
+uvicorn[standard]
+python-multipart

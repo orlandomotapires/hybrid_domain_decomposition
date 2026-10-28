@@ -13,16 +13,17 @@
     {
       "allowed_sizes": [
         "medium",
-        "small"
+        "small",
+        "big"
       ],
       "key": "qa_hardware",
       "partitioning_strategy": "quantum_annealing",
       "strategy_parameters": {
-        "balance_violation_lambda": 5.0,
+        "balance_violation_lambda": 5,
         "num_reads": 100,
         "num_starts": 50,
         "qpu_solver_name": "Advantage_system6.4",
-        "qubo_balance_lambda": 2.0,
+        "qubo_balance_lambda": 2,
         "simulated": false
       }
     },
@@ -35,44 +36,48 @@
       "key": "qa_emulated",
       "partitioning_strategy": "quantum_annealing",
       "strategy_parameters": {
-        "balance_violation_lambda": 5.0,
+        "balance_violation_lambda": 5,
         "num_reads": 20,
         "num_starts": 50,
-        "qubo_balance_lambda": 2.0,
+        "qubo_balance_lambda": 2,
         "simulated": true
       }
     },
     {
       "allowed_sizes": [
-        "small"
+        "small",
+        "big",
+        "medium"
       ],
       "key": "qaoa_hardware",
       "partitioning_strategy": "quantum_approximation_optimizer",
       "strategy_parameters": {
-        "balance_violation_lambda": 5.0,
+        "balance_violation_lambda": 5,
         "circuit_depth": 5,
         "num_shots": 20,
         "num_starts": 20,
         "num_steps": 6,
         "qlm_qpu_name": "qat.qpus:Jiqcer5QPU",
-        "qubo_balance_lambda": 2.0,
+        "qubo_balance_lambda": 2,
         "simulated": false
       }
     },
     {
       "allowed_sizes": [
-        "small"
+        "small",
+        "medium",
+        "big"
       ],
       "key": "qaoa_emulated",
       "partitioning_strategy": "quantum_approximation_optimizer",
       "strategy_parameters": {
         "adam_learning_rate": 0.1,
-        "balance_violation_lambda": 5.0,
+        "balance_violation_lambda": 5,
         "circuit_depth": 5,
         "num_shots": 20,
         "num_starts": 20,
         "num_steps": 6,
-        "qubo_balance_lambda": 2.0,
+        "qubo_balance_lambda": 2,
         "simulated": true
       }
     }
@@ -101,7 +106,7 @@
     "coarsening_parameters": {
       "coarsen_ratio": 0.99,
       "max_levels": 30,
-      "max_node_weight": 1e+18,
+      "max_node_weight": 1000000000000000000,
       "strategy": "modified",
       "weight": "weight"
     },
@@ -109,7 +114,7 @@
       "seed": 42
     },
     "partitioning_common": {
-      "balance_tolerance": 2.0,
+      "balance_tolerance": 2,
       "k_target": 4
     }
   },
@@ -121,12 +126,20 @@
     {
       "demonstrator_dir": "demonstrators/demonstrator_02",
       "key": "demonstrator_02"
+    },
+    {
+      "demonstrator_dir": "demonstrators/Testando",
+      "key": "Testando"
+    },
+    {
+      "demonstrator_dir": "demonstrators/demonstrator_03",
+      "key": "demonstrator_03"
     }
   ],
   "summary_percent_bands": [
     0.1,
     0.4,
     0.7,
-    1.0
+    1
   ]
 }

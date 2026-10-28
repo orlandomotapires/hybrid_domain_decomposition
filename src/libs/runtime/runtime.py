@@ -193,8 +193,15 @@ def run_simulation(
 	if "run_metrics" in save_output and metrics is not None:
 		write_results_table_text(result_run_dir / "run_metrics.txt", metrics)
 		write_json(result_run_dir / "run_metrics.json", metrics)
+		k_struct = metrics.get("K", {}).get("structural_metrics", {})
+		bw_orig = k_struct.get("original", {}).get("bandwidth")
+		bw_perm = k_struct.get("permuted", {}).get("bandwidth")
+		if bw_orig is not None and bw_perm is not None:
+			log("VERBOSE", f"Matrix K bandwidth: {bw_orig} -> {bw_perm}")
+			if bw_perm > bw_orig:
+				log("WARNING", f"Permuted matrix K bandwidth ({bw_perm}) exceeded original bandwidth ({bw_orig})")
 		if metrics["K"]["permutation_check"]["mismatches"] > 0:
-			log("VERBOSE", f"Permutation check found {metrics['K']['permutation_check']['mismatches']} mismatches with max abs error {metrics['K']['permutation_check']['max_abs_err']}")
+			log("WARNING", f"Permutation check found {metrics['K']['permutation_check']['mismatches']} mismatches with max abs error {metrics['K']['permutation_check']['max_abs_err']}")
 		else:
 			log("VERBOSE", f"Permutation check passed with no mismatches")
 

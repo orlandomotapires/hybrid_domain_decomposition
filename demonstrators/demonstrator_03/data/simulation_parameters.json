@@ -1,58 +1,53 @@
 {
-    "general_parameters":{
-        "dof_per_node": 3,
-        "seed": 42
+  "coarsening_parameters": {
+    "coarsen_inferior_limit": 1,
+    "coarsen_ratio": 1.0,
+    "coarsen_superior_limit": 300,
+    "max_levels": 30,
+    "max_node_weight": 1e+18,
+    "strategy": "modified",
+    "weight": "weight"
+  },
+  "general_parameters": {
+    "dof_per_node": 3,
+    "seed": 42
+  },
+  "partitioning_parameters": {
+    "common": {
+      "balance_tolerance": 2.0,
+      "k_target": 16
     },
-
-    "coarsening_parameters": {
-        "coarsen_inferior_limit": 1,
-        "coarsen_superior_limit": 300,
-        "max_levels": 30, 
-        "weight": "weight", 
-        "strategy": "modified",  
-        "coarsen_ratio": 1.0,
-        "max_node_weight": 1.0e18
-    },
-
-    "partitioning_parameters": {
-        "partitioning_strategy": "metis_partitioning",
-        "common": {
-            "k_target": 16,
-            "balance_tolerance": 2.0
-        },
-        "strategies": {
-            "metis_partitioning": {
-
-            },
-            "quantum_annealing": {
-                "qubo_balance_lambda": 2,
-                "num_starts": 30,
-                "num_reads": 100,
-                "balance_violation_lambda": 5.0,
-                "simulated": false,
-                "qpu_region": "na-west-1",
-                "qpu_solver_name": "Advantage_system6",
-                "qpu_problem_label": "DD_ansys_v0_without_base"
-            },
-            "quantum_approximation_optimizer": {
-                "qubo_balance_lambda": 2,
-                "num_starts": 1,
-                "num_steps": 1,
-                "num_shots": 8,
-                "balance_violation_lambda": 5.0,
-                "circuit_depth": 1,
-                "simulated": false,
-                "qlm_qpu_name": "qat.qpus:Jiqcer5QPU"
-                
-            }
-        }
-    },
-
-    "uncoarsening_parameters": {
-        "refine_objective": "cut_balance", 
-        "refine_balance_lambda": 1.0,
-        "refine_max_passes_per_level": 50, 
-        "refine_max_moves_per_pass": 5000, 
-        "validate_node_weights": true
-    } 
+    "partitioning_strategy": "metis_partitioning",
+    "strategies": {
+      "metis_partitioning": {},
+      "quantum_annealing": {
+        "balance_violation_lambda": 5,
+        "num_reads": 100,
+        "num_starts": 30,
+        "qpu_problem_label": "DD_ansys_v0_without_base",
+        "qpu_region": "na-west-1",
+        "qpu_solver_name": "Advantage_system6",
+        "qubo_balance_lambda": 2,
+        "simulated": false
+      },
+      "quantum_approximation_optimizer": {
+        "adam_learning_rate": 0.1,
+        "balance_violation_lambda": 5,
+        "circuit_depth": 1,
+        "num_shots": 8,
+        "num_starts": 1,
+        "num_steps": 1,
+        "qlm_qpu_name": "qat.qpus:Jiqcer5QPU",
+        "qubo_balance_lambda": 2,
+        "simulated": false
+      }
+    }
+  },
+  "uncoarsening_parameters": {
+    "refine_balance_lambda": 1.0,
+    "refine_max_moves_per_pass": 5000,
+    "refine_max_passes_per_level": 50,
+    "refine_objective": "cut_balance",
+    "validate_node_weights": true
+  }
 }

@@ -18,11 +18,15 @@ dependencies = [
   "dwave-neal",
   "dwave-system",
   "matplotlib",
+  "fastapi",
+  "uvicorn[standard]",
+  "python-multipart",
 ]
 
 [project.scripts]
 hdd-run = "main:cli_main"
 hdd-qlm-inspect = "libs.multilevel_scheme.partitioning.qaoa.qlm_inspect:cli_main"
+hdd-studio = "api.app:cli_main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}

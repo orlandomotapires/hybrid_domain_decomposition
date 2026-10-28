@@ -17,6 +17,16 @@ pip install -r requirements.txt
 
 If you use D-Wave or QLM backends, see [src/libs/multilevel_scheme/partitioning/qa/README.md](src/libs/multilevel_scheme/partitioning/qa/README.md) before starting a remote run.
 
+## Web Studio Interface (`--ui`)
+
+Launch the interactive **Hybrid Domain Decomposition Web Studio** to manage pipeline methods, switch between demonstrators and presets, run single or batch simulations with live log streaming, inspect partitioned matrix/graph visualizations, and export thesis LaTeX tables:
+
+```sh
+./run.sh --ui
+```
+
+Then open `http://127.0.0.1:8000` in your browser.
+
 ## Run A Single Simulation
 
 Run the simulation from the repository root so the relative paths in the demonstrator folder resolve correctly.
