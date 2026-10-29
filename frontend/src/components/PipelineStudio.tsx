@@ -62,36 +62,31 @@ const COARSENING_STRATEGIES: Array<{
   key: CoarseningParameters['strategy'];
   wikiId: string;
   title: string;
-  badge: string;
-  formula: string;
+  hint: string;
 }> = [
   {
     key: 'random',
     wikiId: 'method-hem-random',
     title: 'Random HEM',
-    badge: 'Foundational',
-    formula: 'score(u, v) = w(u, v)',
+    hint: 'Random visiting order',
   },
   {
     key: 'sorted',
     wikiId: 'method-hem-sorted',
     title: 'Sorted HEM (SHEM)',
-    badge: 'Degree-Ordered',
-    formula: 'Order by deg_w(u) desc',
+    hint: 'Heaviest edges first',
   },
   {
     key: 'modified',
     wikiId: 'method-hem-modified',
     title: 'Modified HEM (MHEM)',
-    badge: 'Weight-Balanced',
-    formula: 'w(u,v) / √(c(u)·c(v))',
+    hint: 'Balances node weights',
   },
   {
     key: 'light',
     wikiId: 'method-hem-light',
     title: 'Light-Edge Matching',
-    badge: 'Sparse Variant',
-    formula: 'score(u, v) = -w(u, v)',
+    hint: 'Prefers light edges',
   },
 ];
 
@@ -133,7 +128,7 @@ const PARTITIONING_METHODS: Array<{
     id: 'metis',
     wikiId: 'method-metis',
     title: 'METIS Baseline',
-    subtitle: 'PyMETIS Weighted k-Way',
+    subtitle: 'Classical baseline',
     category: 'Classical',
   },
   {
@@ -142,7 +137,7 @@ const PARTITIONING_METHODS: Array<{
     id: 'qa_emulated',
     wikiId: 'method-qa-emulated',
     title: 'Quantum Annealing (Emulated)',
-    subtitle: 'dwave-neal Simulated Annealing',
+    subtitle: 'Local annealing simulator',
     category: 'Quantum Emulated',
   },
   {
@@ -151,7 +146,7 @@ const PARTITIONING_METHODS: Array<{
     id: 'qa_hardware',
     wikiId: 'method-qa-hardware',
     title: 'Quantum Annealing (D-Wave QPU)',
-    subtitle: 'D-Wave Leap Superconducting QPU',
+    subtitle: 'D-Wave QPU',
     category: 'Quantum Hardware',
   },
   {
@@ -160,7 +155,7 @@ const PARTITIONING_METHODS: Array<{
     id: 'qaoa_emulated',
     wikiId: 'method-qaoa-emulated',
     title: 'QAOA (Emulated)',
-    subtitle: 'PennyLane Circuit + Adam',
+    subtitle: 'PennyLane simulator',
     category: 'Quantum Emulated',
   },
   {
@@ -169,39 +164,48 @@ const PARTITIONING_METHODS: Array<{
     id: 'qaoa_hardware',
     wikiId: 'method-qaoa-hardware',
     title: 'QAOA (QLM Hardware)',
-    subtitle: 'myQLM / QLMaaS Gate QPU',
+    subtitle: 'QLM gate-based QPU',
     category: 'Quantum Hardware',
   },
 ];
 
-const SAVE_OUTPUT_LABELS: Record<string, { title: string; file: string; wikiId: string }> = {
+const SAVE_OUTPUT_LABELS: Record<
+  string,
+  { title: string; hint: string; file: string; wikiId: string }
+> = {
   coarsened_graph: {
     title: 'Coarsened Graph Matrix',
+    hint: 'Graph used for partitioning',
     file: 'coarsened_graph.mtx',
     wikiId: 'output-coarsened-graph',
   },
   matrix_k_permuted: {
     title: 'Permuted Stiffness Matrix K',
+    hint: 'Reordered K',
     file: 'matrix_k_permuted.mtx',
     wikiId: 'output-matrix-k-permuted',
   },
   matrix_m_permuted: {
     title: 'Permuted Mass Matrix M',
+    hint: 'Reordered M',
     file: 'matrix_m_permuted.mtx',
     wikiId: 'output-matrix-m-permuted',
   },
   permutation: {
     title: 'Permutation Vector',
+    hint: 'Reorder vector',
     file: 'permutation.txt',
     wikiId: 'output-permutation',
   },
   run_metrics: {
     title: 'Structural & Bandwidth Metrics',
+    hint: 'Needed for Results plots',
     file: 'run_metrics.json / .txt',
     wikiId: 'output-run-metrics',
   },
   run_simulation_parameters: {
     title: 'Simulation Parameters Snapshot',
+    hint: 'Exact parameters used',
     file: 'run_simulation_parameters.json',
     wikiId: 'output-run-simulation-parameters',
   },
@@ -597,6 +601,9 @@ export const PipelineStudio: React.FC<PipelineStudioProps> = ({
               <h3 className="text-base font-bold text-white truncate">
                 Input Matrices
               </h3>
+              <span className="text-xs text-slate-400 hidden sm:inline">
+                — FEM stiffness &amp; mass matrices
+              </span>
               <InfoTooltip topicId="stage-1" onOpenWiki={onOpenWiki} />
             </div>
 
@@ -668,44 +675,43 @@ export const PipelineStudio: React.FC<PipelineStudioProps> = ({
 
               {/* Matrix Upload & Synthetic 3D FEM Mesh Generator */}
               <div className="flex flex-wrap items-center gap-2">
-                <div className="flex flex-wrap items-center gap-2">
-                  <InfoTooltip topicId="stage-1-mtx-tools" onOpenWiki={onOpenWiki} />
-                  <label className="cursor-pointer inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition">
-                    <Upload className="w-3.5 h-3.5 text-cyan-400" />
-                    Upload .mtx
-                    <input
-                      type="file"
-                      accept=".mtx"
-                      className="hidden"
-                      onChange={(e) => {
-                        const file = e.target.files?.[0];
-                        if (file) onUploadMatrix(file);
-                      }}
-                    />
-                  </label>
-                  <button
-                    disabled={generatingMatrices}
-                    onClick={() => handleGenerateMatrices('small')}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-medium transition disabled:opacity-50 ${
-                      inferredGraphNodes === 240
-                        ? 'bg-indigo-600 hover:bg-indigo-500 text-white shadow'
-                        : 'bg-slate-800 hover:bg-slate-700 text-indigo-300 border border-indigo-500/30'
-                    }`}
-                  >
-                    {generatingMatrices ? 'Generating...' : 'Demo Mesh (240)'}
-                  </button>
-                  <button
-                    disabled={generatingMatrices}
-                    onClick={() => handleGenerateMatrices('large')}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-medium transition disabled:opacity-50 ${
-                      inferredGraphNodes === 600
-                        ? 'bg-indigo-600 hover:bg-indigo-500 text-white shadow'
-                        : 'bg-slate-800 hover:bg-slate-700 text-indigo-300 border border-indigo-500/30'
-                    }`}
-                  >
-                    {generatingMatrices ? 'Generating...' : 'Large Mesh (600)'}
-                  </button>
-                </div>
+                <span className="text-xs text-slate-400">Get matrices:</span>
+                <InfoTooltip topicId="stage-1-mtx-tools" onOpenWiki={onOpenWiki} />
+                <label className="cursor-pointer inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition">
+                  <Upload className="w-3.5 h-3.5 text-cyan-400" />
+                  Upload .mtx
+                  <input
+                    type="file"
+                    accept=".mtx"
+                    className="hidden"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (file) onUploadMatrix(file);
+                    }}
+                  />
+                </label>
+                <button
+                  disabled={generatingMatrices}
+                  onClick={() => handleGenerateMatrices('small')}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-medium transition disabled:opacity-50 ${
+                    inferredGraphNodes === 240
+                      ? 'bg-indigo-600 hover:bg-indigo-500 text-white shadow'
+                      : 'bg-slate-800 hover:bg-slate-700 text-indigo-300 border border-indigo-500/30'
+                  }`}
+                >
+                  {generatingMatrices ? 'Generating...' : 'Demo Mesh (240)'}
+                </button>
+                <button
+                  disabled={generatingMatrices}
+                  onClick={() => handleGenerateMatrices('large')}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-medium transition disabled:opacity-50 ${
+                    inferredGraphNodes === 600
+                      ? 'bg-indigo-600 hover:bg-indigo-500 text-white shadow'
+                      : 'bg-slate-800 hover:bg-slate-700 text-indigo-300 border border-indigo-500/30'
+                  }`}
+                >
+                  {generatingMatrices ? 'Generating...' : 'Large Mesh (600)'}
+                </button>
               </div>
             </div>
 
@@ -777,6 +783,9 @@ export const PipelineStudio: React.FC<PipelineStudioProps> = ({
               <h3 className="text-base font-bold text-white truncate">
                 Coarsening
               </h3>
+              <span className="text-xs text-slate-400 hidden sm:inline">
+                — Shrink the graph level by level
+              </span>
               <InfoTooltip topicId="stage-2" onOpenWiki={onOpenWiki} />
             </div>
 
@@ -838,7 +847,10 @@ export const PipelineStudio: React.FC<PipelineStudioProps> = ({
                         : 'bg-slate-950/70 border-slate-800 hover:border-slate-700'
                     }`}
                   >
-                    <span className="font-bold text-sm text-white truncate">{item.title}</span>
+                    <div className="min-w-0">
+                      <div className="font-bold text-sm text-white truncate">{item.title}</div>
+                      <div className="text-[11px] text-slate-400 mt-0.5 truncate">{item.hint}</div>
+                    </div>
                     <InfoTooltip topicId={item.wikiId} onOpenWiki={onOpenWiki} />
                   </button>
                 );
@@ -968,8 +980,11 @@ export const PipelineStudio: React.FC<PipelineStudioProps> = ({
 
           {/* Interactive Coarsening Trajectory Preview ("Dry-Run Coarsening") */}
           <div className="mt-5 pt-4 border-t border-slate-800/80 space-y-3">
-            <div className="flex flex-wrap items-center justify-end gap-2">
-              <InfoTooltip topicId="tool-dry-run-coarsening" onOpenWiki={onOpenWiki} />
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-2 text-xs text-slate-400">
+                <span>Check the coarse graph size before running</span>
+                <InfoTooltip topicId="tool-dry-run-coarsening" onOpenWiki={onOpenWiki} />
+              </div>
               <button
                 type="button"
                 disabled={previewingCoarsening || !demonstrator.matrices.matrix_k.exists}
@@ -1095,6 +1110,9 @@ export const PipelineStudio: React.FC<PipelineStudioProps> = ({
               <h3 className="text-base font-bold text-white truncate">
                 Partitioning
               </h3>
+              <span className="text-xs text-slate-400 hidden sm:inline">
+                — Split the coarse graph into k parts
+              </span>
               <InfoTooltip topicId="stage-3" onOpenWiki={onOpenWiki} />
             </div>
 
@@ -1286,11 +1304,20 @@ export const PipelineStudio: React.FC<PipelineStudioProps> = ({
                     <div className="font-bold text-sm text-white truncate" title={m.title}>
                       {m.title}
                     </div>
+                    <div className="text-[11px] text-slate-400 mt-0.5 truncate" title={m.subtitle}>
+                      {m.subtitle}
+                    </div>
                   </button>
                 );
               })}
             </div>
           </div>
+
+          {activeStrategy === 'metis_partitioning' && (
+            <div className="mt-4 pt-3 border-t border-slate-800/80 text-xs text-slate-400">
+              No extra settings — METIS splits directly into <strong className="text-slate-200 font-mono">k = {pp.common.k_target}</strong> parts.
+            </div>
+          )}
 
           {/* Strategy-Specific Parameter Controls */}
           {activeStrategy !== 'metis_partitioning' && (
@@ -1781,6 +1808,9 @@ export const PipelineStudio: React.FC<PipelineStudioProps> = ({
             <h3 className="text-base font-bold text-white truncate">
               Refinement
             </h3>
+            <span className="text-xs text-slate-400 hidden sm:inline">
+              — Project back and polish the cut
+            </span>
             <InfoTooltip topicId="stage-4" onOpenWiki={onOpenWiki} />
           </div>
 
@@ -1803,9 +1833,12 @@ export const PipelineStudio: React.FC<PipelineStudioProps> = ({
                     : 'bg-slate-950/70 border-slate-800 hover:border-slate-700'
                 }`}
               >
-                <span className="font-bold text-sm text-white truncate">
-                  Cut
-                </span>
+                <div className="min-w-0">
+                  <div className="font-bold text-sm text-white truncate">Cut</div>
+                  <div className="text-[11px] text-slate-400 mt-0.5 truncate">
+                    Minimize edges cut
+                  </div>
+                </div>
                 <InfoTooltip topicId="method-refine-cut" onOpenWiki={onOpenWiki} />
               </button>
 
@@ -1826,9 +1859,12 @@ export const PipelineStudio: React.FC<PipelineStudioProps> = ({
                     : 'bg-slate-950/70 border-slate-800 hover:border-slate-700'
                 }`}
               >
-                <span className="font-bold text-sm text-white truncate">
-                  Cut + Balance
-                </span>
+                <div className="min-w-0">
+                  <div className="font-bold text-sm text-white truncate">Cut + Balance</div>
+                  <div className="text-[11px] text-slate-400 mt-0.5 truncate">
+                    Trade cut for balance
+                  </div>
+                </div>
                 <InfoTooltip topicId="method-refine-cut-balance" onOpenWiki={onOpenWiki} />
               </button>
             </div>
@@ -1918,6 +1954,9 @@ export const PipelineStudio: React.FC<PipelineStudioProps> = ({
               <h3 className="text-base font-bold text-white truncate">
                 Outputs
               </h3>
+              <span className="text-xs text-slate-400 hidden sm:inline">
+                — Files written after each run
+              </span>
               <InfoTooltip topicId="stage-5" onOpenWiki={onOpenWiki} />
             </div>
 
@@ -1940,6 +1979,7 @@ export const PipelineStudio: React.FC<PipelineStudioProps> = ({
               const checked = config.save_output.includes(key);
               const meta = SAVE_OUTPUT_LABELS[key] || {
                 title: key,
+                hint: key,
                 file: key,
                 wikiId: 'stage-5',
               };
@@ -1965,7 +2005,10 @@ export const PipelineStudio: React.FC<PipelineStudioProps> = ({
                       }}
                       className="rounded border-slate-700 bg-slate-900 text-indigo-600 focus:ring-indigo-500 shrink-0"
                     />
-                    <div className="text-xs font-bold text-white truncate">{meta.title}</div>
+                    <div className="min-w-0">
+                      <div className="text-xs font-bold text-white truncate">{meta.title}</div>
+                      <div className="text-[11px] text-slate-400 truncate">{meta.hint}</div>
+                    </div>
                   </div>
                   <InfoTooltip topicId={meta.wikiId} onOpenWiki={onOpenWiki} />
                 </label>
@@ -1987,7 +2030,13 @@ export const PipelineStudio: React.FC<PipelineStudioProps> = ({
             className="text-xs text-slate-300 truncate"
             title={`${demonstrator.id}/data/${config.parameters_file_path}`}
           >
-            {hasUnsavedChanges ? 'Unsaved changes' : 'Saved'}
+            {hasUnsavedChanges ? (
+              'Unsaved changes'
+            ) : (
+              <>
+                Saved <span className="text-slate-500">· {config.parameters_file_path}</span>
+              </>
+            )}
           </span>
         </div>
 

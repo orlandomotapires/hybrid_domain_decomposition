@@ -165,9 +165,12 @@ export const ResultsExplorer: React.FC<ResultsExplorerProps> = ({
     <div className="space-y-6">
       {/* Top Mode Switcher */}
       <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-4 flex flex-wrap items-center justify-between gap-4">
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2.5">
           <span className="px-2.5 py-0.5 text-xs font-semibold rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
             Results & Plots
+          </span>
+          <span className="text-xs text-slate-400">
+            {mode === 'batch' ? 'Compare methods across a study' : 'Inspect one run in detail'}
           </span>
           <InfoTooltip topicId="results-analytics" onOpenWiki={onOpenWiki} />
         </div>
@@ -1014,7 +1017,7 @@ const SingleRunCurveSvg: React.FC<{
               y1={toY(yVal)}
               x2={width - padR}
               y2={toY(yVal)}
-              stroke="#1e293b"
+              stroke="rgb(var(--c-slate-800))"
               strokeDasharray="3 3"
             />
             <text x={padL - 6} y={toY(yVal) + 3} textAnchor="end" fontSize="9" fill="#64748b">
@@ -1077,7 +1080,7 @@ const MultiMethodSvgChart: React.FC<{
               y1={toY(yVal)}
               x2={width - padR}
               y2={toY(yVal)}
-              stroke="#1e293b"
+              stroke="rgb(var(--c-slate-800))"
               strokeDasharray="3 3"
             />
             <text x={padL - 5} y={toY(yVal) + 3} textAnchor="end" fontSize="9" fill="#64748b">

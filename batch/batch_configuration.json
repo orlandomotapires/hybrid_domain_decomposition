@@ -2,9 +2,7 @@
   "algorithm_presets": [
     {
       "allowed_sizes": [
-        "big",
-        "medium",
-        "small"
+        "big"
       ],
       "key": "metis",
       "partitioning_strategy": "metis_partitioning",
@@ -12,8 +10,6 @@
     },
     {
       "allowed_sizes": [
-        "medium",
-        "small",
         "big"
       ],
       "key": "qa_hardware",
@@ -29,9 +25,7 @@
     },
     {
       "allowed_sizes": [
-        "big",
-        "medium",
-        "small"
+        "big"
       ],
       "key": "qa_emulated",
       "partitioning_strategy": "quantum_annealing",
@@ -45,9 +39,7 @@
     },
     {
       "allowed_sizes": [
-        "small",
-        "big",
-        "medium"
+        "big"
       ],
       "key": "qaoa_hardware",
       "partitioning_strategy": "quantum_approximation_optimizer",
@@ -64,8 +56,6 @@
     },
     {
       "allowed_sizes": [
-        "small",
-        "medium",
         "big"
       ],
       "key": "qaoa_emulated",
@@ -126,10 +116,6 @@
     {
       "demonstrator_dir": "demonstrators/demonstrator_02",
       "key": "demonstrator_02"
-    },
-    {
-      "demonstrator_dir": "demonstrators/Testando",
-      "key": "Testando"
     },
     {
       "demonstrator_dir": "demonstrators/demonstrator_03",

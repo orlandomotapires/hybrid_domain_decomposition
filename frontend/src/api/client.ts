@@ -5,6 +5,35 @@ import {
   SimulationJob,
   SimulationParameters,
 } from '../types/pipeline';
+import { staticFallbackApi } from './staticFallback';
+
+let useStaticDemo = false;
+
+async function withFallback<T>(
+  liveCall: () => Promise<T>,
+  fallbackCall: () => Promise<T>
+): Promise<T> {
+  if (useStaticDemo) {
+    return fallbackCall();
+  }
+  try {
+    return await liveCall();
+  } catch (err: any) {
+    const msg = String(err?.message || '');
+    // Switch to static fallback if /api is not served (e.g., GitHub Pages 404/405 or network error)
+    if (
+      msg.includes('HTTP 404') ||
+      msg.includes('HTTP 405') ||
+      msg.includes('Failed to fetch') ||
+      msg.includes('NetworkError') ||
+      msg.includes('Unexpected token')
+    ) {
+      useStaticDemo = true;
+      return fallbackCall();
+    }
+    throw err;
+  }
+}
 
 async function requestJson<T>(url: string, options?: RequestInit): Promise<T> {
   const res = await fetch(url, {
@@ -24,49 +53,88 @@ async function requestJson<T>(url: string, options?: RequestInit): Promise<T> {
     }
     throw new Error(errMsg);
   }
+  const contentType = res.headers.get('content-type') || '';
+  if (!contentType.includes('application/json')) {
+    throw new Error('HTTP 404');
+  }
   return res.json() as Promise<T>;
 }
 
 export const api = {
+  isStaticDemo: () => useStaticDemo,
+
   listDemonstrators: () =>
-    requestJson<{ demonstrators: Demonstrator[] }>('/api/demonstrators'),
+    withFallback(
+      () => requestJson<{ demonstrators: Demonstrator[] }>('/api/demonstrators'),
+      () => staticFallbackApi.listDemonstrators()
+    ),
 
   getDemonstrator: (demId: string) =>
-    requestJson<Demonstrator>(`/api/demonstrators/${encodeURIComponent(demId)}`),
+    withFallback(
+      () => requestJson<Demonstrator>(`/api/demonstrators/${encodeURIComponent(demId)}`),
+      () => staticFallbackApi.getDemonstrator(demId)
+    ),
 
   createDemonstrator: (name: string, cloneFrom?: string) =>
-    requestJson<Demonstrator>('/api/demonstrators', {
-      method: 'POST',
-      body: JSON.stringify({ name, clone_from: cloneFrom }),
-    }),
+    withFallback(
+      () =>
+        requestJson<Demonstrator>('/api/demonstrators', {
+          method: 'POST',
+          body: JSON.stringify({ name, clone_from: cloneFrom }),
+        }),
+      () => staticFallbackApi.createDemonstrator(name, cloneFrom)
+    ),
 
   renameDemonstrator: (demId: string, newName: string) =>
-    requestJson<Demonstrator>(`/api/demonstrators/${encodeURIComponent(demId)}/rename`, {
-      method: 'PUT',
-      body: JSON.stringify({ new_name: newName }),
-    }),
+    withFallback(
+      () =>
+        requestJson<Demonstrator>(`/api/demonstrators/${encodeURIComponent(demId)}/rename`, {
+          method: 'PUT',
+          body: JSON.stringify({ new_name: newName }),
+        }),
+      () => staticFallbackApi.renameDemonstrator(demId, newName)
+    ),
 
   deleteDemonstrator: (demId: string) =>
-    requestJson<{ deleted: string; remaining_demonstrators: string[] }>(
-      `/api/demonstrators/${encodeURIComponent(demId)}`,
-      { method: 'DELETE' }
+    withFallback(
+      () =>
+        requestJson<{ deleted: string; remaining_demonstrators: string[] }>(
+          `/api/demonstrators/${encodeURIComponent(demId)}`,
+          { method: 'DELETE' }
+        ),
+      () => staticFallbackApi.deleteDemonstrator(demId)
     ),
 
   updateConfig: (demId: string, config: SimulationConfig) =>
-    requestJson<Demonstrator>(`/api/demonstrators/${encodeURIComponent(demId)}/config`, {
-      method: 'PUT',
-      body: JSON.stringify(config),
-    }),
+    withFallback(
+      () =>
+        requestJson<Demonstrator>(`/api/demonstrators/${encodeURIComponent(demId)}/config`, {
+          method: 'PUT',
+          body: JSON.stringify(config),
+        }),
+      () => staticFallbackApi.updateConfig(demId, config)
+    ),
 
   updateParameters: (demId: string, params: SimulationParameters) =>
-    requestJson<Demonstrator>(`/api/demonstrators/${encodeURIComponent(demId)}/parameters`, {
-      method: 'PUT',
-      body: JSON.stringify(params),
-    }),
+    withFallback(
+      () =>
+        requestJson<Demonstrator>(
+          `/api/demonstrators/${encodeURIComponent(demId)}/parameters`,
+          {
+            method: 'PUT',
+            body: JSON.stringify(params),
+          }
+        ),
+      () => staticFallbackApi.updateParameters(demId, params)
+    ),
 
   getPreset: (demId: string, presetFile: string) =>
-    requestJson<{ filename: string; parameters: SimulationParameters }>(
-      `/api/demonstrators/${encodeURIComponent(demId)}/presets/${encodeURIComponent(presetFile)}`
+    withFallback(
+      () =>
+        requestJson<{ filename: string; parameters: SimulationParameters }>(
+          `/api/demonstrators/${encodeURIComponent(demId)}/presets/${encodeURIComponent(presetFile)}`
+        ),
+      () => staticFallbackApi.getPreset(demId, presetFile)
     ),
 
   savePreset: (
@@ -75,50 +143,73 @@ export const api = {
     parameters: SimulationParameters,
     setActive = true
   ) =>
-    requestJson<Demonstrator>(`/api/demonstrators/${encodeURIComponent(demId)}/presets`, {
-      method: 'POST',
-      body: JSON.stringify({ filename, parameters, set_active: setActive }),
-    }),
+    withFallback(
+      () =>
+        requestJson<Demonstrator>(`/api/demonstrators/${encodeURIComponent(demId)}/presets`, {
+          method: 'POST',
+          body: JSON.stringify({ filename, parameters, set_active: setActive }),
+        }),
+      () => staticFallbackApi.savePreset(demId, filename, parameters, setActive)
+    ),
 
   deletePreset: (demId: string, presetFile: string) =>
-    requestJson<Demonstrator>(
-      `/api/demonstrators/${encodeURIComponent(demId)}/presets/${encodeURIComponent(presetFile)}`,
-      { method: 'DELETE' }
+    withFallback(
+      () =>
+        requestJson<Demonstrator>(
+          `/api/demonstrators/${encodeURIComponent(demId)}/presets/${encodeURIComponent(presetFile)}`,
+          { method: 'DELETE' }
+        ),
+      () => staticFallbackApi.deletePreset(demId, presetFile)
     ),
 
   previewCoarsening: (demId: string, params: SimulationParameters) =>
-    requestJson<CoarseningPreviewResponse>(
-      `/api/demonstrators/${encodeURIComponent(demId)}/preview-coarsening`,
-      {
-        method: 'POST',
-        body: JSON.stringify(params),
-      }
+    withFallback(
+      () =>
+        requestJson<CoarseningPreviewResponse>(
+          `/api/demonstrators/${encodeURIComponent(demId)}/preview-coarsening`,
+          {
+            method: 'POST',
+            body: JSON.stringify(params),
+          }
+        ),
+      () => staticFallbackApi.previewCoarsening(demId, params)
     ),
 
   validateParameters: (params: SimulationParameters) =>
-    requestJson<{
-      valid: boolean;
-      normalized_parameters?: SimulationParameters;
-      estimates?: Demonstrator['estimates'];
-      error?: string;
-    }>('/api/demonstrators/validate-parameters', {
-      method: 'POST',
-      body: JSON.stringify(params),
-    }),
+    withFallback(
+      () =>
+        requestJson<{
+          valid: boolean;
+          normalized_parameters?: SimulationParameters;
+          estimates?: Demonstrator['estimates'];
+          error?: string;
+        }>('/api/demonstrators/validate-parameters', {
+          method: 'POST',
+          body: JSON.stringify(params),
+        }),
+      () => staticFallbackApi.validateParameters(params)
+    ),
 
   generateDemoMatrices: (
     demId: string,
     opts: { nx_nodes: number; ny_nodes: number; nz_nodes: number; dof_per_node: number }
   ) =>
-    requestJson<Demonstrator>(
-      `/api/demonstrators/${encodeURIComponent(demId)}/matrices/generate-demo`,
-      {
-        method: 'POST',
-        body: JSON.stringify(opts),
-      }
+    withFallback(
+      () =>
+        requestJson<Demonstrator>(
+          `/api/demonstrators/${encodeURIComponent(demId)}/matrices/generate-demo`,
+          {
+            method: 'POST',
+            body: JSON.stringify(opts),
+          }
+        ),
+      () => staticFallbackApi.generateDemoMatrices(demId, opts)
     ),
 
   uploadMatrixFile: async (demId: string, file: File): Promise<Demonstrator> => {
+    if (useStaticDemo) {
+      return staticFallbackApi.getDemonstrator(demId);
+    }
     const formData = new FormData();
     formData.append('file', file);
     const res = await fetch(
@@ -140,82 +231,144 @@ export const api = {
     demonstratorDir: string,
     parametersOverride?: SimulationParameters
   ) =>
-    requestJson<SimulationJob>('/api/execution/run', {
-      method: 'POST',
-      body: JSON.stringify({
-        demonstrator_dir: demonstratorDir,
-        parameters_override: parametersOverride,
-      }),
-    }),
+    withFallback(
+      () =>
+        requestJson<SimulationJob>('/api/execution/run', {
+          method: 'POST',
+          body: JSON.stringify({
+            demonstrator_dir: demonstratorDir,
+            parameters_override: parametersOverride,
+          }),
+        }),
+      () => staticFallbackApi.runSimulation(demonstratorDir, parametersOverride)
+    ),
 
-  listJobs: () => requestJson<{ jobs: SimulationJob[] }>('/api/execution/jobs'),
+  listJobs: () =>
+    withFallback(
+      () => requestJson<{ jobs: SimulationJob[] }>('/api/execution/jobs'),
+      () => staticFallbackApi.listJobs()
+    ),
 
   getJob: (jobId: string, logOffset = 0) =>
-    requestJson<SimulationJob>(
-      `/api/execution/jobs/${encodeURIComponent(jobId)}?log_offset=${logOffset}`
+    withFallback(
+      () =>
+        requestJson<SimulationJob>(
+          `/api/execution/jobs/${encodeURIComponent(jobId)}?log_offset=${logOffset}`
+        ),
+      () => staticFallbackApi.getJob(jobId)
     ),
 
   cancelJob: (jobId: string) =>
-    requestJson<SimulationJob>(
-      `/api/execution/jobs/${encodeURIComponent(jobId)}/cancel`,
-      { method: 'POST' }
+    withFallback(
+      () =>
+        requestJson<SimulationJob>(
+          `/api/execution/jobs/${encodeURIComponent(jobId)}/cancel`,
+          { method: 'POST' }
+        ),
+      () => staticFallbackApi.cancelJob(jobId)
     ),
 
   deleteJob: (jobId: string, deleteFiles = false) =>
-    requestJson<{ deleted: string }>(
-      `/api/execution/jobs/${encodeURIComponent(jobId)}?delete_files=${deleteFiles}`,
-      { method: 'DELETE' }
+    withFallback(
+      () =>
+        requestJson<{ deleted: string }>(
+          `/api/execution/jobs/${encodeURIComponent(jobId)}?delete_files=${deleteFiles}`,
+          { method: 'DELETE' }
+        ),
+      () => staticFallbackApi.deleteJob(jobId)
     ),
 
   // Batch
-  getBatchConfig: () => requestJson<any>('/api/batch/config'),
+  getBatchConfig: () =>
+    withFallback(
+      () => requestJson<any>('/api/batch/config'),
+      () => staticFallbackApi.getBatchConfig()
+    ),
 
   updateBatchConfig: (config: any) =>
-    requestJson<any>('/api/batch/config', {
-      method: 'PUT',
-      body: JSON.stringify(config),
-    }),
+    withFallback(
+      () =>
+        requestJson<any>('/api/batch/config', {
+          method: 'PUT',
+          body: JSON.stringify(config),
+        }),
+      () => staticFallbackApi.updateBatchConfig(config)
+    ),
 
   startBatchRun: (stopOnError = false) =>
-    requestJson<SimulationJob>('/api/batch/run', {
-      method: 'POST',
-      body: JSON.stringify({ stop_on_error: stopOnError }),
-    }),
+    withFallback(
+      () =>
+        requestJson<SimulationJob>('/api/batch/run', {
+          method: 'POST',
+          body: JSON.stringify({ stop_on_error: stopOnError }),
+        }),
+      () => staticFallbackApi.startBatchRun()
+    ),
 
-  listBatchRuns: () => requestJson<{ batch_runs: any[] }>('/api/batch/runs'),
+  listBatchRuns: () =>
+    withFallback(
+      () => requestJson<{ batch_runs: any[] }>('/api/batch/runs'),
+      () => staticFallbackApi.listBatchRuns()
+    ),
 
   getBatchRunDetail: (batchId: string) =>
-    requestJson<any>(`/api/batch/runs/${encodeURIComponent(batchId)}`),
+    withFallback(
+      () => requestJson<any>(`/api/batch/runs/${encodeURIComponent(batchId)}`),
+      () => staticFallbackApi.getBatchRunDetail(batchId)
+    ),
 
   // Results
   listDemonstratorRuns: (demId: string) =>
-    requestJson<{ demonstrator_id: string; runs: any[] }>(
-      `/api/results/demonstrators/${encodeURIComponent(demId)}/runs`
+    withFallback(
+      () =>
+        requestJson<{ demonstrator_id: string; runs: any[] }>(
+          `/api/results/demonstrators/${encodeURIComponent(demId)}/runs`
+        ),
+      () => staticFallbackApi.listDemonstratorRuns(demId)
     ),
 
   getSingleRunDetail: (resultDir: string) =>
-    requestJson<any>(
-      `/api/results/run-detail?result_dir=${encodeURIComponent(resultDir)}`
+    withFallback(
+      () =>
+        requestJson<any>(
+          `/api/results/run-detail?result_dir=${encodeURIComponent(resultDir)}`
+        ),
+      () => staticFallbackApi.getSingleRunDetail(resultDir)
     ),
 
   getBatchAnalysis: (batchId: string, demonstrator: string) =>
-    requestJson<any>(
-      `/api/results/batch/${encodeURIComponent(batchId)}/analysis?demonstrator=${encodeURIComponent(demonstrator)}`
+    withFallback(
+      () =>
+        requestJson<any>(
+          `/api/results/batch/${encodeURIComponent(batchId)}/analysis?demonstrator=${encodeURIComponent(demonstrator)}`
+        ),
+      () => staticFallbackApi.getBatchAnalysis(batchId, demonstrator)
     ),
 
   // Hardware
-  getHardwareStatus: () => requestJson<any>('/api/hardware/status'),
+  getHardwareStatus: () =>
+    withFallback(
+      () => requestJson<any>('/api/hardware/status'),
+      () => staticFallbackApi.getHardwareStatus()
+    ),
 
   checkDWaveQpu: (solverName: string, region: string) =>
-    requestJson<any>('/api/hardware/dwave-check', {
-      method: 'POST',
-      body: JSON.stringify({ qpu_solver_name: solverName, qpu_region: region }),
-    }),
+    withFallback(
+      () =>
+        requestJson<any>('/api/hardware/dwave-check', {
+          method: 'POST',
+          body: JSON.stringify({ qpu_solver_name: solverName, qpu_region: region }),
+        }),
+      () => staticFallbackApi.checkDWaveQpu(solverName, region)
+    ),
 
   inspectQlmQpu: (qpuName: string) =>
-    requestJson<any>('/api/hardware/qlm-inspect', {
-      method: 'POST',
-      body: JSON.stringify({ qlm_qpu_name: qpuName }),
-    }),
+    withFallback(
+      () =>
+        requestJson<any>('/api/hardware/qlm-inspect', {
+          method: 'POST',
+          body: JSON.stringify({ qlm_qpu_name: qpuName }),
+        }),
+      () => staticFallbackApi.inspectQlmQpu(qpuName)
+    ),
 };
-

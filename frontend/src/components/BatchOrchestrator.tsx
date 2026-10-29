@@ -111,9 +111,14 @@ export const BatchOrchestrator: React.FC<BatchOrchestratorProps> = ({
     <div className="space-y-6">
       {/* Top Banner */}
       <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-4 flex flex-wrap items-center justify-between gap-4 overflow-hidden">
-        <div className="flex items-center gap-2.5 min-w-0">
+        <div className="flex flex-wrap items-center gap-2.5 min-w-0">
           <span className="px-2.5 py-0.5 text-xs font-semibold rounded-full bg-violet-500/20 text-violet-300 border border-violet-500/30 shrink-0">
             Batch Study
+          </span>
+          <span className="text-xs text-slate-400">
+            {config.geometries.length} geometries × {config.coarsening_presets.length} scales ×{' '}
+            {config.algorithm_presets.length} algorithms →{' '}
+            <strong className="text-slate-200">{dryRunCases.length} cases</strong>
           </span>
           <InfoTooltip topicId="batch-study" onOpenWiki={onOpenWiki} />
         </div>
@@ -252,7 +257,19 @@ export const BatchOrchestrator: React.FC<BatchOrchestratorProps> = ({
             Algorithms
           </div>
           <div className="space-y-3">
-            {config.algorithm_presets.map((alg: any, idx: number) => (
+            {config.algorithm_presets.map((alg: any, idx: number) => {
+              const simulated = alg.strategy_parameters?.simulated;
+              const friendlyStrat =
+                alg.partitioning_strategy === 'metis_partitioning'
+                  ? 'METIS · classical'
+                  : alg.partitioning_strategy === 'quantum_annealing'
+                  ? simulated
+                    ? 'Quantum Annealing · emulated'
+                    : 'Quantum Annealing · D-Wave QPU'
+                  : simulated
+                  ? 'QAOA · emulated'
+                  : 'QAOA · QLM QPU';
+              return (
               <div
                 key={alg.key}
                 className="p-3.5 rounded-xl bg-slate-950/80 border border-slate-800 space-y-3 min-w-0 overflow-hidden"
@@ -263,10 +280,10 @@ export const BatchOrchestrator: React.FC<BatchOrchestratorProps> = ({
                       {alg.key}
                     </div>
                     <div
-                      className="text-[11px] text-violet-300 font-mono truncate"
+                      className="text-[11px] text-slate-400 truncate"
                       title={alg.partitioning_strategy}
                     >
-                      {alg.partitioning_strategy}
+                      {friendlyStrat}
                     </div>
                   </div>
                   <div className="flex flex-wrap items-center gap-1 shrink-0">
@@ -312,7 +329,8 @@ export const BatchOrchestrator: React.FC<BatchOrchestratorProps> = ({
                   </details>
                 )}
               </div>
-            ))}
+              );
+            })}
           </div>
         </div>
 

@@ -1,3 +1,5 @@
+@import './theme.css';
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -8,14 +10,35 @@
     height: 8px;
   }
   ::-webkit-scrollbar-track {
-    background: #0f172a;
+    background: rgb(var(--c-slate-900));
   }
   ::-webkit-scrollbar-thumb {
-    background: #334155;
+    background: rgb(var(--c-slate-700));
     border-radius: 4px;
   }
   ::-webkit-scrollbar-thumb:hover {
-    background: #475569;
+    background: rgb(var(--c-slate-600));
   }
 }
 
+/*
+ * Light mode: `text-white` is remapped to a dark ink so text on cards stays
+ * readable. Solid accent buttons must keep real white text, though.
+ */
+html.light :is(
+    .bg-indigo-500, .bg-indigo-600, .bg-violet-600, .bg-emerald-600,
+    .bg-fuchsia-600, .bg-cyan-600, .bg-rose-600, .bg-amber-500, .bg-gradient-to-r
+  ).text-white,
+html.light :is(
+    .bg-indigo-500, .bg-indigo-600, .bg-violet-600, .bg-emerald-600,
+    .bg-fuchsia-600, .bg-cyan-600, .bg-rose-600, .bg-gradient-to-r, .bg-gradient-to-br
+  ) .text-white {
+  color: #ffffff;
+}
+
+/* Softer shadows on light backgrounds. */
+html.light .shadow-lg,
+html.light .shadow-xl,
+html.light .shadow-2xl {
+  --tw-shadow-color: rgb(15 23 42 / 0.08);
+}

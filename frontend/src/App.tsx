@@ -8,8 +8,10 @@ import {
   FolderPlus,
   HelpCircle,
   Layers,
+  Moon,
   Play,
   Sliders,
+  Sun,
   Terminal,
 } from 'lucide-react';
 import { api } from './api/client';
@@ -44,6 +46,16 @@ export function App() {
   const [inspectBatchId, setInspectBatchId] = useState<string | null>(null);
   const [wikiTopicId, setWikiTopicId] = useState<string | null>(null);
 
+  // Dark / Light theme (persisted in localStorage, applied as a class on <html>)
+  const [theme, setTheme] = useState<'dark' | 'light'>(() =>
+    localStorage.getItem('studio-theme') === 'light' ? 'light' : 'dark'
+  );
+  useEffect(() => {
+    const root = document.documentElement;
+    root.classList.toggle('light', theme === 'light');
+    root.classList.toggle('dark', theme === 'dark');
+    localStorage.setItem('studio-theme', theme);
+  }, [theme]);
   const handleOpenWiki = (topicId: string) => {
     setWikiTopicId(topicId);
     setActiveTab('help');
@@ -329,6 +341,15 @@ export function App() {
                 </button>
               );
             })}
+            <button
+              type="button"
+              onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+              title={theme === 'dark' ? 'Switch to Light mode' : 'Switch to Dark mode'}
+              aria-label="Toggle color theme"
+              className="ml-1 inline-flex items-center justify-center w-9 h-9 rounded-xl border border-slate-800 text-slate-400 hover:text-amber-300 hover:bg-slate-900 transition"
+            >
+              {theme === 'dark' ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+            </button>
           </nav>
         </div>
       </header>

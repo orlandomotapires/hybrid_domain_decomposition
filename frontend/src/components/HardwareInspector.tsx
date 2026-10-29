@@ -66,29 +66,43 @@ export const HardwareInspector: React.FC<HardwareInspectorProps> = ({ onOpenWiki
 
         {hwStatus && (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3.5">
-            {Object.entries(hwStatus.backends || {}).map(([key, info]: [string, any]) => (
-              <div
-                key={key}
-                className={`p-3.5 rounded-xl border flex items-center justify-between gap-2 ${
-                  info.ready
-                    ? 'bg-slate-950/80 border-emerald-500/40'
-                    : 'bg-slate-950/60 border-amber-500/30'
-                }`}
-              >
-                <span className="text-xs font-bold font-mono uppercase text-white truncate">
-                  {key}
-                </span>
-                {info.ready ? (
-                  <span className="inline-flex items-center gap-1 text-[11px] text-emerald-400 shrink-0">
-                    <CheckCircle2 className="w-3.5 h-3.5" /> Ready
-                  </span>
-                ) : (
-                  <span className="inline-flex items-center gap-1 text-[11px] text-amber-400 shrink-0">
-                    <ShieldAlert className="w-3.5 h-3.5" /> Missing
-                  </span>
-                )}
-              </div>
-            ))}
+            {Object.entries(hwStatus.backends || {}).map(([key, info]: [string, any]) => {
+              const labelMap: Record<string, string> = {
+                metis: 'Classical METIS',
+                qa_emulated: 'Annealing simulator',
+                qa_hardware: 'D-Wave QPU',
+                qaoa_emulated: 'QAOA simulator',
+                qaoa_hardware: 'QLM QPU',
+              };
+              return (
+                <div
+                  key={key}
+                  className={`p-3.5 rounded-xl border flex flex-col justify-between gap-2 ${
+                    info.ready
+                      ? 'bg-slate-950/80 border-emerald-500/40'
+                      : 'bg-slate-950/60 border-amber-500/30'
+                  }`}
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-xs font-bold font-mono uppercase text-white truncate">
+                      {key}
+                    </span>
+                    {info.ready ? (
+                      <span className="inline-flex items-center gap-1 text-[11px] text-emerald-400 shrink-0">
+                        <CheckCircle2 className="w-3.5 h-3.5" /> Ready
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1 text-[11px] text-amber-400 shrink-0">
+                        <ShieldAlert className="w-3.5 h-3.5" /> Missing
+                      </span>
+                    )}
+                  </div>
+                  <div className="text-[11px] text-slate-400 truncate">
+                    {labelMap[key] || info.label || key}
+                  </div>
+                </div>
+              );
+            })}
           </div>
         )}
       </div>
@@ -101,9 +115,14 @@ export const HardwareInspector: React.FC<HardwareInspectorProps> = ({ onOpenWiki
             <div className="p-2.5 rounded-xl bg-violet-500/15 border border-violet-500/30 text-violet-400">
               <Zap className="w-5 h-5" />
             </div>
-            <h3 className="text-base font-bold text-white">
-              D-Wave QPU Capacity
-            </h3>
+            <div>
+              <h3 className="text-base font-bold text-white">
+                D-Wave QPU Capacity
+              </h3>
+              <p className="text-xs text-slate-400">
+                Largest problem the QPU can embed
+              </p>
+            </div>
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -172,14 +191,19 @@ export const HardwareInspector: React.FC<HardwareInspectorProps> = ({ onOpenWiki
             <div className="p-2.5 rounded-xl bg-fuchsia-500/15 border border-fuchsia-500/30 text-fuchsia-400">
               <Server className="w-5 h-5" />
             </div>
-            <h3 className="text-base font-bold text-white">
-              QLM QPU Inspector
-            </h3>
+            <div>
+              <h3 className="text-base font-bold text-white">
+                QLM QPU Inspector
+              </h3>
+              <p className="text-xs text-slate-400">
+                Qubits and topology of a QLM QPU
+              </p>
+            </div>
           </div>
 
           <div>
             <label className="block text-xs font-medium text-slate-300 mb-1">
-              Target QLM QPU Name (<code>qlm_qpu_name</code>)
+              Target QLM QPU Name
             </label>
             <div className="flex gap-2">
               <input

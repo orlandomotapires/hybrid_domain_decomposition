@@ -2,6 +2,8 @@
 
 This directory contains the backend-specific partitioning implementations used on the coarse graph.
 
+> In the Studio (`./run.sh --ui`), every strategy below can be selected in **Pipeline → Partitioning**, and installed SDKs and remote QPU access can be checked in the **Hardware** tab (D-Wave clique-capacity probe, QLM QPU inspector) before you submit a job. The Studio also warns when the coarse graph range is too large for the selected backend.
+
 ## Supported Partitioning Strategies
 
 ### METIS
