@@ -16,7 +16,7 @@ import uuid
 from typing import Any
 
 
-ROOT_DIR = Path(__file__).resolve().parents[3]
+ROOT_DIR = Path(__file__).resolve().parents[2]
 SRC_DIR = ROOT_DIR / "src"
 
 PIPELINE_STAGES = [
@@ -150,7 +150,7 @@ class JobManager:
         self._load_historical_runs()
 
     def _load_historical_runs(self) -> None:
-        dem_root = ROOT_DIR / "demonstrators"
+        dem_root = ROOT_DIR / "matrices"
         if not dem_root.exists():
             return
         for dem_dir in sorted(dem_root.iterdir()):
@@ -161,7 +161,7 @@ class JobManager:
                 if not run_dir.is_dir() or not run_dir.name.startswith("run_"):
                     continue
                 job_id = f"hist_{dem_dir.name}_{run_dir.name}"
-                rel_res = f"demonstrators/{dem_dir.name}/results/{run_dir.name}"
+                rel_res = f"matrices/{dem_dir.name}/results/{run_dir.name}"
                 strategy_str = ""
                 telemetry: dict[str, Any] = {}
 
@@ -234,7 +234,7 @@ class JobManager:
                     job_id=job_id,
                     job_type="single",
                     title=f"{dem_dir.name}{strategy_str}",
-                    demonstrator_dir=f"demonstrators/{dem_dir.name}",
+                    demonstrator_dir=f"matrices/{dem_dir.name}",
                     status=status_val,
                     current_stage="permutation" if status_val == "completed" else "initialization",
                     stage_progress=100 if status_val == "completed" else 15,
@@ -274,7 +274,7 @@ class JobManager:
         if delete_files and job.result_dir:
             target = (ROOT_DIR / job.result_dir).resolve()
             try:
-                target.relative_to((ROOT_DIR / "demonstrators").resolve())
+                target.relative_to((ROOT_DIR / "matrices").resolve())
                 if target.exists() and target.is_dir() and target.name.startswith("run_"):
                     shutil.rmtree(target)
             except Exception:

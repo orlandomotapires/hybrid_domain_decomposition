@@ -110,16 +110,16 @@
   },
   "geometries": [
     {
-      "demonstrator_dir": "demonstrators/demonstrator_01",
-      "key": "demonstrator_01"
+      "demonstrator_dir": "matrices/matrix_01",
+      "key": "matrix_01"
     },
     {
-      "demonstrator_dir": "demonstrators/demonstrator_02",
-      "key": "demonstrator_02"
+      "demonstrator_dir": "matrices/matrix_02",
+      "key": "matrix_02"
     },
     {
-      "demonstrator_dir": "demonstrators/demonstrator_03",
-      "key": "demonstrator_03"
+      "demonstrator_dir": "matrices/matrix_03",
+      "key": "matrix_03"
     }
   ],
   "summary_percent_bands": [

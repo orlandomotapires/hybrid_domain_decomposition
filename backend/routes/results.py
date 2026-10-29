@@ -8,7 +8,7 @@ import zipfile
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import FileResponse, StreamingResponse
 
-from api.services.plot_service import (
+from backend.services.plot_service import (
     AVAILABLE_CASE_PLOTS,
     build_nb2_latex_lines,
     extract_curve_series,
@@ -19,13 +19,16 @@ import notebook_functions as nf
 
 router = APIRouter(prefix="/api/results", tags=["results"])
 
-ROOT_DIR = Path(__file__).resolve().parents[3]
-DEMONSTRATORS_ROOT = ROOT_DIR / "demonstrators"
+ROOT_DIR = Path(__file__).resolve().parents[2]
+DEMONSTRATORS_ROOT = ROOT_DIR / "matrices"
 BATCH_RUNS_DIR = ROOT_DIR / "batch" / "runs"
 
 
 def _safe_resolve_inside_repo(rel_path: str) -> Path:
-    resolved = (ROOT_DIR / rel_path.lstrip("/")).resolve()
+    normalized = rel_path.lstrip("/")
+    if normalized.startswith("demonstrators/"):
+        normalized = "matrices/" + normalized[len("demonstrators/"):].replace("demonstrator_", "matrix_")
+    resolved = (ROOT_DIR / normalized).resolve()
     try:
         resolved.relative_to(ROOT_DIR.resolve())
     except ValueError as exc:
@@ -37,7 +40,7 @@ def _safe_resolve_inside_repo(rel_path: str) -> Path:
 def list_demonstrator_runs(dem_id: str) -> dict[str, Any]:
     dem_dir = DEMONSTRATORS_ROOT / dem_id
     if not dem_dir.exists():
-        raise HTTPException(status_code=404, detail=f"Demonstrator {dem_id!r} not found")
+        raise HTTPException(status_code=404, detail=f"Matrix workspace {dem_id!r} not found")
 
     results_dir = dem_dir / "results"
     runs: list[dict[str, Any]] = []
@@ -48,7 +51,7 @@ def list_demonstrator_runs(dem_id: str) -> dict[str, Any]:
             key=lambda p: p.name,
             reverse=True,
         ):
-            rel_dir = f"demonstrators/{dem_id}/results/{rdir.name}"
+            rel_dir = f"matrices/{dem_id}/results/{rdir.name}"
             params_path = rdir / "run_simulation_parameters.json"
             metrics_path = rdir / "run_metrics.json"
             params = {}
@@ -179,7 +182,7 @@ def download_run_bundle(result_dir: str = Query(...)) -> StreamingResponse:
 @router.get("/batch/{batch_id}/analysis")
 def get_batch_analysis(
     batch_id: str,
-    demonstrator: str = Query("demonstrator_01"),
+    demonstrator: str = Query("matrix_01"),
 ) -> dict[str, Any]:
     bdir = BATCH_RUNS_DIR / batch_id
     summary_path = bdir / "batch_summary.json"

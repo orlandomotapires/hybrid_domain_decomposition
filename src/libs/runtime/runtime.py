@@ -60,7 +60,7 @@ def run_simulation(
 	parameters_file_override: str | None = None,
 	simulation_parameters_override: dict[str, Any] | None = None,
 ) -> Path:
-	"""Run the simulation for specified name (e.g. demonstrator_01) as defined by ./demonstrators/<demonstrator>/simulation_parameters.json.
+	"""Run the simulation for specified matrix workspace (e.g. matrix_01) as defined by ./matrices/<matrix>/data/simulation_parameters.json.
 
 	Saves the result at the created results directory.
 	"""

@@ -20,20 +20,20 @@ from libs.runtime.utils import (
     validate_and_normalize_simulation_parameters,
     write_json,
 )
-from api.services.matrix_service import (
+from backend.services.matrix_service import (
     generate_demo_fem_matrices,
     list_demonstrator_matrices,
 )
 
-router = APIRouter(prefix="/api/demonstrators", tags=["demonstrators"])
+router = APIRouter(prefix="/api/demonstrators", tags=["matrices"])
 
-ROOT_DIR = Path(__file__).resolve().parents[3]
-DEMONSTRATORS_ROOT = ROOT_DIR / "demonstrators"
+ROOT_DIR = Path(__file__).resolve().parents[2]
+DEMONSTRATORS_ROOT = ROOT_DIR / "matrices"
 
 
 class CreateDemonstratorRequest(BaseModel):
     name: str
-    clone_from: str | None = "demonstrator_01"
+    clone_from: str | None = "matrix_01"
 
 
 class GenerateDemoMatricesRequest(BaseModel):
@@ -133,11 +133,11 @@ def _inspect_demonstrator(dem_dir: Path) -> dict[str, Any]:
         )
         runs_count = len(run_dirs)
         if run_dirs:
-            latest_run = f"demonstrators/{dem_dir.name}/results/{run_dirs[0].name}"
+            latest_run = f"matrices/{dem_dir.name}/results/{run_dirs[0].name}"
 
     return {
         "id": dem_dir.name,
-        "demonstrator_dir": f"demonstrators/{dem_dir.name}",
+        "demonstrator_dir": f"matrices/{dem_dir.name}",
         "simulation_config": simulation_config,
         "simulation_parameters": simulation_parameters,
         "active_parameters_file": params_path.name,
@@ -162,7 +162,7 @@ def list_demonstrators() -> dict[str, Any]:
                     items.append(
                         {
                             "id": d.name,
-                            "demonstrator_dir": f"demonstrators/{d.name}",
+                            "demonstrator_dir": f"matrices/{d.name}",
                             "error": str(exc),
                         }
                     )

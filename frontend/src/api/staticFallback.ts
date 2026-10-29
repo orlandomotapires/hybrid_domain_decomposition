@@ -239,10 +239,10 @@ export const staticFallbackApi = {
     const snap = await getSnapshot();
     const base =
       snap.demonstrators.find((d) => d.id === cloneFrom) || snap.demonstrators[0];
-    const cleanId = name.trim().replace(/[^a-zA-Z0-9_-]/g, '_') || `demo_${Date.now()}`;
+    const cleanId = name.trim().replace(/[^a-zA-Z0-9_-]/g, '_') || `matrix_${Date.now()}`;
     const created: Demonstrator = JSON.parse(JSON.stringify(base));
     created.id = cleanId;
-    created.demonstrator_dir = `demonstrators/${cleanId}`;
+    created.demonstrator_dir = `matrices/${cleanId}`;
     snap.demonstrators.push(created);
     snap.presets[cleanId] = JSON.parse(JSON.stringify(snap.presets[base.id] || {}));
     snap.demonstrator_runs[cleanId] = {
@@ -255,10 +255,10 @@ export const staticFallbackApi = {
   renameDemonstrator: async (demId: string, newName: string): Promise<Demonstrator> => {
     const snap = await getSnapshot();
     const found = snap.demonstrators.find((d) => d.id === demId);
-    if (!found) throw new Error(`Demonstrator ${demId} not found`);
+    if (!found) throw new Error(`Matrix ${demId} not found`);
     const cleanId = newName.trim().replace(/[^a-zA-Z0-9_-]/g, '_');
     found.id = cleanId;
-    found.demonstrator_dir = `demonstrators/${cleanId}`;
+    found.demonstrator_dir = `matrices/${cleanId}`;
     return found;
   },
 
@@ -404,7 +404,7 @@ export const staticFallbackApi = {
     demonstratorDir: string,
     parametersOverride?: SimulationParameters
   ): Promise<SimulationJob> => {
-    const demId = demonstratorDir.replace(/^demonstrators\//, '');
+    const demId = demonstratorDir.replace(/^(demonstrators|matrices)\//, '');
     const snap = await getSnapshot();
     const dem = snap.demonstrators.find((d) => d.id === demId) || snap.demonstrators[0];
     const params = parametersOverride || dem.simulation_parameters;
@@ -424,7 +424,7 @@ export const staticFallbackApi = {
       .toISOString()
       .replace(/[:T-]/g, '_')
       .slice(0, 19);
-    const resultDir = `demonstrators/${dem.id}/results/run_${runStamp}_browser`;
+    const resultDir = `matrices/${dem.id}/results/run_${runStamp}_browser`;
 
     const job: SimulationJob = {
       job_id: jobId,

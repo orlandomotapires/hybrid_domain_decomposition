@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "hybrid-domain-decomposition"
-version = "0.1.0"
-description = "Hybrid graph partitioning and FEM matrix permutation workflows for thesis experiments"
+version = "1.0.0"
+description = "Hybrid quantum-classical graph partitioning and sparse matrix permutation studio & pipeline"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { file = "LICENSE" }
@@ -26,7 +26,6 @@ dependencies = [
 [project.scripts]
 hdd-run = "main:cli_main"
 hdd-qlm-inspect = "libs.multilevel_scheme.partitioning.qaoa.qlm_inspect:cli_main"
-hdd-studio = "api.app:cli_main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}

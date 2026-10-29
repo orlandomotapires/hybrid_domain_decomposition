@@ -32,7 +32,7 @@ type ActiveTab = 'pipeline' | 'execution' | 'batch' | 'results' | 'hardware' | '
 export function App() {
   const [activeTab, setActiveTab] = useState<ActiveTab>('pipeline');
   const [demonstrators, setDemonstrators] = useState<Demonstrator[]>([]);
-  const [selectedDemId, setSelectedDemId] = useState<string>('demonstrator_01');
+  const [selectedDemId, setSelectedDemId] = useState<string>('matrix_01');
   const [config, setConfig] = useState<SimulationConfig | null>(null);
   const [parameters, setParameters] = useState<SimulationParameters | null>(null);
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
@@ -61,10 +61,10 @@ export function App() {
     setActiveTab('help');
   };
 
-  // New demonstrator modal
+  // New matrix modal
   const [showNewDemModal, setShowNewDemModal] = useState(false);
   const [newDemName, setNewDemName] = useState('');
-  const [cloneFromDem, setCloneFromDem] = useState('demonstrator_01');
+  const [cloneFromDem, setCloneFromDem] = useState('matrix_01');
 
   const showToast = (msg: string) => {
     setToast(msg);
@@ -444,22 +444,22 @@ export function App() {
         )}
       </main>
 
-      {/* New / Clone Demonstrator Modal */}
+      {/* New / Clone Matrix Modal */}
       {showNewDemModal && (
         <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-slate-900 border border-slate-700 rounded-2xl max-w-md w-full p-6 space-y-4">
             <h3 className="text-base font-bold text-white">
-              Create or Clone Simulation Demonstrator
+              Create or Clone Matrix Workspace
             </h3>
             <div>
               <label className="block text-xs text-slate-300 mb-1">
-                New Demonstrator Folder Name
+                New Matrix Folder Name
               </label>
               <input
                 type="text"
                 value={newDemName}
                 onChange={(e) => setNewDemName(e.target.value)}
-                placeholder="e.g. demonstrator_04_turbine"
+                placeholder="e.g. matrix_04_turbine"
                 className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm font-mono text-white"
               />
             </div>
@@ -499,14 +499,14 @@ export function App() {
                     await loadDemonstrators(created.id);
                     setNewDemName('');
                     setShowNewDemModal(false);
-                    showToast(`Created demonstrator ${created.id}`);
+                    showToast(`Created matrix workspace ${created.id}`);
                   } catch (err: any) {
                     showToast(`Error: ${err.message}`);
                   }
                 }}
                 className="px-4 py-2 rounded-lg text-xs font-semibold bg-indigo-600 text-white hover:bg-indigo-500"
               >
-                Create Demonstrator
+                Create Matrix
               </button>
             </div>
           </div>

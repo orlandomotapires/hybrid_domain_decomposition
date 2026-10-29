@@ -9,22 +9,23 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 import uvicorn
 
-ROOT_DIR = Path(__file__).resolve().parents[2]
+ROOT_DIR = Path(__file__).resolve().parents[1]
 SRC_DIR = ROOT_DIR / "src"
 FRONTEND_DIST = ROOT_DIR / "frontend" / "dist"
 
-if str(SRC_DIR) not in sys.path:
-    sys.path.insert(0, str(SRC_DIR))
+for p in (str(ROOT_DIR), str(SRC_DIR)):
+    if p not in sys.path:
+        sys.path.insert(0, p)
 
-from api.routes.demonstrators import router as demonstrators_router
-from api.routes.execution import router as execution_router
-from api.routes.batch import router as batch_router
-from api.routes.results import router as results_router
-from api.routes.quantum_hw import router as quantum_hw_router
+from backend.routes.matrices import router as matrices_router
+from backend.routes.execution import router as execution_router
+from backend.routes.batch import router as batch_router
+from backend.routes.results import router as results_router
+from backend.routes.quantum_hw import router as quantum_hw_router
 
 app = FastAPI(
     title="Hybrid Domain Decomposition Studio API",
-    description="Web Studio API for Hybrid Quantum-Classical Graph Partitioning & FEM Matrix Permutation Pipeline",
+    description="Web Studio API for Hybrid Quantum-Classical Graph Partitioning & Matrix Permutation Pipeline",
     version="1.0.0",
 )
 
@@ -36,7 +37,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.include_router(demonstrators_router)
+app.include_router(matrices_router)
 app.include_router(execution_router)
 app.include_router(batch_router)
 app.include_router(results_router)
@@ -73,14 +74,13 @@ def cli_main(argv: list[str] | None = None) -> None:
 
     print(f"Starting Hybrid Domain Decomposition Studio on http://{args.host}:{args.port}")
     uvicorn.run(
-        "api.app:app",
+        "backend.app:app",
         host=args.host,
         port=args.port,
         reload=args.reload,
-        app_dir=str(SRC_DIR),
+        app_dir=str(ROOT_DIR),
     )
 
 
 if __name__ == "__main__":
     cli_main()
-

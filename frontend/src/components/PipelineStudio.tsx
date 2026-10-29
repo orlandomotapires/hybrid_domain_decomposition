@@ -2139,22 +2139,22 @@ export const PipelineStudio: React.FC<PipelineStudioProps> = ({
         </div>
       )}
 
-      {/* Rename Demonstrator Modal */}
+      {/* Rename Matrix Modal */}
       {showRenameModal && (
         <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-slate-900 border border-slate-700 rounded-2xl max-w-md w-full p-6 space-y-4">
             <h3 className="text-base font-bold text-white">
-              Rename Demonstrator ({demonstrator.id})
+              Rename Matrix ({demonstrator.id})
             </h3>
             <p className="text-xs text-slate-400">
-              Renames the folder inside <code>demonstrators/</code> while preserving all matrices,
+              Renames the folder inside <code>matrices/</code> while preserving all matrices,
               parameter presets, and run history.
             </p>
             <input
               type="text"
               value={renameValue}
               onChange={(e) => setRenameValue(e.target.value)}
-              placeholder="e.g. demonstrator_01_blade_qa"
+              placeholder="e.g. matrix_01_blade_qa"
               className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm font-mono text-white"
             />
             <div className="flex justify-end gap-2 pt-2">
@@ -2183,18 +2183,18 @@ export const PipelineStudio: React.FC<PipelineStudioProps> = ({
         </div>
       )}
 
-      {/* Delete Demonstrator Confirmation Modal */}
+      {/* Delete Matrix Confirmation Modal */}
       {showDeleteDemModal && (
         <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-slate-900 border border-rose-500/40 rounded-2xl max-w-md w-full p-6 space-y-4">
             <div className="flex items-center gap-2.5 text-rose-400">
               <AlertTriangle className="w-5 h-5 shrink-0" />
               <h3 className="text-base font-bold text-white">
-                Delete Demonstrator &quot;{demonstrator.id}&quot;?
+                Delete Matrix &quot;{demonstrator.id}&quot;?
               </h3>
             </div>
             <p className="text-xs text-slate-300 leading-relaxed">
-              This will permanently remove <code>demonstrators/{demonstrator.id}/</code> along with
+              This will permanently remove <code>matrices/{demonstrator.id}/</code> along with
               its local matrices, parameter presets, and saved run folders.
             </p>
             <div className="flex justify-end gap-2 pt-2">

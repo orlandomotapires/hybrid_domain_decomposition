@@ -12,19 +12,19 @@ from libs.runtime.runtime import run_simulation
 def cli_main(argv: list[str] | None = None) -> None:
 	parser = argparse.ArgumentParser(
 		description=(
-			"Reads <demonstrator_dir>/data/simulation_config.json and the referenced parameters JSON. "
+			"Reads <matrix_dir>/data/simulation_config.json and the referenced parameters JSON. "
 			"Runs the strategy from partitioning_parameters.PARTITIONING_STRATEGY. "
-			"Only writes outputs listed in simulation_config.save_output into <demonstrator_dir>/results/<timestamp>/."
+			"Only writes outputs listed in simulation_config.save_output into <matrix_dir>/results/<timestamp>/."
 		),
 		epilog=(
 			"Run in background:\n"
-			"  nohup ./run demonstrators/demonstrator_01 > demonstrators/demonstrator_01.log 2>&1 &"
+			"  nohup ./run.sh matrices/matrix_01 > matrices/matrix_01.log 2>&1 &"
 		),
 		formatter_class=argparse.RawTextHelpFormatter,
 	)
 	parser.add_argument(
 		"demonstrator_dir",
-		help="Demonstrator directory, e.g. ./demonstrators/demonstrator_01",
+		help="Matrix workspace directory, e.g. ./matrices/matrix_01",
 	)
 
 	args = parser.parse_args(argv)

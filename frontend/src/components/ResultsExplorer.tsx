@@ -72,7 +72,7 @@ export const ResultsExplorer: React.FC<ResultsExplorerProps> = ({
   const [activeBatchId, setActiveBatchId] = useState<string>(
     initialBatchId || 'batch_20260521_151902'
   );
-  const [batchDem, setBatchDem] = useState<string>('demonstrator_01');
+  const [batchDem, setBatchDem] = useState<string>('matrix_01');
   const [batchAnalysis, setBatchAnalysis] = useState<any | null>(null);
   const [matrixTab, setMatrixTab] = useState<'K' | 'M'>('K');
   const [activeLatexTab, setActiveLatexTab] = useState<
@@ -221,9 +221,9 @@ export const ResultsExplorer: React.FC<ResultsExplorerProps> = ({
               </div>
 
               <div className="flex items-center gap-2">
-                <span className="text-xs text-slate-400 font-medium">Demonstrator:</span>
+                <span className="text-xs text-slate-400 font-medium">Matrix:</span>
                 <div className="flex items-center gap-1">
-                  {(batchAnalysis?.available_demonstrators || ['demonstrator_01', 'demonstrator_02']).map(
+                  {(batchAnalysis?.available_demonstrators || ['matrix_01', 'matrix_02']).map(
                     (d: string) => (
                       <button
                         key={d}
@@ -536,7 +536,7 @@ export const ResultsExplorer: React.FC<ResultsExplorerProps> = ({
           <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-4 flex flex-wrap items-center justify-between gap-4">
             <div className="flex flex-wrap items-center gap-4 min-w-0">
               <div className="flex items-center gap-2">
-                <span className="text-xs text-slate-400 font-medium">Demonstrator:</span>
+                <span className="text-xs text-slate-400 font-medium">Matrix:</span>
                 <select
                   value={demId}
                   onChange={(e) => {

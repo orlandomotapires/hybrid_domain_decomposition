@@ -547,7 +547,7 @@ export const ExecutionConsole: React.FC<ExecutionConsoleProps> = ({
               <Activity className="w-10 h-10 text-indigo-400 mx-auto" />
               <h3 className="text-base font-bold text-white">No Run Selected</h3>
               <p className="text-xs text-slate-400">
-                Pick a demonstrator above and press Run to stream the log here.
+                Pick a matrix above and press Run to stream the log here.
               </p>
               <button
                 onClick={() => onTriggerRun(selectedDem, activeParams || undefined)}

@@ -1,46 +1,28 @@
-# Runtime And Source Layout
+# Scientific Simulation Engine (`src/`)
 
-This document summarizes the runtime flow, the core pipeline files, and the Studio API.
+`src/` contains the pure mathematical and algorithmic implementation of the multilevel domain decomposition and sparse matrix permutation pipeline. Web-server code lives separately in [`../backend/`](../backend/README.md).
 
 ## Runtime Flow
 
-The main runtime path is:
+1. **[main.py](main.py)** parses the target matrix workspace directory (e.g. `matrices/matrix_01`).
+2. **[libs/runtime/runtime.py](libs/runtime/runtime.py)** loads `data/simulation_config.json` and the active parameter preset JSON, validates all inputs, and resolves `.mtx` paths.
+3. **[libs/domain_decomposition.py](libs/domain_decomposition.py)** executes the 5-stage pipeline:
+   - **Stage 1 — Graph Construction:** Aggregates nodal $(d \times d)$ blocks of the stiffness matrix $K$ into a weighted undirected graph $G_0 = (V_0, E_0, c, w)$.
+   - **Stage 2 — Coarsening:** Contracts $G_0 \to G_1 \to \dots \to G_L$ using Heavy-Edge Matching (`random`, `heavy_edge`, `modified`, `light_edge`) until the vertex count reaches `[coarsen_inferior_limit, coarsen_superior_limit]`.
+   - **Stage 3 — Coarse Partitioning:** Partitions the coarse graph $G_L$ into $k$ subdomains using classical METIS (`metis_partitioning`), recursive QUBO Quantum Annealing (`quantum_annealing`), or recursive Ising QAOA (`quantum_approximation_optimizer`).
+   - **Stage 4 — Uncoarsening & Refinement:** Projects the partition back level-by-level to $G_0$, applying multi-way Kernighan–Lin boundary refinement (`cut` or `cut_balance`) at every level.
+   - **Stage 5 — Matrix Permutation & Profiling:** Builds the global DOF permutation vector $P$, computes $K' = P K P^\top$ and $M' = P M P^\top$, and evaluates structural bandwidth and diagonal locality metrics.
+4. **[libs/runtime/runtime.py](libs/runtime/runtime.py)** writes the enabled artifacts (`save_output`) to `matrices/<name>/results/run_<timestamp>/`.
 
-1. [main.py](main.py) reads the demonstrator directory argument.
-2. [runtime.py](libs/runtime/runtime.py) loads `simulation_config.json` and the referenced parameters file, validates inputs, and resolves matrix paths.
-3. [domain_decomposition.py](libs/domain_decomposition.py) runs:
-   - matrix to graph conversion (K-based graph)
-   - graph coarsening
-   - coarse partitioning
-   - uncoarsening and refinement
-   - permutation of both K and M matrices
-4. [runtime.py](libs/runtime/runtime.py) writes only the outputs listed in `save_output` to `demonstrators/<name>/results/<timestamp>/`.
+## Core Modules
 
-The Studio does not reimplement this flow: [job_manager.py](api/services/job_manager.py) launches a Python subprocess that calls `run_simulation` from [runtime.py](libs/runtime/runtime.py) (batches launch [batch/run_batch.py](../batch/run_batch.py)) and parses its log output.
-
-## Core Pipeline Modules
-
-- [main.py](main.py) — CLI entry point.
-- [libs/runtime/runtime.py](libs/runtime/runtime.py) — orchestrates a run and writes outputs.
-- [libs/runtime/utils.py](libs/runtime/utils.py) — configuration validation, matrix IO, and artifact writers (`AVAILABLE_SAVE_OUTPUTS`).
-- [libs/runtime/log.py](libs/runtime/log.py) — timestamped `[<time> <LEVEL>]` logger (INFO / VERBOSE / WARNING / ERROR) used by `run_log` and parsed by the Studio's log stream.
-- [libs/domain_decomposition.py](libs/domain_decomposition.py) — end-to-end pipeline (graph, coarsen, partition, uncoarsen, permute).
-- [libs/permutation.py](libs/permutation.py) — applies the computed ordering to K and M.
-- [libs/profiling/matrix_metrics.py](libs/profiling/matrix_metrics.py) — computes metrics and plots for original vs permuted matrices.
-- [libs/multilevel_scheme/coarsening/](libs/multilevel_scheme/coarsening/) — heavy-edge-matching coarsening (`random`, `sorted`, `modified`, `light`).
-- [libs/multilevel_scheme/partitioning/](libs/multilevel_scheme/partitioning/) — METIS, QA, and QAOA partitioning backends (see [qa/README.md](libs/multilevel_scheme/partitioning/qa/README.md)).
-- [libs/multilevel_scheme/uncoarsening/](libs/multilevel_scheme/uncoarsening/) — uncoarsening and Kernighan–Lin-style refinement.
-
-## Studio API (`api/`)
-
-A FastAPI app that serves the REST API and the built frontend (`frontend/dist/`). Start it with `./run.sh --ui`; the interactive docs are at `/docs`.
-
-- [api/app.py](api/app.py) — app factory, CLI (`--host`, `--port`, `--reload`), and SPA static serving (`index.html` is sent with `no-cache` headers).
-- [api/routes/demonstrators.py](api/routes/demonstrators.py) — `/api/demonstrators`: list / create / clone / rename / delete demonstrators; read and save config and parameters; manage presets; validate parameters; upload `.mtx` files or generate demo meshes; dry-run coarsening preview.
-- [api/routes/execution.py](api/routes/execution.py) — `/api/execution`: start, list, poll (incremental logs), cancel, and delete simulation jobs.
-- [api/routes/batch.py](api/routes/batch.py) — `/api/batch`: read and save `batch_configuration.json`, launch batches, list past batch runs.
-- [api/routes/results.py](api/routes/results.py) — `/api/results`: runs for each demonstrator, run detail and KPIs, on-demand plot images, `.zip` bundle download, batch analysis with LaTeX tables.
-- [api/routes/quantum_hw.py](api/routes/quantum_hw.py) — `/api/hardware`: SDK readiness, D-Wave clique-capacity probe, QLM QPU inspection.
-- [api/services/job_manager.py](api/services/job_manager.py) — background subprocess jobs, log-level parsing, stage and telemetry extraction, per-stage timing, and loading of past runs from disk.
-- [api/services/matrix_service.py](api/services/matrix_service.py) — `.mtx` header inspection and synthetic 3D FEM K/M generation.
-- [api/services/plot_service.py](api/services/plot_service.py) — curve and KPI extraction, cached plot rendering, LaTeX table builders.
+- **[main.py](main.py)** — CLI entry point.
+- **[libs/domain_decomposition.py](libs/domain_decomposition.py)** — End-to-end multilevel graph partitioning and matrix permutation orchestrator.
+- **[libs/permutation.py](libs/permutation.py)** — Applies node-level partition orderings to DOF-level sparse matrices $K$ and $M$.
+- **[libs/profiling/matrix_metrics.py](libs/profiling/matrix_metrics.py)** — Computes bandwidth, average bandwidth, $nB^2$ figure-of-merit, and near-diagonal band concentration curves.
+- **[libs/runtime/runtime.py](libs/runtime/runtime.py)** — File I/O, run directory creation, and artifact export.
+- **[libs/runtime/utils.py](libs/runtime/utils.py)** — Schema validation (`validate_and_normalize_simulation_config`, `validate_and_normalize_simulation_parameters`) and Matrix Market helpers.
+- **[libs/runtime/log.py](libs/runtime/log.py)** — Timestamped `[<time> <LEVEL>]` logger (`INFO`, `VERBOSE`, `WARNING`, `ERROR`).
+- **[libs/multilevel_scheme/coarsening/](libs/multilevel_scheme/coarsening/)** — Heavy-Edge Matching coarsening strategies.
+- **[libs/multilevel_scheme/partitioning/](libs/multilevel_scheme/partitioning/)** — Classical METIS, Quantum Annealing (`qa/`), and QAOA (`qaoa/`) solvers (see [qa/README.md](libs/multilevel_scheme/partitioning/qa/README.md)).
+- **[libs/multilevel_scheme/uncoarsening/](libs/multilevel_scheme/uncoarsening/)** — Multilevel projection and Kernighan–Lin boundary refinement.

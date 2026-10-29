@@ -6,8 +6,8 @@ __pycache__/
 *.pyd
 
 batch/runs/
-demonstrators/*/results/
-demonstrators/*/data/matrices/
+matrices/*/results/
+matrices/*/data/matrices/
 threash_can/staged_deletions/
 results/
 

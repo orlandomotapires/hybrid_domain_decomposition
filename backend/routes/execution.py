@@ -6,7 +6,7 @@ from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
 
 from libs.runtime.utils import validate_and_normalize_simulation_parameters
-from api.services.job_manager import PIPELINE_STAGES, job_manager
+from backend.services.job_manager import PIPELINE_STAGES, job_manager
 
 router = APIRouter(prefix="/api/execution", tags=["execution"])
 

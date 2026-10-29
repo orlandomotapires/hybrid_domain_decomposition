@@ -676,7 +676,7 @@ def build_matrix_summary_lines(prefix, DEMONSTRATOR, demo_rows, demo_suffix=None
     """
     Generate LaTeX table lines for K or M matrix metrics from batch summary rows.
     prefix: 'K' or 'M'
-    DEMONSTRATOR: demonstrator name (e.g. 'demonstrator_01')
+    DEMONSTRATOR: demonstrator name (e.g. 'matrix_01')
     demo_rows: filtered rows for this demonstrator
     demo_suffix: string of digits for display/label (optional)
     """

@@ -179,14 +179,14 @@ export const WIKI_TOPICS: Record<string, WikiTopic> = {
     codeKey: 'simulation_config.parameters_file_path',
     badge: 'string (.json) • Config',
     shortSummary:
-      'Selects which JSON parameter file inside demonstrators/<id>/data/ is loaded for the simulation.',
+      'Selects which JSON parameter file inside matrices/<id>/data/ is loaded for the simulation.',
     scientificBackground: [
-      'Decouples the demonstrator geometry configuration (simulation_config.json) from the algorithmic hyperparameters (simulation_parameters.json), allowing multiple named parameter presets to coexist in the same demonstrator folder.',
+      'Decouples the matrix workspace configuration (simulation_config.json) from the algorithmic hyperparameters (simulation_parameters.json), allowing multiple named parameter presets to coexist in the same matrix folder.',
     ],
     implementationDetails: [
       'Stored in data/simulation_config.json under the key "parameters_file_path". You can create new presets via "Save as Preset" and switch between them at any time.',
     ],
-    sourceFile: 'src/libs/Legacy/config_loader.py',
+    sourceFile: 'src/libs/runtime/utils.py',
   },
 
   'param-matrix-k': {
@@ -203,7 +203,7 @@ export const WIKI_TOPICS: Record<string, WikiTopic> = {
       'Because K defines the sparsity pattern of static and implicit structural solvers, the weighted graph G_0 is constructed directly from K.',
     ],
     implementationDetails: [
-      'Resolved relative to demonstrators/<id>/data/matrices/. Loaded as a SciPy CSR sparse matrix via scipy.io.mmread.',
+      'Resolved relative to matrices/<id>/data/matrices/. Loaded as a SciPy CSR sparse matrix via scipy.io.mmread.',
     ],
     sourceFile: 'src/libs/runtime/utils.py',
   },
@@ -223,7 +223,7 @@ export const WIKI_TOPICS: Record<string, WikiTopic> = {
     implementationDetails: [
       'Verified at runtime to have the exact same dimensions (N × N) as K. Permuted and profiled alongside K in Stage 5.',
     ],
-    sourceFile: 'src/orchestrator.py',
+    sourceFile: 'src/libs/runtime/runtime.py',
   },
 
   'stage-1-mtx-tools': {
@@ -232,15 +232,15 @@ export const WIKI_TOPICS: Record<string, WikiTopic> = {
     title: 'Matrix Market (.mtx) Upload & 3D FEM Mesh Generator',
     badge: 'Studio Provisioning Tool',
     shortSummary:
-      'Upload custom ANSYS Matrix Market (.mtx) files or generate a realistic 3D structured hexahedral FEM blade mesh (K and M) with one click.',
+      'Upload custom Matrix Market (.mtx) files or generate a realistic 3D structured hexahedral FEM mesh (K and M) with one click.',
     scientificBackground: [
-      'Because raw industrial ANSYS Matrix Market files can be tens or hundreds of megabytes, demonstrators/*/data/matrices/*.mtx are excluded from Git tracking via .gitignore.',
+      'Because raw industrial Matrix Market files can be tens or hundreds of megabytes, matrices/*/data/matrices/*.mtx are excluded from Git tracking via .gitignore.',
       'To allow immediate experimentation on fresh clones or custom geometries, the Studio provides both a direct .mtx file uploader and a synthetic 3D FEM hexahedral elastic mesh generator.',
     ],
     implementationDetails: [
-      'Implemented in src/api/services/matrix_service.py. Builds a 3D structured nodal grid with 26-neighbor 3D brick stencil couplings and 3 DOFs per node, writing valid symmetric positive-definite K and M .mtx files.',
+      'Implemented in backend/services/matrix_service.py. Builds a 3D structured nodal grid with 26-neighbor 3D brick stencil couplings and 3 DOFs per node, writing valid symmetric positive-definite K and M .mtx files.',
     ],
-    sourceFile: 'src/api/services/matrix_service.py',
+    sourceFile: 'backend/services/matrix_service.py',
   },
 
   'param-dof-per-node': {
@@ -1141,7 +1141,7 @@ export const WIKI_TOPICS: Record<string, WikiTopic> = {
     implementationDetails: [
       'Computed automatically in the Results Explorer and thesis LaTeX table generator from original_bw, permuted_bw, and matrix dimension N.',
     ],
-    sourceFile: 'src/api/routes/results.py',
+    sourceFile: 'backend/routes/results.py',
   },
 
   'metric-avg-bandwidth': {
@@ -1204,27 +1204,27 @@ export const WIKI_TOPICS: Record<string, WikiTopic> = {
   'batch-study': {
     id: 'batch-study',
     category: 'workflows',
-    title: 'Multi-Geometry & Multi-Scale Batch Study Orchestrator',
+    title: 'Multi-Matrix & Multi-Scale Batch Study Orchestrator',
     codeKey: 'batch/batch_configuration.json',
     badge: 'Batch Benchmarking Engine',
     shortSummary:
-      'Automates Cartesian benchmarking across multiple demonstrators (geometries), coarsening scales (small, medium, big), and partitioning backends.',
-    formula: 'Cases = Geometries × Allowed(Algorithm_Presets × Coarsening_Scales)',
+      'Automates Cartesian benchmarking across multiple matrices (geometries), coarsening scales (small, medium, big), and partitioning backends.',
+    formula: 'Cases = Matrices × Allowed(Algorithm_Presets × Coarsening_Scales)',
     scientificBackground: [
-      'To systematically evaluate classical vs. quantum partitioning in Chapter 8 of the thesis, each geometry (Demonstrators 01, 02, 03) is tested across multiple coarse graph scales and solver backends under identical uncoarsening rules.',
+      'To systematically evaluate classical vs. quantum partitioning, each matrix case (matrix_01, matrix_02, matrix_03) is tested across multiple coarse graph scales and solver backends under identical uncoarsening rules.',
       'Each algorithm preset specifies allowed_sizes (for instance, QAOA runs on "small" 4–5 node coarse graphs due to qubit simulation/hardware limits, whereas METIS and QA run on "small", "medium", and "big").',
     ],
     implementationDetails: [
-      'Configured via batch/batch_configuration.json and executed by batch/batch_runner.py, producing batch/runs/batch_<timestamp>/batch_summary.json.',
+      'Configured via batch/batch_configuration.json and executed by batch/run_batch.py, producing batch/runs/batch_<timestamp>/batch_summary.json.',
     ],
-    sourceFile: 'batch/batch_runner.py',
+    sourceFile: 'batch/run_batch.py',
   },
 
   'hardware-backends': {
     id: 'hardware-backends',
     category: 'workflows',
     title: 'Runtime SDKs & Quantum Hardware Probes',
-    codeKey: 'src/api/routes/quantum_hw.py',
+    codeKey: 'backend/routes/quantum_hw.py',
     badge: 'Environment & QPU Diagnostics',
     shortSummary:
       'Checks installed Python classical/quantum SDKs (PyMETIS, D-Wave Neal, D-Wave System, PennyLane, myQLM) and probes live QPU capacities.',
@@ -1233,9 +1233,9 @@ export const WIKI_TOPICS: Record<string, WikiTopic> = {
       'Gate-based QAOA on QLM / myQLM inspects the target QPU specifications (reported_max_qubits, connectivity topology, and COBYLA remote variational job support).',
     ],
     implementationDetails: [
-      'Calls get_qpu_dense_clique_capacity() via dwave-system / minorminer and get_qlm_qpu_api_summary() in src/libs/multilevel_scheme/partitioning/qa.py.',
+      'Calls get_qpu_dense_clique_capacity() via dwave-system / minorminer and get_qlm_qpu_api_summary() in src/libs/multilevel_scheme/partitioning/qa/.',
     ],
-    sourceFile: 'src/libs/multilevel_scheme/partitioning/qa.py',
+    sourceFile: 'backend/routes/quantum_hw.py',
   },
 
   'tool-dry-run-coarsening': {
@@ -1250,9 +1250,9 @@ export const WIKI_TOPICS: Record<string, WikiTopic> = {
       'Shows the vertex and edge counts, contraction ratio r_l = |V_l|/|V_{l-1}|, and maximum supernode weight at each level, along with whether the target range [coarsen_inferior_limit, coarsen_superior_limit] was reached or why contraction stopped.',
     ],
     implementationDetails: [
-      'Implemented in preview_coarsening_trajectory() in src/api/routes/demonstrators.py.',
+      'Implemented in preview_coarsening_trajectory() in backend/routes/matrices.py.',
     ],
-    sourceFile: 'src/api/routes/demonstrators.py',
+    sourceFile: 'backend/routes/matrices.py',
   },
 
   'tool-feasibility-check': {

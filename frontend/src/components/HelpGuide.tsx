@@ -302,9 +302,9 @@ export const HelpGuide: React.FC<HelpGuideProps> = ({
 
                 <div className="grid grid-cols-1 md:grid-cols-5 gap-3 text-xs">
                   <div className="p-3.5 rounded-xl bg-slate-950 border border-slate-800 space-y-1">
-                    <div className="font-mono font-bold text-indigo-400">1. Pick Demonstrator</div>
+                    <div className="font-mono font-bold text-indigo-400">1. Pick Matrix</div>
                     <p className="text-slate-300">
-                      Click <code>demonstrator_01</code>, <code>02</code>, or <code>03</code> in the top bar to load its configuration.
+                      Click <code>matrix_01</code>, <code>02</code>, or <code>03</code> in the top bar to load its configuration.
                     </p>
                   </div>
                   <div className="p-3.5 rounded-xl bg-slate-950 border border-slate-800 space-y-1">
@@ -349,7 +349,7 @@ export const HelpGuide: React.FC<HelpGuideProps> = ({
                     onClick={onOpenNewDemonstrator}
                     className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-bold bg-emerald-600 hover:bg-emerald-500 text-white transition"
                   >
-                    <FolderPlus className="w-3.5 h-3.5" /> Create New Demonstrator
+                    <FolderPlus className="w-3.5 h-3.5" /> Create New Matrix
                   </button>
                 </div>
 
@@ -357,7 +357,7 @@ export const HelpGuide: React.FC<HelpGuideProps> = ({
                   <div className="p-3.5 rounded-xl bg-slate-950 border border-slate-800 space-y-1">
                     <div className="font-mono font-bold text-emerald-400">1. Clone Template</div>
                     <p className="text-slate-300">
-                      Click <strong>+ New</strong> in the header bar, name your demonstrator folder, and clone settings from an existing simulation.
+                      Click <strong>+ New</strong> in the header bar, name your matrix folder, and clone settings from an existing workspace.
                     </p>
                   </div>
                   <div className="p-3.5 rounded-xl bg-slate-950 border border-slate-800 space-y-1">

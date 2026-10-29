@@ -6,7 +6,7 @@ import sys
 from typing import Any
 import numpy as np
 
-ROOT_DIR = Path(__file__).resolve().parents[3]
+ROOT_DIR = Path(__file__).resolve().parents[2]
 SRC_DIR = ROOT_DIR / "src"
 NOTEBOOKS_DIR = ROOT_DIR / "notebooks"
 

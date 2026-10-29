@@ -7,11 +7,11 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from libs.runtime.utils import write_json
-from api.services.job_manager import job_manager
+from backend.services.job_manager import job_manager
 
 router = APIRouter(prefix="/api/batch", tags=["batch"])
 
-ROOT_DIR = Path(__file__).resolve().parents[3]
+ROOT_DIR = Path(__file__).resolve().parents[2]
 BATCH_DIR = ROOT_DIR / "batch"
 BATCH_CONFIG_PATH = BATCH_DIR / "batch_configuration.json"
 BATCH_RUNS_DIR = BATCH_DIR / "runs"

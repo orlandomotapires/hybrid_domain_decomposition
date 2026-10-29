@@ -17,16 +17,18 @@ resolve_python() {
 
 show_usage() {
 	echo "Usage:" >&2
-	echo "  ./run.sh <simulation_dir>" >&2
-	echo "  ./run.sh --ui [--host HOST] [--port PORT]" >&2
+	echo "  ./run.sh <matrix_dir>" >&2
+	echo "  ./run.sh --ui [--host HOST] [--port PORT] [--reload]" >&2
 	echo "  ./run.sh --run_batch [batch_args...]" >&2
 	echo "  ./run.sh --qlm_inspect [inspect_args...]" >&2
+	echo "  ./run.sh --export-demo" >&2
 	echo "" >&2
 	echo "Examples:" >&2
-	echo "  ./run.sh demonstrators/demonstrator_01" >&2
+	echo "  ./run.sh matrices/matrix_01" >&2
 	echo "  ./run.sh --ui" >&2
 	echo "  ./run.sh --run_batch --dry-run" >&2
 	echo "  ./run.sh --qlm_inspect --help" >&2
+	echo "  ./run.sh --export-demo" >&2
 }
 
 if [[ $# -lt 1 ]]; then
@@ -45,8 +47,13 @@ case "$1" in
 		fi
 		echo "Building frontend studio bundle..."
 		npm --prefix "$ROOT_DIR/frontend" run build
-		cd "$ROOT_DIR/src"
-		exec "$PYTHON_BIN" -m api.app "$@"
+		cd "$ROOT_DIR"
+		exec "$PYTHON_BIN" -m backend.app "$@"
+		;;
+	--export-demo)
+		shift
+		cd "$ROOT_DIR"
+		exec "$PYTHON_BIN" "$ROOT_DIR/frontend/scripts/export_demo_snapshot.py" "$@"
 		;;
 	--run_batch)
 		shift
