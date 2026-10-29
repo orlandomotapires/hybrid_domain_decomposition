@@ -782,7 +782,8 @@ export const staticFallbackApi = {
 
         // Build batch summary rows & analysis from the template batch so the new batch is inspectable in Results
         const templateDetail: any = Object.values(snap.batch_details)[0] || {};
-        const templateRows: any[] = templateDetail?.summary?.rows || [];
+        const templateRows: any[] =
+          templateDetail?.summary_rows || templateDetail?.summary?.rows || [];
         const templateAnalysisByDem: Record<string, any> =
           Object.values(snap.batch_analysis)[0] || {};
 
@@ -793,9 +794,14 @@ export const staticFallbackApi = {
               r.algorithm === c.algorithm &&
               r.coarsening_size === c.coarsening_size
           );
+          const sameGeomAndAlg = templateRows.find(
+            (r) => r.geometry === c.geometry && r.algorithm === c.algorithm
+          );
           const sameGeom = templateRows.find((r) => r.geometry === c.geometry);
           const baseRow = JSON.parse(
-            JSON.stringify(exact || sameGeom || templateRows[0] || {})
+            JSON.stringify(
+              exact || sameGeomAndAlg || sameGeom || templateRows[0] || {}
+            )
           );
           return {
             ...baseRow,
@@ -809,6 +815,8 @@ export const staticFallbackApi = {
             status: 'completed',
             error_message: null,
             error_type: null,
+            K_permutation_mismatches: 0,
+            M_permutation_mismatches: 0,
           };
         });
 
@@ -836,9 +844,10 @@ export const staticFallbackApi = {
             batch_finished_at: job.finished_at,
             cases: generatedRows,
           },
+          summary_rows: generatedRows,
           summary: { rows: generatedRows },
           configuration: JSON.parse(JSON.stringify(config)),
-          log_tail: jobFullLogs[jobId]
+          batch_log: jobFullLogs[jobId]
             .map((l) => `[${l.timestamp} ${l.level}] ${l.message}`)
             .join('\n'),
         };
@@ -848,6 +857,40 @@ export const staticFallbackApi = {
           const gRows = generatedRows.filter((r) => r.geometry === g);
           const tmpl =
             templateAnalysisByDem[g] || Object.values(templateAnalysisByDem)[0] || {};
+
+          const comparisonCurves: Record<string, any[]> = { K: [], M: [] };
+          for (const matPrefix of ['K', 'M']) {
+            for (const size of ['small', 'medium', 'big']) {
+              const sizeRows = gRows.filter((r) => r.coarsening_size === size);
+              if (sizeRows.length === 0) continue;
+              const bandPoints = [0.0, 0.1, 0.4, 0.7, 1.0];
+              const firstRow = sizeRows[0];
+              const points = bandPoints.map((pct) => {
+                const pt: Record<string, number> = { percent: pct };
+                if (pct === 0.0) {
+                  pt.Original = 0.0;
+                  for (const r of sizeRows) pt[r.algorithm] = 0.0;
+                } else {
+                  const pctKey = pct.toFixed(1).replace('.', '_');
+                  pt.Original = Number(
+                    firstRow[`${matPrefix}_frac_${pctKey}pct_original`] ?? 0
+                  );
+                  for (const r of sizeRows) {
+                    pt[r.algorithm] = Number(
+                      r[`${matPrefix}_frac_${pctKey}pct_permuted`] ?? 0
+                    );
+                  }
+                }
+                return pt;
+              });
+              comparisonCurves[matPrefix].push({
+                coarsening_size: size,
+                methods: sizeRows.map((r) => r.algorithm),
+                points,
+              });
+            }
+          }
+
           snap.batch_analysis[batchId][g] = {
             ...JSON.parse(JSON.stringify(tmpl)),
             batch_id: batchId,
@@ -855,6 +898,7 @@ export const staticFallbackApi = {
             available_demonstrators: geoms,
             rows: gRows,
             completed_rows: gRows,
+            comparison_curves: comparisonCurves,
           };
         }
         return;

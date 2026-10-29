@@ -48,7 +48,7 @@ def main() -> None:
     batch_analysis = {}
     if any(b["id"] == target_batch_id for b in bruns):
         bdetail = get_batch_run_detail(target_batch_id)
-        bdetail["log_tail"] = bdetail.get("log_tail", "")[-4000:]
+        bdetail["batch_log"] = bdetail.get("batch_log", "")[-4000:]
         batch_details[target_batch_id] = bdetail
         batch_analysis[target_batch_id] = {
             d["id"]: get_batch_analysis(target_batch_id, d["id"]) for d in dems
