@@ -402,6 +402,11 @@ export function App() {
               setActiveTab('results');
               loadDemonstrators(selectedDemId);
             }}
+            onInspectBatchRun={(bid) => {
+              setInspectBatchId(bid);
+              setInspectResultDir(null);
+              setActiveTab('results');
+            }}
             onTriggerRun={handleRunFromConsole}
           />
         )}

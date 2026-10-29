@@ -648,56 +648,300 @@ export const staticFallbackApi = {
 
   updateBatchConfig: async (config: any) => {
     const snap = await getSnapshot();
-    snap.batch_config.configuration = config;
+    const geometries = config.geometries || [];
+    const coarseningPresets = config.coarsening_presets || [];
+    const algorithmPresets = config.algorithm_presets || [];
+    const asyncKeys = new Set(config.async_remote_case_keys || []);
+    const cases: any[] = [];
+    for (const geom of geometries) {
+      for (const alg of algorithmPresets) {
+        const allowed = new Set(alg.allowed_sizes || []);
+        for (const coarsen of coarseningPresets) {
+          const cKey = coarsen.key;
+          if (!allowed.has(cKey)) continue;
+          cases.push({
+            case_key: `${geom.key}__${alg.key}__${cKey}`,
+            geometry: geom.key,
+            demonstrator_dir: geom.demonstrator_dir,
+            algorithm: alg.key,
+            partitioning_strategy: alg.partitioning_strategy,
+            coarsening_size: cKey,
+            coarsen_inferior_limit: coarsen.coarsen_inferior_limit,
+            coarsen_superior_limit: coarsen.coarsen_superior_limit,
+            is_async: asyncKeys.has(alg.key),
+            strategy_parameters: alg.strategy_parameters || {},
+          });
+        }
+      }
+    }
+    snap.batch_config = {
+      configuration: config,
+      dry_run_cases: cases,
+      case_count: cases.length,
+    };
     return snap.batch_config;
   },
 
   startBatchRun: async (): Promise<SimulationJob> => {
-    const now = new Date().toISOString();
+    const snap = await getSnapshot();
+    const config = snap.batch_config.configuration || {};
+    const dryRunCases: any[] = snap.batch_config.dry_run_cases || [];
+    const commonDefaults = config.common_defaults || {};
+    const kTarget = commonDefaults.partitioning_common?.k_target || 4;
+    const coarsenStrat = commonDefaults.coarsening_parameters?.strategy || 'modified';
+
+    const now = new Date();
+    const stamp = now
+      .toISOString()
+      .replace(/[:T-]/g, '')
+      .slice(0, 15)
+      .replace(/^(\d{8})(\d{6}).*$/, '$1_$2');
+    const batchId = `batch_${stamp}`;
+    const batchDir = `batch/runs/${batchId}`;
     const jobId = `batch_${Date.now().toString(36).slice(-6)}`;
+
     const job: SimulationJob = {
       job_id: jobId,
       job_type: 'batch',
-      title: 'Batch Study (Browser Mode)',
+      title: `Batch Study (${batchId})`,
       demonstrator_dir: null,
-      status: 'completed',
-      current_stage: 'permutation',
-      stage_progress: 100,
-      created_at: now,
-      finished_at: now,
-      elapsed_sec: 1.2,
+      status: 'running',
+      current_stage: 'initialization',
+      stage_progress: 5,
+      created_at: now.toISOString(),
+      finished_at: null,
+      elapsed_sec: 0.1,
       stage_durations_sec: {
-        initialization: 0.2,
-        coarsening: 0.3,
-        partitioning: 0.4,
-        uncoarsening: 0.2,
-        permutation: 0.1,
+        initialization: 0,
+        coarsening: 0,
+        partitioning: 0,
+        uncoarsening: 0,
+        permutation: 0,
       },
       result_dir: null,
-      batch_dir: 'batch/runs/batch_20260521_151902',
+      batch_dir: batchDir,
       pid: 4300,
-      exit_code: 0,
+      exit_code: null,
       error_message: null,
       telemetry: {},
-      log_count: 2,
+      log_count: 0,
       logs: [],
     };
-    jobFullLogs[jobId] = [
-      {
-        timestamp: nowTimeStr(),
-        level: 'INFO',
-        message: 'Batch study completed in browser demo mode.',
-      },
-      {
-        timestamp: nowTimeStr(),
-        level: 'INFO',
-        message: 'Inspect full comparative tables and charts in the Results tab.',
-      },
-    ];
+
+    jobFullLogs[jobId] = [];
+    const appendLogs = (entries: Array<[string, string]>) => {
+      const ts = nowTimeStr();
+      for (const [level, message] of entries) {
+        jobFullLogs[jobId].push({ timestamp: ts, level, message });
+      }
+      job.log_count = jobFullLogs[jobId].length;
+    };
+
+    const totalCases = Math.max(1, dryRunCases.length);
+    appendLogs([
+      [
+        'INFO',
+        `Starting batch study ${batchId} with ${dryRunCases.length} cases across ${(config.geometries || []).length} matrices`,
+      ],
+    ]);
+
     simulatedJobs.unshift(job);
+
+    // Step through each case and all 5 pipeline stages asynchronously so the console streams live
+    const stepMs = Math.max(120, Math.min(280, Math.floor(4500 / (totalCases * 5))));
+    let currentCaseIdx = 0;
+    let currentSubStage = 0;
+    const stageNames = [
+      'initialization',
+      'coarsening',
+      'partitioning',
+      'uncoarsening',
+      'permutation',
+    ] as const;
+
+    const timer = setInterval(() => {
+      if (job.status === 'cancelled') {
+        clearInterval(timer);
+        appendLogs([['WARNING', 'Job cancelled by user.']]);
+        return;
+      }
+
+      if (currentCaseIdx >= dryRunCases.length) {
+        clearInterval(timer);
+        job.status = 'completed';
+        job.current_stage = 'permutation';
+        job.stage_progress = 100;
+        job.finished_at = new Date().toISOString();
+        job.exit_code = 0;
+        appendLogs([
+          [
+            'INFO',
+            `Batch study ${batchId} finished: ${dryRunCases.length}/${dryRunCases.length} cases completed -> ${batchDir}/batch_summary.json`,
+          ],
+        ]);
+
+        // Build batch summary rows & analysis from the template batch so the new batch is inspectable in Results
+        const templateDetail: any = Object.values(snap.batch_details)[0] || {};
+        const templateRows: any[] = templateDetail?.summary?.rows || [];
+        const templateAnalysisByDem: Record<string, any> =
+          Object.values(snap.batch_analysis)[0] || {};
+
+        const generatedRows: any[] = dryRunCases.map((c) => {
+          const exact = templateRows.find(
+            (r) =>
+              r.geometry === c.geometry &&
+              r.algorithm === c.algorithm &&
+              r.coarsening_size === c.coarsening_size
+          );
+          const sameGeom = templateRows.find((r) => r.geometry === c.geometry);
+          const baseRow = JSON.parse(
+            JSON.stringify(exact || sameGeom || templateRows[0] || {})
+          );
+          return {
+            ...baseRow,
+            case_key: c.case_key,
+            geometry: c.geometry,
+            algorithm: c.algorithm,
+            partitioning_strategy: c.partitioning_strategy,
+            coarsening_size: c.coarsening_size,
+            coarsen_inferior_limit: c.coarsen_inferior_limit,
+            coarsen_superior_limit: c.coarsen_superior_limit,
+            status: 'completed',
+            error_message: null,
+            error_type: null,
+          };
+        });
+
+        const geoms = Array.from(
+          new Set(generatedRows.map((r) => r.geometry).filter(Boolean))
+        ).sort();
+
+        snap.batch_runs.unshift({
+          id: batchId,
+          batch_directory: batchDir,
+          started_at: job.created_at,
+          finished_at: job.finished_at,
+          total_cases: generatedRows.length,
+          completed_cases: generatedRows.length,
+          failed_cases: 0,
+          running_cases: 0,
+          geometries: geoms,
+          has_summary: true,
+        });
+
+        snap.batch_details[batchId] = {
+          id: batchId,
+          manifest: {
+            batch_started_at: job.created_at,
+            batch_finished_at: job.finished_at,
+            cases: generatedRows,
+          },
+          summary: { rows: generatedRows },
+          configuration: JSON.parse(JSON.stringify(config)),
+          log_tail: jobFullLogs[jobId]
+            .map((l) => `[${l.timestamp} ${l.level}] ${l.message}`)
+            .join('\n'),
+        };
+
+        snap.batch_analysis[batchId] = {};
+        for (const g of geoms) {
+          const gRows = generatedRows.filter((r) => r.geometry === g);
+          const tmpl =
+            templateAnalysisByDem[g] || Object.values(templateAnalysisByDem)[0] || {};
+          snap.batch_analysis[batchId][g] = {
+            ...JSON.parse(JSON.stringify(tmpl)),
+            batch_id: batchId,
+            demonstrator: g,
+            available_demonstrators: geoms,
+            rows: gRows,
+            completed_rows: gRows,
+          };
+        }
+        return;
+      }
+
+      const c = dryRunCases[currentCaseIdx];
+      const dem =
+        snap.demonstrators.find((d) => d.id === c.geometry) || snap.demonstrators[0];
+      const dof = dem?.simulation_parameters?.general_parameters?.dof_per_node || 3;
+      const rows = dem?.matrices?.matrix_k?.rows || 1800;
+      const fineNodes = Math.max(10, Math.round(rows / dof));
+      const fineEdges = Math.round(fineNodes * 9.55);
+      const coarseNodes = Math.min(
+        fineNodes,
+        Math.round(
+          ((c.coarsen_inferior_limit || 100) + (c.coarsen_superior_limit || 175)) / 2
+        )
+      );
+      const coarseEdges = Math.max(coarseNodes - 1, Math.round(coarseNodes * 6.5));
+      const levelsCount = Math.max(
+        1,
+        Math.round(Math.log(fineNodes / Math.max(1, coarseNodes)) / Math.log(1.8))
+      );
+
+      const stageId = stageNames[currentSubStage];
+      job.current_stage = stageId;
+      const dt = Number((stepMs / 1000).toFixed(2));
+      job.stage_durations_sec = {
+        ...job.stage_durations_sec,
+        [stageId]: Number(((job.stage_durations_sec?.[stageId] || 0) + dt).toFixed(2)),
+      };
+      job.elapsed_sec = Number(((job.elapsed_sec || 0) + dt).toFixed(2));
+      const completedSteps = currentCaseIdx * 5 + currentSubStage + 1;
+      job.stage_progress = Math.min(
+        98,
+        Math.max(5, Math.round((completedSteps / (totalCases * 5)) * 100))
+      );
+
+      const prefix = `[${currentCaseIdx + 1}/${dryRunCases.length}] (${c.case_key})`;
+      if (currentSubStage === 0) {
+        job.telemetry = {
+          initial_nodes: fineNodes,
+          initial_edges: fineEdges,
+          coarse_nodes: coarseNodes,
+          coarse_edges: coarseEdges,
+          coarsening_levels: levelsCount,
+          coarse_parts: kTarget,
+        };
+        appendLogs([
+          ['INFO', `${prefix} Converting matrices to graphs (${c.demonstrator_dir})`],
+          [
+            'INFO',
+            `Graph G_K with ${fineNodes} nodes and ${fineEdges} edges created from K matrix`,
+          ],
+        ]);
+      } else if (currentSubStage === 1) {
+        appendLogs([
+          ['INFO', `${prefix} Coarsening Heavy Edge Matching (${coarsenStrat})`],
+          [
+            'VERBOSE',
+            `Coarse graph has ${coarseNodes} nodes and ${coarseEdges} edges with ${levelsCount} levels`,
+          ],
+        ]);
+      } else if (currentSubStage === 2) {
+        appendLogs([
+          ['INFO', `${prefix} Running ${c.algorithm} (${c.partitioning_strategy})`],
+          ['VERBOSE', `Partitioning on coarse graph produced ${kTarget} parts`],
+        ]);
+      } else if (currentSubStage === 3) {
+        appendLogs([['INFO', `${prefix} Uncoarsening Kernighan-Lin`]]);
+      } else if (currentSubStage === 4) {
+        appendLogs([
+          ['INFO', `${prefix} Permuting matrices`],
+          ['INFO', `${prefix} Completed case ${c.case_key}`],
+        ]);
+      }
+
+      currentSubStage += 1;
+      if (currentSubStage >= 5) {
+        currentSubStage = 0;
+        currentCaseIdx += 1;
+      }
+    }, stepMs);
+
     return {
       ...job,
-      logs: jobFullLogs[jobId],
+      logs: jobFullLogs[jobId].slice(0),
     };
   },
 

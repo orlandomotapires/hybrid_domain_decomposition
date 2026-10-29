@@ -26,6 +26,7 @@ interface ExecutionConsoleProps {
   activeJobId: string | null;
   onSelectJob: (jobId: string) => void;
   onInspectResultDir: (resultDir: string) => void;
+  onInspectBatchRun?: (batchId: string) => void;
   onTriggerRun: (
     dem?: Demonstrator,
     overrideParams?: SimulationParameters
@@ -47,6 +48,7 @@ export const ExecutionConsole: React.FC<ExecutionConsoleProps> = ({
   activeJobId,
   onSelectJob,
   onInspectResultDir,
+  onInspectBatchRun,
   onTriggerRun,
 }) => {
   const [jobs, setJobs] = useState<SimulationJob[]>([]);
@@ -385,6 +387,21 @@ export const ExecutionConsole: React.FC<ExecutionConsoleProps> = ({
                         View Results
                       </button>
                     )}
+                    {!currentJob.result_dir &&
+                      currentJob.batch_dir &&
+                      currentJob.status === 'completed' &&
+                      onInspectBatchRun && (
+                        <button
+                          onClick={() => {
+                            const bid = currentJob.batch_dir!.split('/').pop() || '';
+                            onInspectBatchRun(bid);
+                          }}
+                          className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold bg-emerald-600 hover:bg-emerald-500 text-white shadow-lg shadow-emerald-600/20 transition"
+                        >
+                          <ExternalLink className="w-3.5 h-3.5" />
+                          View Batch Results
+                        </button>
+                      )}
                   </div>
                 </div>
 
