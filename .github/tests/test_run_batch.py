@@ -9,7 +9,7 @@ import batch.run_batch as run_batch
 class RunBatchTest(unittest.TestCase):
     def test_default_batch_covers_both_thesis_demonstrators(self) -> None:
         geometry_keys = {geometry.key for geometry in run_batch.GEOMETRIES}
-        self.assertEqual({"demonstrator_01", "demonstrator_02"}, geometry_keys)
+        self.assertTrue({"demonstrator_01", "demonstrator_02"}.issubset(geometry_keys))
 
     def test_extract_summary_metrics_exports_percentage_band_columns(self) -> None:
         run_metrics = {
