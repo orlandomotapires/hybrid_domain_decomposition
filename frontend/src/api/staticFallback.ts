@@ -1,6 +1,9 @@
 import {
+  CoarseningPreviewLevel,
   CoarseningPreviewResponse,
   Demonstrator,
+  LogEntry,
+  QuantumEstimates,
   SimulationConfig,
   SimulationJob,
   SimulationParameters,
@@ -20,6 +23,7 @@ interface DemoSnapshot {
 
 let cachedSnapshot: DemoSnapshot | null = null;
 const simulatedJobs: SimulationJob[] = [];
+const jobFullLogs: Record<string, LogEntry[]> = {};
 
 async function getSnapshot(): Promise<DemoSnapshot> {
   if (cachedSnapshot) return cachedSnapshot;
@@ -31,36 +35,207 @@ async function getSnapshot(): Promise<DemoSnapshot> {
   return cachedSnapshot;
 }
 
-function computeEstimates(params: SimulationParameters): Demonstrator['estimates'] {
-  const k = params.partitioning_parameters.common.k_target || 8;
-  const inf = params.coarsening_parameters.coarsen_inferior_limit || 100;
-  const sup = params.coarsening_parameters.coarsen_superior_limit || 175;
+function nowTimeStr(): string {
+  const d = new Date();
+  return d.toTimeString().split(' ')[0];
+}
+
+function computeEstimates(params: SimulationParameters): QuantumEstimates {
+  const pp = params.partitioning_parameters;
+  const cp = params.coarsening_parameters;
+  const k = pp.common.k_target || 8;
+  const inf = cp.coarsen_inferior_limit || 100;
+  const sup = cp.coarsen_superior_limit || 175;
   const mid = Math.round((inf + sup) / 2);
-  const steps = Math.max(1, Math.round(Math.log2(k)));
+  const steps = Math.max(1, Math.round(Math.log2(Math.max(2, k))));
+  const totalSubproblems = Math.max(1, k - 1);
+  const warnings: string[] = [];
+
+  if (pp.partitioning_strategy === 'quantum_approximation_optimizer') {
+    const qaoa = pp.strategies.quantum_approximation_optimizer;
+    if (qaoa.simulated && sup > 24) {
+      warnings.push(
+        `Local QAOA statevector simulation scales as 2^N; keep Superior Node Limit <= 22 (currently ${sup}).`
+      );
+    }
+  }
+
   return {
     k_target: k,
-    is_power_of_two: (k & (k - 1)) === 0,
-    bisection_steps: steps,
-    total_subproblems: Math.max(1, k - 1),
-    target_coarse_nodes_range: [inf, sup],
-    estimated_qubits_per_first_bisection: mid,
+    is_power_of_two: k >= 2 && (k & (k - 1)) === 0,
+    bisection_depth: steps,
+    total_bipartition_subproblems: totalSubproblems,
+    first_subproblem_qubits_range: [inf, sup],
+    expected_dwave_calls:
+      pp.partitioning_strategy === 'quantum_annealing'
+        ? totalSubproblems * (pp.strategies.quantum_annealing?.num_starts || 1)
+        : undefined,
+    total_annealing_reads:
+      pp.partitioning_strategy === 'quantum_annealing'
+        ? totalSubproblems *
+          (pp.strategies.quantum_annealing?.num_starts || 1) *
+          (pp.strategies.quantum_annealing?.num_reads || 100)
+        : undefined,
+    expected_qlm_jobs:
+      pp.partitioning_strategy === 'quantum_approximation_optimizer'
+        ? totalSubproblems *
+          (pp.strategies.quantum_approximation_optimizer?.num_starts || 1)
+        : undefined,
+    total_circuit_shots:
+      pp.partitioning_strategy === 'quantum_approximation_optimizer'
+        ? totalSubproblems *
+          (pp.strategies.quantum_approximation_optimizer?.num_starts || 1) *
+          (pp.strategies.quantum_approximation_optimizer?.num_steps || 10) *
+          (pp.strategies.quantum_approximation_optimizer?.num_shots || 100)
+        : undefined,
+    warnings,
+  };
+}
+
+function simulateCoarseningTrajectory(
+  demId: string,
+  startNodes: number,
+  startEdges: number,
+  params: SimulationParameters
+): CoarseningPreviewResponse {
+  const cp = params.coarsening_parameters;
+  const levels: CoarseningPreviewLevel[] = [
+    {
+      level: 0,
+      nodes: startNodes,
+      edges: startEdges,
+      ratio: 1.0,
+      max_node_weight: 1,
+      accepted: true,
+      stop_reason: null,
+    },
+  ];
+
+  let currNodes = startNodes;
+  let currEdges = startEdges;
+  let currMaxWeight = 1;
+  let stopReason = 'reached_target_range';
+  const reductionFactor =
+    cp.strategy === 'heavy_edge'
+      ? 0.53
+      : cp.strategy === 'modified'
+      ? 0.56
+      : cp.strategy === 'light_edge'
+      ? 0.58
+      : 0.55;
+
+  for (let lvl = 1; lvl <= cp.max_levels; lvl++) {
+    if (
+      currNodes >= cp.coarsen_inferior_limit &&
+      currNodes <= cp.coarsen_superior_limit
+    ) {
+      stopReason = 'reached_target_range';
+      break;
+    }
+    const nextNodes = Math.max(2, Math.round(currNodes * reductionFactor));
+    const ratio = Number((nextNodes / currNodes).toFixed(3));
+    const nextEdges = Math.max(nextNodes - 1, Math.round(currEdges * 0.46));
+    const nextWeight = currMaxWeight * 2;
+
+    if (nextNodes < cp.coarsen_inferior_limit) {
+      levels.push({
+        level: lvl,
+        nodes: nextNodes,
+        edges: nextEdges,
+        ratio,
+        max_node_weight: nextWeight,
+        accepted: false,
+        stop_reason: 'below_inferior_limit',
+      });
+      stopReason =
+        currNodes <= cp.coarsen_superior_limit
+          ? 'reached_target_range'
+          : 'next_level_below_inferior_limit';
+      break;
+    }
+
+    if (ratio > cp.coarsen_ratio) {
+      levels.push({
+        level: lvl,
+        nodes: nextNodes,
+        edges: nextEdges,
+        ratio,
+        max_node_weight: nextWeight,
+        accepted: false,
+        stop_reason: 'coarsen_ratio_exceeded',
+      });
+      stopReason = 'coarsen_ratio_exceeded';
+      break;
+    }
+
+    if (cp.max_node_weight && nextWeight > cp.max_node_weight) {
+      levels.push({
+        level: lvl,
+        nodes: nextNodes,
+        edges: nextEdges,
+        ratio,
+        max_node_weight: nextWeight,
+        accepted: false,
+        stop_reason: 'max_node_weight_exceeded',
+      });
+      stopReason = 'max_node_weight_exceeded';
+      break;
+    }
+
+    currNodes = nextNodes;
+    currEdges = nextEdges;
+    currMaxWeight = nextWeight;
+    levels.push({
+      level: lvl,
+      nodes: currNodes,
+      edges: currEdges,
+      ratio,
+      max_node_weight: currMaxWeight,
+      accepted: true,
+      stop_reason: null,
+    });
+
+    if (
+      currNodes >= cp.coarsen_inferior_limit &&
+      currNodes <= cp.coarsen_superior_limit
+    ) {
+      stopReason = 'reached_target_range';
+      break;
+    }
+  }
+
+  const acceptedLevels = levels.filter((l) => l.accepted);
+  const lastAccepted = acceptedLevels[acceptedLevels.length - 1];
+  const reachable =
+    lastAccepted.nodes >= cp.coarsen_inferior_limit &&
+    lastAccepted.nodes <= cp.coarsen_superior_limit;
+
+  return {
+    demonstrator_id: demId,
+    reachable,
+    final_coarse_nodes: lastAccepted.nodes,
+    final_coarse_edges: lastAccepted.edges,
+    accepted_levels_count: acceptedLevels.length - 1,
+    stop_reason: stopReason,
+    elapsed_ms: 14,
+    levels,
   };
 }
 
 export const staticFallbackApi = {
-  listDemonstrators: async () => {
+  listDemonstrators: async (): Promise<{ demonstrators: Demonstrator[] }> => {
     const snap = await getSnapshot();
     return { demonstrators: snap.demonstrators };
   },
 
-  getDemonstrator: async (demId: string) => {
+  getDemonstrator: async (demId: string): Promise<Demonstrator> => {
     const snap = await getSnapshot();
     const found = snap.demonstrators.find((d) => d.id === demId) || snap.demonstrators[0];
     if (!found) throw new Error(`Demonstrator ${demId} not found`);
     return found;
   },
 
-  createDemonstrator: async (name: string, cloneFrom?: string) => {
+  createDemonstrator: async (name: string, cloneFrom?: string): Promise<Demonstrator> => {
     const snap = await getSnapshot();
     const base =
       snap.demonstrators.find((d) => d.id === cloneFrom) || snap.demonstrators[0];
@@ -70,10 +245,14 @@ export const staticFallbackApi = {
     created.demonstrator_dir = `demonstrators/${cleanId}`;
     snap.demonstrators.push(created);
     snap.presets[cleanId] = JSON.parse(JSON.stringify(snap.presets[base.id] || {}));
+    snap.demonstrator_runs[cleanId] = {
+      demonstrator_id: cleanId,
+      runs: JSON.parse(JSON.stringify(snap.demonstrator_runs[base.id]?.runs || [])),
+    };
     return created;
   },
 
-  renameDemonstrator: async (demId: string, newName: string) => {
+  renameDemonstrator: async (demId: string, newName: string): Promise<Demonstrator> => {
     const snap = await getSnapshot();
     const found = snap.demonstrators.find((d) => d.id === demId);
     if (!found) throw new Error(`Demonstrator ${demId} not found`);
@@ -92,7 +271,7 @@ export const staticFallbackApi = {
     };
   },
 
-  updateConfig: async (demId: string, config: SimulationConfig) => {
+  updateConfig: async (demId: string, config: SimulationConfig): Promise<Demonstrator> => {
     const snap = await getSnapshot();
     const found = snap.demonstrators.find((d) => d.id === demId);
     if (!found) throw new Error(`Demonstrator ${demId} not found`);
@@ -106,7 +285,10 @@ export const staticFallbackApi = {
     return found;
   },
 
-  updateParameters: async (demId: string, params: SimulationParameters) => {
+  updateParameters: async (
+    demId: string,
+    params: SimulationParameters
+  ): Promise<Demonstrator> => {
     const snap = await getSnapshot();
     const found = snap.demonstrators.find((d) => d.id === demId);
     if (!found) throw new Error(`Demonstrator ${demId} not found`);
@@ -131,7 +313,7 @@ export const staticFallbackApi = {
     filename: string,
     parameters: SimulationParameters,
     setActive = true
-  ) => {
+  ): Promise<Demonstrator> => {
     const snap = await getSnapshot();
     const found = snap.demonstrators.find((d) => d.id === demId);
     if (!found) throw new Error(`Demonstrator ${demId} not found`);
@@ -145,11 +327,12 @@ export const staticFallbackApi = {
       found.simulation_config.parameters_file_path = fname;
       found.active_parameters_file = fname;
       found.simulation_parameters = parameters;
+      found.estimates = computeEstimates(parameters);
     }
     return found;
   },
 
-  deletePreset: async (demId: string, presetFile: string) => {
+  deletePreset: async (demId: string, presetFile: string): Promise<Demonstrator> => {
     const snap = await getSnapshot();
     const found = snap.demonstrators.find((d) => d.id === demId);
     if (!found) throw new Error(`Demonstrator ${demId} not found`);
@@ -164,46 +347,11 @@ export const staticFallbackApi = {
   ): Promise<CoarseningPreviewResponse> => {
     const snap = await getSnapshot();
     const found = snap.demonstrators.find((d) => d.id === demId) || snap.demonstrators[0];
-    const startNodes = found?.matrices?.expected_nodes || 600;
-    const startEdges = Math.round(startNodes * 9.5);
-    const cp = params.coarsening_parameters;
-    const levels: CoarseningPreviewResponse['levels'] = [];
-    let nodes = startNodes;
-    let edges = startEdges;
-    let reached = false;
-    for (let lvl = 0; lvl <= cp.max_levels; lvl++) {
-      const inRange =
-        nodes >= cp.coarsen_inferior_limit && nodes <= cp.coarsen_superior_limit;
-      if (inRange) reached = true;
-      levels.push({
-        level: lvl,
-        nodes,
-        edges,
-        density: Number(((2 * edges) / Math.max(1, nodes * (nodes - 1))).toFixed(4)),
-        max_node_weight: Math.pow(2, lvl),
-        mean_node_weight: Number((startNodes / Math.max(1, nodes)).toFixed(2)),
-        in_target_range: inRange,
-      });
-      if (inRange || nodes <= cp.coarsen_inferior_limit) break;
-      const nextNodes = Math.max(cp.coarsen_inferior_limit, Math.round(nodes * 0.56));
-      if (nextNodes === nodes) break;
-      nodes = nextNodes;
-      edges = Math.max(nodes, Math.round(edges * 0.45));
-    }
-    const last = levels[levels.length - 1];
-    return {
-      demonstrator_id: demId,
-      strategy: cp.strategy,
-      target_range: [cp.coarsen_inferior_limit, cp.coarsen_superior_limit],
-      reached_target_range: reached,
-      levels_executed: levels.length - 1,
-      initial_nodes: startNodes,
-      initial_edges: startEdges,
-      final_nodes: last.nodes,
-      final_edges: last.edges,
-      elapsed_seconds: 0.04,
-      levels,
-    };
+    const dof = params.general_parameters.dof_per_node || 3;
+    const rows = found?.matrices?.matrix_k?.rows || 1800;
+    const startNodes = Math.max(10, Math.round(rows / dof));
+    const startEdges = Math.round(startNodes * 9.55);
+    return simulateCoarseningTrajectory(demId, startNodes, startEdges, params);
   },
 
   validateParameters: async (params: SimulationParameters) => {
@@ -234,72 +382,262 @@ export const staticFallbackApi = {
   generateDemoMatrices: async (
     demId: string,
     opts: { nx_nodes: number; ny_nodes: number; nz_nodes: number; dof_per_node: number }
-  ) => {
+  ): Promise<Demonstrator> => {
     const snap = await getSnapshot();
     const found = snap.demonstrators.find((d) => d.id === demId) || snap.demonstrators[0];
     const totalNodes = opts.nx_nodes * opts.ny_nodes * opts.nz_nodes;
     const totalDofs = totalNodes * opts.dof_per_node;
-    found.simulation_config.dof_per_node = opts.dof_per_node;
+    const nnz = totalDofs * 58;
+    found.simulation_parameters.general_parameters.dof_per_node = opts.dof_per_node;
     if (found.matrices) {
-      found.matrices.expected_nodes = totalNodes;
-      found.matrices.k_Summary.shape = [totalDofs, totalDofs];
-      found.matrices.m_Summary.shape = [totalDofs, totalDofs];
+      found.matrices.matrix_k.rows = totalDofs;
+      found.matrices.matrix_k.cols = totalDofs;
+      found.matrices.matrix_k.nnz = nnz;
+      found.matrices.matrix_m.rows = totalDofs;
+      found.matrices.matrix_m.cols = totalDofs;
+      found.matrices.matrix_m.nnz = nnz;
     }
-    return found;
+    return JSON.parse(JSON.stringify(found));
   },
 
-  runSimulation: async (demonstratorDir: string, parametersOverride?: SimulationParameters) => {
+  runSimulation: async (
+    demonstratorDir: string,
+    parametersOverride?: SimulationParameters
+  ): Promise<SimulationJob> => {
     const demId = demonstratorDir.replace(/^demonstrators\//, '');
     const snap = await getSnapshot();
     const dem = snap.demonstrators.find((d) => d.id === demId) || snap.demonstrators[0];
     const params = parametersOverride || dem.simulation_parameters;
-    const now = new Date().toISOString();
-    const jobId = `demo_${Date.now().toString(36)}`;
-    const resultDir =
-      snap.demonstrator_runs[dem.id]?.runs?.[0]?.result_dir ||
-      `demonstrators/${dem.id}/results/run_demo`;
+    const dof = params.general_parameters.dof_per_node || 3;
+    const rows = dem.matrices?.matrix_k?.rows || 1800;
+    const fineNodes = Math.max(10, Math.round(rows / dof));
+    const fineEdges = Math.round(fineNodes * 9.55);
+    const preview = simulateCoarseningTrajectory(dem.id, fineNodes, fineEdges, params);
+
+    const kTarget = params.partitioning_parameters.common.k_target || 8;
+    const strat = params.partitioning_parameters.partitioning_strategy;
+    const stratCfg = (params.partitioning_parameters.strategies as any)[strat] || {};
+    const isSimulated = strat === 'metis_partitioning' ? true : stratCfg.simulated !== false;
+
+    const jobId = `job_${Date.now().toString(36).slice(-6)}`;
+    const runStamp = new Date()
+      .toISOString()
+      .replace(/[:T-]/g, '_')
+      .slice(0, 19);
+    const resultDir = `demonstrators/${dem.id}/results/run_${runStamp}_browser`;
+
     const job: SimulationJob = {
       job_id: jobId,
-      kind: 'single_run',
-      target: demonstratorDir,
-      status: 'completed',
-      created_at: now,
-      started_at: now,
-      finished_at: now,
-      return_code: 0,
-      result_dir: resultDir,
-      log_lines: [
-        '[INFO] Static GitHub Pages Demo Mode — replaying pipeline trajectory in browser',
-        `[INFO] Loaded ${dem.id} (expected nodes: ${dem.matrices?.expected_nodes || 600})`,
-        `[INFO] Coarsening strategy: ${params.coarsening_parameters.strategy} -> target [${params.coarsening_parameters.coarsen_inferior_limit}, ${params.coarsening_parameters.coarsen_superior_limit}]`,
-        `[INFO] Partitioning strategy: ${params.partitioning_parameters.partitioning_strategy} (k = ${params.partitioning_parameters.common.k_target})`,
-        `[INFO] Refinement objective: ${params.refinement_parameters.refine_objective}`,
-        '[INFO] Permutation & bandwidth metrics ready in Results tab.',
-      ],
-      total_log_lines: 6,
+      job_type: 'single',
+      title: `Simulation (${dem.id})`,
+      demonstrator_dir: demonstratorDir,
+      status: 'running',
+      current_stage: 'initialization',
+      stage_progress: 15,
+      created_at: new Date().toISOString(),
+      finished_at: null,
+      elapsed_sec: 0.2,
+      stage_durations_sec: { initialization: 0.2 },
+      result_dir: null,
+      pid: 4200,
+      exit_code: null,
+      error_message: null,
+      telemetry: {
+        initial_nodes: fineNodes,
+        initial_edges: fineEdges,
+      },
+      log_count: 0,
+      logs: [],
     };
+
+    const appendLogs = (entries: Array<[string, string]>) => {
+      const ts = nowTimeStr();
+      for (const [level, message] of entries) {
+        jobFullLogs[jobId].push({ timestamp: ts, level, message });
+      }
+      job.log_count = jobFullLogs[jobId].length;
+    };
+
+    jobFullLogs[jobId] = [];
+    appendLogs([
+      ['INFO', `Running in-browser simulation for ${dem.id} (GitHub Pages mode)`],
+      ['INFO', 'Converting matrices to graphs'],
+      [
+        'INFO',
+        `Graph G_K with ${fineNodes} nodes and ${fineEdges} edges created from K matrix`,
+      ],
+    ]);
+
     simulatedJobs.unshift(job);
-    return job;
+
+    // Progress through the 5 pipeline stages asynchronously so the Execution Console animates live
+    setTimeout(() => {
+      if (job.status === 'cancelled') return;
+      job.current_stage = 'coarsening';
+      job.stage_progress = 40;
+      job.elapsed_sec = 0.8;
+      job.stage_durations_sec = { ...job.stage_durations_sec, coarsening: 0.6 };
+      job.telemetry.coarse_nodes = preview.final_coarse_nodes;
+      job.telemetry.coarse_edges = preview.final_coarse_edges;
+      job.telemetry.coarsening_levels = preview.accepted_levels_count;
+      appendLogs([
+        ['INFO', `Coarsening Heavy Edge Matching (${params.coarsening_parameters.strategy})`],
+        [
+          'VERBOSE',
+          `Coarse graph has ${preview.final_coarse_nodes} nodes and ${preview.final_coarse_edges} edges with ${preview.accepted_levels_count} levels`,
+        ],
+      ]);
+    }, 550);
+
+    setTimeout(() => {
+      if (job.status === 'cancelled') return;
+      job.current_stage = 'partitioning';
+      job.stage_progress = 68;
+      job.elapsed_sec = 1.6;
+      job.stage_durations_sec = { ...job.stage_durations_sec, partitioning: 0.8 };
+      job.telemetry.coarse_parts = kTarget;
+      const methodDesc =
+        strat === 'metis_partitioning'
+          ? 'METIS k-way partitioning'
+          : strat === 'quantum_annealing'
+          ? isSimulated
+            ? 'simulated quantum annealing for bipartitioning'
+            : 'D-Wave QPU annealing (browser preview)'
+          : isSimulated
+          ? 'PennyLane QAOA simulator for bipartitioning'
+          : 'QLM QAOA (browser preview)';
+      appendLogs([
+        ['INFO', `Running ${methodDesc}`],
+        ['VERBOSE', `Partitioning on coarse graph produced ${kTarget} parts`],
+      ]);
+    }, 1150);
+
+    setTimeout(() => {
+      if (job.status === 'cancelled') return;
+      job.current_stage = 'uncoarsening';
+      job.stage_progress = 85;
+      job.elapsed_sec = 2.1;
+      job.stage_durations_sec = { ...job.stage_durations_sec, uncoarsening: 0.5 };
+      appendLogs([
+        [
+          'INFO',
+          `Uncoarsening Kernighan-Lin (objective: ${params.refinement_parameters.refine_objective})`,
+        ],
+      ]);
+    }, 1700);
+
+    setTimeout(() => {
+      if (job.status === 'cancelled') return;
+      job.current_stage = 'permutation';
+      job.stage_progress = 100;
+      job.status = 'completed';
+      job.finished_at = new Date().toISOString();
+      job.elapsed_sec = 2.5;
+      job.exit_code = 0;
+      job.result_dir = resultDir;
+      job.stage_durations_sec = { ...job.stage_durations_sec, permutation: 0.4 };
+
+      // Build a new run result entry based on the template run + user parameters
+      const templateDetail =
+        Object.values(snap.run_details)[0] || ({} as Record<string, any>);
+      const clonedDetail = JSON.parse(JSON.stringify(templateDetail));
+      clonedDetail.result_dir = resultDir;
+      clonedDetail.run_id = `run_${runStamp}_browser`;
+      clonedDetail.run_parameters = JSON.parse(JSON.stringify(params));
+
+      // Slightly vary KPIs deterministically by strategy + k_target so comparisons show real differences
+      const factor =
+        strat === 'metis_partitioning'
+          ? 0.96
+          : strat === 'quantum_annealing'
+          ? 0.99
+          : 1.02;
+      if (clonedDetail.kpi_summary) {
+        for (const mKey of ['K', 'M']) {
+          const mk = clonedDetail.kpi_summary[mKey];
+          if (mk) {
+            mk.permuted_bandwidth = Math.round(mk.permuted_bandwidth * factor);
+            mk.permuted_avg_bandwidth = Number(
+              (mk.permuted_avg_bandwidth * factor).toFixed(2)
+            );
+            mk.bandwidth_reduction_pct = Number(
+              (
+                ((mk.original_bandwidth - mk.permuted_bandwidth) /
+                  Math.max(1, mk.original_bandwidth)) *
+                100
+              ).toFixed(2)
+            );
+            mk.avg_bandwidth_reduction_pct = Number(
+              (
+                ((mk.original_avg_bandwidth - mk.permuted_avg_bandwidth) /
+                  Math.max(1, mk.original_avg_bandwidth)) *
+                100
+              ).toFixed(2)
+            );
+          }
+        }
+      }
+
+      snap.run_details[resultDir] = clonedDetail;
+      snap.demonstrator_runs[dem.id] = snap.demonstrator_runs[dem.id] || {
+        demonstrator_id: dem.id,
+        runs: [],
+      };
+      snap.demonstrator_runs[dem.id].runs.unshift({
+        run_id: `run_${runStamp}_browser`,
+        result_dir: resultDir,
+        demonstrator_id: dem.id,
+        partitioning_strategy: strat,
+        simulated: strat === 'metis_partitioning' ? null : isSimulated,
+        k_target: kTarget,
+        coarsening_strategy: params.coarsening_parameters.strategy,
+        coarsen_limits: [
+          params.coarsening_parameters.coarsen_inferior_limit,
+          params.coarsening_parameters.coarsen_superior_limit,
+        ],
+        kpi_summary: clonedDetail.kpi_summary,
+        can_render_plots: false,
+      });
+      dem.runs_count = snap.demonstrator_runs[dem.id].runs.length;
+      dem.latest_run = resultDir;
+
+      appendLogs([
+        ['INFO', 'Permuting matrices'],
+        ['INFO', `Simulation completed -> ${resultDir}`],
+      ]);
+    }, 2200);
+
+    return {
+      ...job,
+      logs: jobFullLogs[jobId].slice(0),
+    };
   },
 
   listJobs: async () => ({ jobs: simulatedJobs }),
 
-  getJob: async (jobId: string) => {
+  getJob: async (jobId: string, logOffset = 0): Promise<SimulationJob> => {
     const found = simulatedJobs.find((j) => j.job_id === jobId) || simulatedJobs[0];
     if (!found) throw new Error(`Job ${jobId} not found`);
-    return found;
+    const allLogs = jobFullLogs[found.job_id] || [];
+    return {
+      ...found,
+      log_count: allLogs.length,
+      logs: allLogs.slice(logOffset),
+    };
   },
 
-  cancelJob: async (jobId: string) => {
+  cancelJob: async (jobId: string): Promise<SimulationJob> => {
     const found = simulatedJobs.find((j) => j.job_id === jobId);
     if (!found) throw new Error(`Job ${jobId} not found`);
     found.status = 'cancelled';
+    found.finished_at = new Date().toISOString();
     return found;
   },
 
   deleteJob: async (jobId: string) => {
     const idx = simulatedJobs.findIndex((j) => j.job_id === jobId);
     if (idx >= 0) simulatedJobs.splice(idx, 1);
+    delete jobFullLogs[jobId];
     return { deleted: jobId };
   },
 
@@ -314,25 +652,53 @@ export const staticFallbackApi = {
     return snap.batch_config;
   },
 
-  startBatchRun: async () => {
+  startBatchRun: async (): Promise<SimulationJob> => {
     const now = new Date().toISOString();
+    const jobId = `batch_${Date.now().toString(36).slice(-6)}`;
     const job: SimulationJob = {
-      job_id: `batch_demo_${Date.now().toString(36)}`,
-      kind: 'batch_run',
-      target: 'batch/batch_configuration.json',
+      job_id: jobId,
+      job_type: 'batch',
+      title: 'Batch Study (Browser Mode)',
+      demonstrator_dir: null,
       status: 'completed',
+      current_stage: 'permutation',
+      stage_progress: 100,
       created_at: now,
-      started_at: now,
       finished_at: now,
-      return_code: 0,
-      result_dir: 'batch/runs/batch_20260521_151902',
-      log_lines: [
-        '[INFO] Static GitHub Pages Demo Mode — pre-computed batch study batch_20260521_151902 loaded.',
-      ],
-      total_log_lines: 1,
+      elapsed_sec: 1.2,
+      stage_durations_sec: {
+        initialization: 0.2,
+        coarsening: 0.3,
+        partitioning: 0.4,
+        uncoarsening: 0.2,
+        permutation: 0.1,
+      },
+      result_dir: null,
+      batch_dir: 'batch/runs/batch_20260521_151902',
+      pid: 4300,
+      exit_code: 0,
+      error_message: null,
+      telemetry: {},
+      log_count: 2,
+      logs: [],
     };
+    jobFullLogs[jobId] = [
+      {
+        timestamp: nowTimeStr(),
+        level: 'INFO',
+        message: 'Batch study completed in browser demo mode.',
+      },
+      {
+        timestamp: nowTimeStr(),
+        level: 'INFO',
+        message: 'Inspect full comparative tables and charts in the Results tab.',
+      },
+    ];
     simulatedJobs.unshift(job);
-    return job;
+    return {
+      ...job,
+      logs: jobFullLogs[jobId],
+    };
   },
 
   listBatchRuns: async () => {
@@ -401,4 +767,3 @@ export const staticFallbackApi = {
       'Live QLM QPU inspection requires running the Python backend locally (./run.sh --ui) with myQLM installed.',
   }),
 };
-

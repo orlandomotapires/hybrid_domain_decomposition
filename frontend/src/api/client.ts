@@ -255,7 +255,7 @@ export const api = {
         requestJson<SimulationJob>(
           `/api/execution/jobs/${encodeURIComponent(jobId)}?log_offset=${logOffset}`
         ),
-      () => staticFallbackApi.getJob(jobId)
+      () => staticFallbackApi.getJob(jobId, logOffset)
     ),
 
   cancelJob: (jobId: string) =>
