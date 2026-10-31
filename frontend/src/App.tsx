@@ -39,6 +39,7 @@ export function App() {
   const [validationError, setValidationError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
+  const [isStaticDemo, setIsStaticDemo] = useState(false);
 
   // Navigation targets across tabs
   const [activeJobId, setActiveJobId] = useState<string | null>(null);
@@ -74,6 +75,7 @@ export function App() {
   const loadDemonstrators = async (preferId?: string) => {
     try {
       const res = await api.listDemonstrators();
+      setIsStaticDemo(api.isStaticDemo());
       const valid = res.demonstrators.filter((d) => !d.error);
       setDemonstrators(valid);
       const targetId = preferId || selectedDemId || valid[0]?.id;
@@ -364,6 +366,16 @@ export function App() {
 
       {/* Main Content Area */}
       <main className="flex-1 max-w-7xl w-full mx-auto px-6 py-6 min-w-0">
+        {isStaticDemo && activeTab === 'pipeline' && (
+          <div className="mb-4 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-2.5 text-xs text-amber-200 flex items-center gap-2.5">
+            <span className="px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 font-semibold shrink-0">
+              Browser Demo
+            </span>
+            <span>
+              No live calculations are executed in the browser version — running a simulation or batch study displays pre-computed benchmark results. Run <code className="font-mono text-amber-100">./run.sh --ui</code> locally for real execution.
+            </span>
+          </div>
+        )}
         {activeTab === 'pipeline' && currentDemonstrator && config && parameters && (
           <PipelineStudio
             demonstrators={demonstrators}
