@@ -159,31 +159,31 @@ export const InfoTooltip: React.FC<InfoTooltipProps> = ({
                   {title}
                 </div>
                 {codeKey && (
-                  <div className="text-[10px] font-mono text-indigo-300 mt-0.5 truncate" title={codeKey}>
+                  <div className="text-[11px] font-mono text-indigo-300 mt-0.5 truncate" title={codeKey}>
                     {codeKey}
                   </div>
                 )}
               </div>
               {badge && (
-                <span className="px-1.5 py-0.5 text-[9px] font-mono font-semibold rounded bg-indigo-500/20 text-indigo-200 border border-indigo-500/30 shrink-0">
+                <span className="px-1.5 py-0.5 text-[11px] font-mono font-semibold rounded bg-indigo-500/20 text-indigo-200 border border-indigo-500/30 shrink-0">
                   {badge}
                 </span>
               )}
             </div>
 
-            <p className="text-[11px] text-slate-300 leading-relaxed break-words">
+            <p className="text-xs text-slate-300 leading-relaxed break-words">
               {summary}
             </p>
 
             {formula && (
-              <div className="px-2.5 py-1.5 rounded-lg bg-slate-950 border border-slate-800 text-[10px] font-mono text-amber-300 overflow-x-auto">
+              <div className="px-2.5 py-1.5 rounded-lg bg-slate-950 border border-slate-800 text-[11px] font-mono text-amber-300 overflow-x-auto">
                 {formula}
               </div>
             )}
 
             {onOpenWiki && (
               <div className="pt-1 border-t border-slate-800 flex items-center justify-between">
-                <span className="text-[10px] text-slate-400 flex items-center gap-1">
+                <span className="text-[11px] text-slate-400 flex items-center gap-1">
                   <BookOpen className="w-3 h-3 text-indigo-400" />
                   Scientific Wiki Entry
                 </span>
@@ -195,7 +195,7 @@ export const InfoTooltip: React.FC<InfoTooltipProps> = ({
                     setOpen(false);
                     onOpenWiki(topicId);
                   }}
-                  className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-bold bg-indigo-600 hover:bg-indigo-500 text-white shadow transition"
+                  className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-bold bg-indigo-600 hover:bg-indigo-500 text-white shadow transition"
                 >
                   More details
                   <ArrowUpRight className="w-3 h-3" />

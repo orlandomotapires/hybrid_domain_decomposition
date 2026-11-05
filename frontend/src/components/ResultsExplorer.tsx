@@ -1,57 +1,93 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
+  ArrowDown,
   ArrowLeftRight,
-  BarChart3,
-  Check,
+  ArrowUp,
   CheckCircle2,
-  Copy,
+  ChevronDown,
+  ChevronRight,
+  ChevronsUpDown,
   Download,
-  FileText,
   Image as ImageIcon,
-  Layers,
   Loader2,
-  RefreshCw,
-  Sparkles,
-  Table,
+  Play,
+  Plus,
+  Sliders,
+  X,
   ZoomIn,
 } from 'lucide-react';
 import { api } from '../api/client';
-import { Demonstrator } from '../types/pipeline';
+import { Demonstrator, SimulationParameters } from '../types/pipeline';
+import { downloadCsv, downloadSvg, downloadSvgAsPng, safeFilename } from '../lib/download';
+import { methodColor, methodLabel, SCALE_LABELS } from '../lib/labels';
 import { InfoTooltip } from './InfoTooltip';
+import { useToast } from './Toasts';
 
 interface ResultsExplorerProps {
   demonstrators: Demonstrator[];
   selectedDemonstratorId: string;
   initialResultDir: string | null;
   initialBatchId: string | null;
+  onSelectionChange: (sel: { resultDir: string | null; batchId: string | null }) => void;
+  onLoadParameters: (demId: string, params: SimulationParameters) => void;
+  onRerun: (demId: string, params: SimulationParameters) => Promise<void>;
   onOpenWiki: (topicId: string) => void;
 }
 
-const METHOD_COLORS: Record<string, string> = {
-  Original: '#94a3b8',
-  metis: '#10b981',
-  qa_hardware: '#a855f7',
-  qa_emulated: '#6366f1',
-  qaoa_emulated: '#06b6d4',
-  qaoa_hardware: '#ec4899',
-};
+/** Colors for compared runs B, C, D, … (Run A is indigo). */
+const COMPARE_COLORS = ['#f59e0b', '#10b981', '#ec4899', '#06b6d4', '#a855f7'];
+const MAX_COMPARE = COMPARE_COLORS.length;
+const RUN_LETTERS = 'BCDEF';
+const runShortName = (dir: string) => dir.split('/').pop() || dir;
 
-const METHOD_LABELS: Record<string, string> = {
-  Original: 'Original',
-  metis: 'METIS',
-  qa_hardware: 'QA Hardware (D-Wave)',
-  qa_emulated: 'QA Emulated',
-  qaoa_emulated: 'QAOA Emulated',
-  qaoa_hardware: 'QAOA Hardware (QLM)',
+/** Label for a batch method key, with "Original" for the unpermuted baseline series. */
+const seriesLabel = (m: string, short = false) => (m === 'Original' ? 'Original' : methodLabel(m, undefined, short));
+const scaleLabel = (s: string | null | undefined) => (s ? SCALE_LABELS[s] || s : '—');
+
+/** Single-run selector text: "run_2026… — QA Emulated (k=4)". */
+const runOptionLabel = (r: any) =>
+  `${r.run_id} — ${methodLabel(r.partitioning_strategy, r.simulated, true)}${r.k_target != null ? ` (k=${r.k_target})` : ''}`;
+
+/** Signed percentage change: negative = smaller = better. Uses a real minus sign. */
+const fmtChange = (pct: number, digits = 1) => {
+  if (!isFinite(pct)) return '—';
+  const v = Math.abs(pct).toFixed(digits);
+  if (Number(v) === 0) return `${(0).toFixed(digits)}%`;
+  return pct < 0 ? `\u2212${v}%` : `+${v}%`;
 };
+const changeClass = (pct: number) => (pct < 0 ? 'text-emerald-400' : pct > 0 ? 'text-amber-400' : 'text-slate-400');
+
+/** Short, human reason for a failed batch case; the full message stays available in "details". */
+function shortFailureReason(message: string | null | undefined, errorType?: string | null): string {
+  const msg = (message || '').trim();
+  if (!msg) return errorType || 'unknown error';
+  const unreachable =
+    /could not connect|connection refused|connection reset|connectionerror|ttransportexception|unreachable|timed out|timeout|max retries|name or service not known|failed to establish/i.test(
+      msg
+    );
+  if (unreachable) {
+    if (/qlm|qat\.qpus|myqlm/i.test(msg)) return 'QLM backend unreachable';
+    if (/d-?wave|leap|advantage/i.test(msg)) return 'D-Wave backend unreachable';
+    return 'remote backend unreachable';
+  }
+  const firstLine = msg.split('\n')[0];
+  // "SomeError: detail" → keep the detail; long messages are clipped.
+  const stripped = firstLine.replace(/^[A-Za-z_.]+(Error|Exception):\s*/, '');
+  const text = stripped || firstLine;
+  return text.length > 90 ? `${text.slice(0, 87)}…` : text;
+}
 
 export const ResultsExplorer: React.FC<ResultsExplorerProps> = ({
   demonstrators,
   selectedDemonstratorId,
   initialResultDir,
   initialBatchId,
+  onSelectionChange,
+  onLoadParameters,
+  onRerun,
   onOpenWiki,
 }) => {
+  const toast = useToast();
   const [mode, setMode] = useState<'batch' | 'single'>(
     initialResultDir ? 'single' : 'batch'
   );
@@ -61,24 +97,21 @@ export const ResultsExplorer: React.FC<ResultsExplorerProps> = ({
   const [singleRuns, setSingleRuns] = useState<any[]>([]);
   const [activeResultDir, setActiveResultDir] = useState<string | null>(initialResultDir);
   const [runDetail, setRunDetail] = useState<any | null>(null);
-  const [compareResultDir, setCompareResultDir] = useState<string>('');
-  const [compareRunDetail, setCompareRunDetail] = useState<any | null>(null);
+  const [compareResultDirs, setCompareResultDirs] = useState<string[]>([]);
+  const [compareRunDetails, setCompareRunDetails] = useState<Record<string, any>>({});
+  const [rerunning, setRerunning] = useState(false);
   const [loadingSingle, setLoadingSingle] = useState(false);
   const [activePlots, setActivePlots] = useState<Record<string, boolean>>({});
   const [zoomImageUrl, setZoomImageUrl] = useState<{ url: string; title: string } | null>(null);
 
   // Batch Analysis State
   const [batchRuns, setBatchRuns] = useState<any[]>([]);
-  const [activeBatchId, setActiveBatchId] = useState<string>(
-    initialBatchId || 'batch_20260521_151902'
-  );
-  const [batchDem, setBatchDem] = useState<string>('matrix_01');
+  const [batchRunsLoaded, setBatchRunsLoaded] = useState(false);
+  const [activeBatchId, setActiveBatchId] = useState<string>(initialBatchId || '');
+  const [batchDem, setBatchDem] = useState<string>(selectedDemonstratorId || '');
   const [batchAnalysis, setBatchAnalysis] = useState<any | null>(null);
-  const [matrixTab, setMatrixTab] = useState<'K' | 'M'>('K');
-  const [activeLatexTab, setActiveLatexTab] = useState<
-    'k_summary' | 'm_summary' | 'k_nb2' | 'm_nb2'
-  >('k_summary');
-  const [copiedLatex, setCopiedLatex] = useState(false);
+  const [batchError, setBatchError] = useState<string | null>(null);
+  const [singleRunsLoaded, setSingleRunsLoaded] = useState(false);
 
   useEffect(() => {
     if (initialResultDir) {
@@ -95,23 +128,44 @@ export const ResultsExplorer: React.FC<ResultsExplorerProps> = ({
   }, [initialBatchId]);
 
   useEffect(() => {
-    api.listBatchRuns().then((res) => {
-      setBatchRuns(res.batch_runs);
-      if (!activeBatchId && res.batch_runs.length > 0) {
-        setActiveBatchId(res.batch_runs[0].id);
-      }
-    });
+    api
+      .listBatchRuns()
+      .then((res) => {
+        setBatchRuns(res.batch_runs);
+        setActiveBatchId((cur) => cur || res.batch_runs[0]?.id || '');
+      })
+      .catch(() => setBatchRuns([]))
+      .finally(() => setBatchRunsLoaded(true));
   }, []);
 
   useEffect(() => {
     if (!activeBatchId) return;
+    let cancelled = false;
+    setBatchError(null);
     api
       .getBatchAnalysis(activeBatchId, batchDem)
-      .then((res) => setBatchAnalysis(res))
-      .catch(() => setBatchAnalysis(null));
+      .then((res) => {
+        if (cancelled) return;
+        // Only offer matrices that are actually in this batch; jump to the first one if needed.
+        const available: string[] = res.available_demonstrators || [];
+        if (available.length > 0 && !available.includes(batchDem)) {
+          setBatchDem(available[0]);
+          return;
+        }
+        setBatchAnalysis(res);
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setBatchAnalysis(null);
+        setBatchError(err.message || 'Could not load the batch analysis');
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [activeBatchId, batchDem]);
 
   useEffect(() => {
+    setSingleRunsLoaded(false);
     api
       .listDemonstratorRuns(demId)
       .then((res) => {
@@ -120,7 +174,8 @@ export const ResultsExplorer: React.FC<ResultsExplorerProps> = ({
           setActiveResultDir(res.runs[0].result_dir);
         }
       })
-      .catch(() => setSingleRuns([]));
+      .catch(() => setSingleRuns([]))
+      .finally(() => setSingleRunsLoaded(true));
   }, [demId]);
 
   useEffect(() => {
@@ -134,31 +189,85 @@ export const ResultsExplorer: React.FC<ResultsExplorerProps> = ({
       .then((res) => {
         setRunDetail(res);
         setActivePlots({
-          k_original_matrix_partitioned: true,
-          k_permuted_matrix_partitioned: true,
-          k_coarsened_graph_partitioned: true,
-          k_uncoarsened_graph_partitioned: true,
+          original_matrix_partitioned: true,
+          permuted_matrix_partitioned: true,
+          coarsened_graph_partitioned: true,
+          uncoarsened_graph_partitioned: true,
         });
       })
       .catch(() => setRunDetail(null))
       .finally(() => setLoadingSingle(false));
   }, [activeResultDir]);
 
+  // Load details for every compared run we don't have yet
   useEffect(() => {
-    if (!compareResultDir) {
-      setCompareRunDetail(null);
-      return;
-    }
-    api
-      .getSingleRunDetail(compareResultDir)
-      .then((res) => setCompareRunDetail(res))
-      .catch(() => setCompareRunDetail(null));
-  }, [compareResultDir]);
+    compareResultDirs.forEach((dir) => {
+      if (compareRunDetails[dir]) return;
+      api
+        .getSingleRunDetail(dir)
+        .then((res) => setCompareRunDetails((prev) => ({ ...prev, [dir]: res })))
+        .catch((err) => toast.error(`Could not load ${runShortName(dir)}: ${err.message}`));
+    });
+  }, [compareResultDirs]);
 
-  const copyLatex = (text: string) => {
-    navigator.clipboard.writeText(text);
-    setCopiedLatex(true);
-    setTimeout(() => setCopiedLatex(false), 2000);
+  // Keep the URL in sync with what is being inspected
+  useEffect(() => {
+    onSelectionChange(
+      mode === 'single'
+        ? { resultDir: activeResultDir, batchId: null }
+        : { resultDir: null, batchId: activeBatchId || null }
+    );
+  }, [mode, activeResultDir, activeBatchId]);
+
+  const compared = compareResultDirs
+    .map((dir, i) => ({
+      dir,
+      label: `Run ${RUN_LETTERS[i]}`,
+      color: COMPARE_COLORS[i],
+      detail: compareRunDetails[dir],
+    }))
+    .filter((c) => c.detail);
+
+  const addCompare = (dir: string) => {
+    if (!dir || compareResultDirs.includes(dir) || compareResultDirs.length >= MAX_COMPARE) return;
+    setCompareResultDirs((prev) => [...prev, dir]);
+  };
+  const removeCompare = (dir: string) =>
+    setCompareResultDirs((prev) => prev.filter((d) => d !== dir));
+
+  const runParams: SimulationParameters | null = runDetail?.run_parameters || null;
+
+  // Matrices present in the selected batch (from the analysis, else from the runs listing).
+  const batchMatrices: string[] =
+    batchAnalysis?.batch_id === activeBatchId && batchAnalysis?.available_demonstrators
+      ? batchAnalysis.available_demonstrators
+      : batchRuns.find((b) => b.id === activeBatchId)?.geometries || [];
+  const matricesWithRuns = demonstrators.filter((d) => d.id !== demId && (d.runs_count ?? 0) > 0);
+
+  const handleRerun = async () => {
+    if (!runParams) return;
+    setRerunning(true);
+    try {
+      await onRerun(demId, runParams);
+    } finally {
+      setRerunning(false);
+    }
+  };
+
+  const exportBatchCsv = () => {
+    if (!batchAnalysis) return;
+    const headers = [
+      'case_key', 'algorithm', 'coarsening_size', 'status',
+      'bandwidth_original', 'bandwidth_permuted',
+      'avg_bandwidth_original', 'avg_bandwidth_permuted',
+      'frac_0_1pct_original', 'frac_0_1pct_permuted',
+      'frac_0_4pct_original', 'frac_0_4pct_permuted',
+      'frac_0_7pct_original', 'frac_0_7pct_permuted',
+      'frac_1_0pct_original', 'frac_1_0pct_permuted',
+      'permutation_mismatches', 'error_message',
+    ];
+    const rows = batchAnalysis.rows.map((r: any) => headers.map((h) => r[h]));
+    downloadCsv(headers, rows, safeFilename(`${activeBatchId}_${batchDem}.csv`));
   };
 
   return (
@@ -166,7 +275,7 @@ export const ResultsExplorer: React.FC<ResultsExplorerProps> = ({
       {/* Top Mode Switcher */}
       <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-4 flex flex-wrap items-center justify-between gap-4">
         <div className="flex items-center gap-2.5">
-          <span className="px-2.5 py-0.5 text-xs font-semibold rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+          <span className="px-2.5 py-0.5 text-xs font-semibold rounded-full bg-indigo-500/15 text-indigo-300 border border-indigo-500/30">
             Results & Plots
           </span>
           <span className="text-xs text-slate-400">
@@ -178,6 +287,7 @@ export const ResultsExplorer: React.FC<ResultsExplorerProps> = ({
         <div className="flex items-center gap-2 bg-slate-950 p-1.5 rounded-xl border border-slate-800">
           <button
             onClick={() => setMode('batch')}
+            aria-pressed={mode === 'batch'}
             className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition ${
               mode === 'batch'
                 ? 'bg-indigo-600 text-white shadow'
@@ -188,6 +298,7 @@ export const ResultsExplorer: React.FC<ResultsExplorerProps> = ({
           </button>
           <button
             onClick={() => setMode('single')}
+            aria-pressed={mode === 'single'}
             className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition ${
               mode === 'single'
                 ? 'bg-indigo-600 text-white shadow'
@@ -210,11 +321,13 @@ export const ResultsExplorer: React.FC<ResultsExplorerProps> = ({
                 <select
                   value={activeBatchId}
                   onChange={(e) => setActiveBatchId(e.target.value)}
+                  disabled={batchRuns.length === 0}
                   className="bg-slate-950 border border-slate-700 rounded-lg px-3 py-1.5 text-xs font-mono text-white"
                 >
+                  {batchRuns.length === 0 && <option value="">No batch studies</option>}
                   {batchRuns.map((br) => (
                     <option key={br.id} value={br.id}>
-                      {br.id} ({br.completed_cases}/{br.total_cases} completed)
+                      {br.id} ({br.completed_cases}/{br.total_cases} completed{br.failed_cases ? `, ${br.failed_cases} failed` : ''})
                     </option>
                   ))}
                 </select>
@@ -223,11 +336,13 @@ export const ResultsExplorer: React.FC<ResultsExplorerProps> = ({
               <div className="flex items-center gap-2">
                 <span className="text-xs text-slate-400 font-medium">Matrix:</span>
                 <div className="flex items-center gap-1">
-                  {(batchAnalysis?.available_demonstrators || ['matrix_01', 'matrix_02']).map(
+                  {batchMatrices.length === 0 && <span className="text-xs text-slate-500">—</span>}
+                  {batchMatrices.map(
                     (d: string) => (
                       <button
                         key={d}
                         onClick={() => setBatchDem(d)}
+                        aria-pressed={batchDem === d}
                         className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition ${
                           batchDem === d
                             ? 'bg-indigo-600 text-white'
@@ -241,308 +356,121 @@ export const ResultsExplorer: React.FC<ResultsExplorerProps> = ({
                 </div>
               </div>
             </div>
-
-            {/* Matrix K vs M Toggle */}
-            <div className="flex items-center gap-1.5 bg-slate-950 p-1 rounded-xl border border-slate-800">
-              <button
-                onClick={() => setMatrixTab('K')}
-                className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition ${
-                  matrixTab === 'K'
-                    ? 'bg-indigo-600 text-white'
-                    : 'text-slate-400 hover:text-white'
-                }`}
-              >
-                Stiffness Matrix (K)
-              </button>
-              <button
-                onClick={() => setMatrixTab('M')}
-                className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition ${
-                  matrixTab === 'M'
-                    ? 'bg-cyan-600 text-white'
-                    : 'text-slate-400 hover:text-white'
-                }`}
-              >
-                Mass Matrix (M)
-              </button>
-            </div>
           </div>
 
-          {batchAnalysis && batchAnalysis.completed_rows?.length > 0 ? (
+          {batchRuns.length === 0 && batchRunsLoaded ? (
+            <EmptyState
+              title="No batch studies yet"
+              body="A batch study runs several methods and coarsening scales over your matrices and compares them here. Configure and start one from Batch Run; results appear in this view as soon as its summary is written."
+              actions={
+                <button onClick={() => setMode('single')} className={EMPTY_BTN}>
+                  View single runs instead
+                </button>
+              }
+            />
+          ) : batchError ? (
+            <EmptyState
+              title={`No summary for ${activeBatchId} yet`}
+              body={`${batchError}. If the batch is still running, its summary is written when it finishes. Pick another batch above, or inspect individual runs.`}
+              actions={
+                <button onClick={() => setMode('single')} className={EMPTY_BTN}>
+                  View single runs instead
+                </button>
+              }
+            />
+          ) : batchAnalysis && batchAnalysis.rows?.length > 0 ? (
             <>
-              {/* Comparative Metrics Table */}
-              <div className="bg-slate-900/80 border border-slate-800 rounded-2xl overflow-hidden shadow-lg">
-                <div className="p-4 border-b border-slate-800 flex items-center justify-between">
-                  <h3 className="text-sm font-bold text-white">
-                    {matrixTab}-Matrix Summary ({batchDem})
-                  </h3>
-                </div>
+              <BatchSummaryTable
+                rows={batchAnalysis.rows}
+                title={`Matrix Summary (${batchDem})`}
+                onExportCsv={exportBatchCsv}
+                onOpenWiki={onOpenWiki}
+              />
 
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left border-collapse text-xs">
-                    <thead>
-                      <tr className="bg-slate-950/90 text-slate-400 border-b border-slate-800 font-mono uppercase text-[11px]">
-                        <th className="py-3 px-4">Method</th>
-                        <th className="py-3 px-3">Coarse Scale</th>
-                        <th className="py-3 px-3 text-right">
-                          <span className="inline-flex items-center gap-1 justify-end">
-                            Bandwidth B({matrixTab})
-                            <InfoTooltip topicId="metric-bandwidth" onOpenWiki={onOpenWiki} />
-                          </span>
-                        </th>
-                        <th className="py-3 px-3 text-right">BW Change</th>
-                        <th className="py-3 px-3 text-right">
-                          <span className="inline-flex items-center gap-1 justify-end">
-                            nB² Reduction
-                            <InfoTooltip topicId="metric-nb2" onOpenWiki={onOpenWiki} />
-                          </span>
-                        </th>
-                        <th className="py-3 px-3 text-right">
-                          <span className="inline-flex items-center gap-1 justify-end">
-                            Avg. Bandwidth
-                            <InfoTooltip topicId="metric-avg-bandwidth" onOpenWiki={onOpenWiki} />
-                          </span>
-                        </th>
-                        <th className="py-3 px-3 text-right">
-                          <span className="inline-flex items-center gap-1 justify-end">
-                            frac 0.1%
-                            <InfoTooltip topicId="metric-diag-fractions" onOpenWiki={onOpenWiki} />
-                          </span>
-                        </th>
-                        <th className="py-3 px-3 text-right">frac 0.4%</th>
-                        <th className="py-3 px-3 text-right">frac 0.7%</th>
-                        <th className="py-3 px-3 text-right">frac 1.0%</th>
-                        <th className="py-3 px-3 text-center">Perm Check</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-800/70 font-mono">
-                      {/* Baseline Original Row */}
-                      {(() => {
-                        const first = batchAnalysis.completed_rows[0];
-                        const bwOrig = first[`${matrixTab}_bandwidth_original`];
-                        const avgOrig = first[`${matrixTab}_avg_bandwidth_original`];
-                        return (
-                          <tr className="bg-slate-950/40 text-slate-300 font-semibold">
-                            <td className="py-3 px-4 font-sans text-white">Original Unpermuted</td>
-                            <td className="py-3 px-3 text-slate-500">N/A</td>
-                            <td className="py-3 px-3 text-right">{bwOrig?.toLocaleString()}</td>
-                            <td className="py-3 px-3 text-right text-slate-500">—</td>
-                            <td className="py-3 px-3 text-right text-slate-500">—</td>
-                            <td className="py-3 px-3 text-right">{avgOrig?.toFixed(2)}</td>
-                            <td className="py-3 px-3 text-right">
-                              {(first[`${matrixTab}_frac_0_1pct_original`] * 100).toFixed(2)}%
-                            </td>
-                            <td className="py-3 px-3 text-right">
-                              {(first[`${matrixTab}_frac_0_4pct_original`] * 100).toFixed(2)}%
-                            </td>
-                            <td className="py-3 px-3 text-right">
-                              {(first[`${matrixTab}_frac_0_7pct_original`] * 100).toFixed(2)}%
-                            </td>
-                            <td className="py-3 px-3 text-right">
-                              {(first[`${matrixTab}_frac_1_0pct_original`] * 100).toFixed(2)}%
-                            </td>
-                            <td className="py-3 px-3 text-center text-slate-500">Baseline</td>
-                          </tr>
-                        );
-                      })()}
-
-                      {batchAnalysis.rows.map((row: any) => {
-                        if (row.status !== 'completed') {
-                          return (
-                            <tr key={row.case_key} className="bg-rose-950/20 text-rose-300">
-                              <td className="py-3 px-4 font-sans font-semibold">
-                                {METHOD_LABELS[row.algorithm] || row.algorithm}
-                              </td>
-                              <td className="py-3 px-3 uppercase">{row.coarsening_size}</td>
-                              <td colSpan={9} className="py-3 px-4 text-xs">
-                                Failed: {row.error_message || row.error_type}
-                              </td>
-                            </tr>
-                          );
-                        }
-
-                        const bwOrig = row[`${matrixTab}_bandwidth_original`];
-                        const bwPerm = row[`${matrixTab}_bandwidth_permuted`];
-                        const bwRed =
-                          bwOrig > 0 ? ((bwOrig - bwPerm) / bwOrig) * 100 : 0;
-                        const nb2Red =
-                          bwOrig > 0
-                            ? ((bwOrig * bwOrig - bwPerm * bwPerm) / (bwOrig * bwOrig)) * 100
-                            : 0;
-                        const f01Orig = row[`${matrixTab}_frac_0_1pct_original`];
-                        const f01Perm = row[`${matrixTab}_frac_0_1pct_permuted`];
-                        const f04Orig = row[`${matrixTab}_frac_0_4pct_original`];
-                        const f04Perm = row[`${matrixTab}_frac_0_4pct_permuted`];
-
-                        return (
-                          <tr
-                            key={row.case_key}
-                            className="hover:bg-slate-800/40 transition text-slate-200"
-                          >
-                            <td className="py-3 px-4 font-sans font-semibold text-white">
-                              {METHOD_LABELS[row.algorithm] || row.algorithm}
-                            </td>
-                            <td className="py-3 px-3">
-                              <span className="px-2 py-0.5 rounded bg-slate-800 text-amber-300 text-[11px] uppercase">
-                                {row.coarsening_size}
-                              </span>
-                            </td>
-                            <td className="py-3 px-3 text-right font-bold">
-                              {bwPerm?.toLocaleString()}
-                            </td>
-                            <td
-                              className={`py-3 px-3 text-right font-semibold ${
-                                bwRed > 0 ? 'text-emerald-400' : 'text-amber-400'
-                              }`}
-                            >
-                              {bwRed > 0 ? `-${bwRed.toFixed(1)}%` : `+${Math.abs(bwRed).toFixed(1)}%`}
-                            </td>
-                            <td
-                              className={`py-3 px-3 text-right font-bold ${
-                                nb2Red > 0 ? 'text-emerald-400' : 'text-slate-400'
-                              }`}
-                            >
-                              {nb2Red > 0 ? `-${nb2Red.toFixed(1)}%` : `${nb2Red.toFixed(1)}%`}
-                            </td>
-                            <td className="py-3 px-3 text-right">
-                              {row[`${matrixTab}_avg_bandwidth_permuted`]?.toFixed(2)}
-                            </td>
-                            <td
-                              className={`py-3 px-3 text-right ${
-                                f01Perm > f01Orig ? 'text-emerald-300 font-semibold' : ''
-                              }`}
-                            >
-                              {(f01Perm * 100).toFixed(2)}%
-                            </td>
-                            <td
-                              className={`py-3 px-3 text-right ${
-                                f04Perm > f04Orig ? 'text-emerald-300 font-semibold' : ''
-                              }`}
-                            >
-                              {(f04Perm * 100).toFixed(2)}%
-                            </td>
-                            <td className="py-3 px-3 text-right">
-                              {(row[`${matrixTab}_frac_0_7pct_permuted`] * 100).toFixed(2)}%
-                            </td>
-                            <td className="py-3 px-3 text-right">
-                              {(row[`${matrixTab}_frac_1_0pct_permuted`] * 100).toFixed(2)}%
-                            </td>
-                            <td className="py-3 px-3 text-center">
-                              {row[`${matrixTab}_permutation_mismatches`] === 0 ? (
-                                <span className="inline-flex items-center gap-1 text-emerald-400 text-[11px]">
-                                  <CheckCircle2 className="w-3.5 h-3.5" /> 0 err
-                                </span>
-                              ) : (
-                                <span className="text-rose-400">Mismatch</span>
-                              )}
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-
-              {/* Multi-Method Locality Curves by Scale */}
-              <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
-                {(batchAnalysis.comparison_curves?.[matrixTab] || []).map((scaleBlock: any) => (
-                  <div
-                    key={scaleBlock.coarsening_size}
-                    className="bg-slate-900/80 border border-slate-800 rounded-2xl p-5 space-y-3"
-                  >
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <span className="text-[11px] font-mono uppercase text-amber-300">
-                          Coarsening Scale: {scaleBlock.coarsening_size}
-                        </span>
-                        <h4 className="text-sm font-bold text-white">
-                          {matrixTab}-Matrix Diagonal Band Concentration
-                        </h4>
-                      </div>
-                    </div>
-
-                    <MultiMethodSvgChart
-                      points={scaleBlock.points}
-                      methods={['Original', ...scaleBlock.methods]}
-                    />
-                  </div>
-                ))}
-              </div>
-
-              {/* Thesis LaTeX Table Generator */}
-              <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-6 space-y-4">
-                <div className="flex flex-wrap items-center justify-between gap-4">
-                  <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                    <FileText className="w-4 h-4 text-indigo-400" />
-                    Thesis LaTeX Table
-                  </h3>
-
-                  <div className="flex flex-wrap items-center gap-2">
-                    {[
-                      { id: 'k_summary', label: 'K Numerical Summary' },
-                      { id: 'm_summary', label: 'M Numerical Summary' },
-                      { id: 'k_nb2', label: 'K nB² Complexity Table' },
-                      { id: 'm_nb2', label: 'M nB² Complexity Table' },
-                    ].map((t) => (
-                      <button
-                        key={t.id}
-                        onClick={() => setActiveLatexTab(t.id as any)}
-                        className={`px-3 py-1.5 rounded-lg text-xs font-medium transition ${
-                          activeLatexTab === t.id
-                            ? 'bg-indigo-600 text-white'
-                            : 'bg-slate-950 text-slate-400 hover:text-white border border-slate-800'
-                        }`}
+              {batchAnalysis.completed_rows?.length > 0 ? (
+                <>
+                  {/* Multi-Method Locality Curves by Scale */}
+                  <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+                    {(batchAnalysis.comparison_curves || []).map((scaleBlock: any) => (
+                      <div
+                        key={scaleBlock.coarsening_size}
+                        className="bg-slate-900/80 border border-slate-800 rounded-2xl p-5 space-y-3"
                       >
-                        {t.label}
-                      </button>
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <span className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+                              Coarsening scale: {scaleLabel(scaleBlock.coarsening_size)}
+                            </span>
+                            <h4 className="text-sm font-bold text-white">
+                              Diagonal Band Concentration
+                            </h4>
+                          </div>
+                        </div>
+
+                        <ChartExport
+                          filename={`${activeBatchId}_${batchDem}_${scaleBlock.coarsening_size}_locality`}
+                        >
+                          <MultiMethodSvgChart
+                            points={scaleBlock.points}
+                            methods={['Original', ...scaleBlock.methods]}
+                          />
+                        </ChartExport>
+                      </div>
                     ))}
-
-                    <button
-                      onClick={() =>
-                        copyLatex(batchAnalysis.latex_tables?.[activeLatexTab] || '')
-                      }
-                      className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-semibold bg-emerald-600/20 text-emerald-300 border border-emerald-500/30 hover:bg-emerald-600/30 transition"
-                    >
-                      {copiedLatex ? (
-                        <>
-                          <Check className="w-3.5 h-3.5" /> Copied!
-                        </>
-                      ) : (
-                        <>
-                          <Copy className="w-3.5 h-3.5" /> Copy LaTeX
-                        </>
-                      )}
-                    </button>
                   </div>
-                </div>
 
-                <pre className="p-4 rounded-xl bg-slate-950 border border-slate-800 text-xs font-mono text-slate-200 overflow-x-auto leading-relaxed">
-                  {batchAnalysis.latex_tables?.[activeLatexTab] || 'No LaTeX table available.'}
-                </pre>
-              </div>
+                </>
+              ) : (
+                <EmptyState
+                  title={`Every case for ${batchDem} failed`}
+                  body="There are no completed cases to plot or tabulate. Expand a failed row above to see the full error, fix the cause (e.g. start the remote backend or check credentials) and re-run the batch."
+                />
+              )}
             </>
+          ) : batchAnalysis ? (
+            <EmptyState
+              title={batchMatrices.length > 0 ? `${batchDem} is not part of ${activeBatchId}` : `${activeBatchId} has no results yet`}
+              body={
+                batchMatrices.length > 0
+                  ? 'This batch has no cases for the selected matrix. Pick one of the matrices it did run:'
+                  : 'This batch has no result rows yet.'
+              }
+              actions={
+                <>
+                  {batchMatrices.map((d: string) => (
+                    <button key={d} onClick={() => setBatchDem(d)} className={EMPTY_BTN}>
+                      {d}
+                    </button>
+                  ))}
+                  <button onClick={() => setMode('single')} className={EMPTY_BTN}>
+                    View single runs instead
+                  </button>
+                </>
+              }
+            />
           ) : (
-            <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-12 text-center text-sm text-slate-400">
-              No completed batch rows found for {batchDem} in {activeBatchId}.
+            <div className="p-12 text-center text-sm text-slate-400 flex items-center justify-center gap-2">
+              <Loader2 className="w-5 h-5 animate-spin text-indigo-400" />
+              Loading batch analysis...
             </div>
           )}
         </div>
       )}
 
-      {/* MODE 2: SINGLE RUN DEEP-DIVE & 10-PLOT VISUAL GALLERY */}
+      {/* MODE 2: SINGLE RUN DEEP-DIVE & PLOT GALLERY */}
       {mode === 'single' && (
         <div className="space-y-6">
           {/* Demonstrator & Run Folder Selector */}
           <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-4 flex flex-wrap items-center justify-between gap-4">
             <div className="flex flex-wrap items-center gap-4 min-w-0">
               <div className="flex items-center gap-2">
-                <span className="text-xs text-slate-400 font-medium">Matrix:</span>
+                <span className="text-xs text-slate-400 font-medium">Simulation:</span>
                 <select
                   value={demId}
                   onChange={(e) => {
                     setDemId(e.target.value);
                     setActiveResultDir(null);
-                    setCompareResultDir('');
+                    setCompareResultDirs([]);
                   }}
                   className="bg-slate-950 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-white"
                 >
@@ -558,55 +486,105 @@ export const ResultsExplorer: React.FC<ResultsExplorerProps> = ({
                 <span className="text-xs text-slate-400 font-medium shrink-0">Run A:</span>
                 <select
                   value={activeResultDir || ''}
-                  onChange={(e) => setActiveResultDir(e.target.value)}
+                  onChange={(e) => {
+                    setActiveResultDir(e.target.value);
+                    setCompareResultDirs((prev) => prev.filter((d) => d !== e.target.value));
+                  }}
                   className="bg-slate-950 border border-slate-700 rounded-lg px-3 py-1.5 text-xs font-mono text-white max-w-[260px] truncate"
                 >
                   {singleRuns.length === 0 && (
-                    <option value="">No local runs in demonstrators/{demId}/results/</option>
+                    <option value="">No local runs in simulations/{demId}/results/</option>
                   )}
                   {singleRuns.map((r) => (
                     <option key={r.result_dir} value={r.result_dir}>
-                      {r.run_id} — {r.partitioning_strategy} (k={r.k_target})
+                      {runOptionLabel(r)}
                     </option>
                   ))}
                 </select>
               </div>
 
               {singleRuns.length > 1 && (
-                <div className="flex items-center gap-2 min-w-0">
-                  <ArrowLeftRight className="w-3.5 h-3.5 text-amber-400 shrink-0" />
-                  <span className="text-xs text-slate-400 font-medium shrink-0">
-                    Compare Run B:
-                  </span>
-                  <select
-                    value={compareResultDir}
-                    onChange={(e) => setCompareResultDir(e.target.value)}
-                    className="bg-slate-950 border border-slate-700 rounded-lg px-3 py-1.5 text-xs font-mono text-amber-200 max-w-[260px] truncate"
-                  >
-                    <option value="">None (Single Run View)</option>
-                    {singleRuns
-                      .filter((r) => r.result_dir !== activeResultDir)
-                      .map((r) => (
-                        <option key={r.result_dir} value={r.result_dir}>
-                          {r.run_id} — {r.partitioning_strategy} (k={r.k_target})
-                        </option>
-                      ))}
-                  </select>
+                <div className="flex flex-wrap items-center gap-2 min-w-0">
+                  <ArrowLeftRight className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                  <span className="text-xs text-slate-400 font-medium shrink-0">Compare with:</span>
+                  {compareResultDirs.map((dir, i) => (
+                    <span
+                      key={dir}
+                      className="inline-flex items-center gap-1.5 pl-2 pr-1 py-0.5 rounded-lg text-xs font-mono border"
+                      style={{ borderColor: COMPARE_COLORS[i], color: COMPARE_COLORS[i] }}
+                      title={dir}
+                    >
+                      {RUN_LETTERS[i]}: {runShortName(dir)}
+                      <button
+                        onClick={() => removeCompare(dir)}
+                        className="p-0.5 rounded hover:bg-slate-800"
+                        aria-label={`Stop comparing ${runShortName(dir)}`}
+                      >
+                        <X className="w-3 h-3" />
+                      </button>
+                    </span>
+                  ))}
+                  {compareResultDirs.length < MAX_COMPARE && (
+                    <div className="relative inline-flex items-center">
+                      <Plus className="w-3.5 h-3.5 text-slate-400 absolute left-2 pointer-events-none" />
+                      <select
+                        value=""
+                        onChange={(e) => addCompare(e.target.value)}
+                        aria-label="Add a run to compare"
+                        className="bg-slate-950 border border-slate-700 rounded-lg pl-7 pr-3 py-1.5 text-xs font-mono text-slate-200 max-w-[230px] truncate"
+                      >
+                        <option value="">Add run…</option>
+                        {singleRuns
+                          .filter(
+                            (r) =>
+                              r.result_dir !== activeResultDir &&
+                              !compareResultDirs.includes(r.result_dir)
+                          )
+                          .map((r) => (
+                            <option key={r.result_dir} value={r.result_dir}>
+                              {runOptionLabel(r)}
+                            </option>
+                          ))}
+                      </select>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
 
             {activeResultDir && (
+              <div className="flex flex-wrap items-center gap-2 shrink-0">
+              {runParams && (
+                <>
+                  <button
+                    onClick={() => onLoadParameters(demId, runParams)}
+                    title="Open this run's exact parameters in Single Run"
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700"
+                  >
+                    <Sliders className="w-3.5 h-3.5 text-indigo-400" /> Load into Single Run
+                  </button>
+                  <button
+                    onClick={handleRerun}
+                    disabled={rerunning}
+                    title="Start a new run on this matrix with this run's exact parameters"
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold bg-indigo-600 hover:bg-indigo-500 text-white disabled:opacity-50"
+                  >
+                    {rerunning ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Play className="w-3.5 h-3.5 fill-current" />}
+                    Re-run
+                  </button>
+                </>
+              )}
               <a
                 href={`/api/results/download-bundle?result_dir=${encodeURIComponent(
                   activeResultDir
                 )}`}
                 download
-                className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-xl text-xs font-semibold bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/40 transition shrink-0"
+                className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-xl text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition shrink-0"
               >
                 <Download className="w-3.5 h-3.5" />
                 Download Run Bundle (.zip)
               </a>
+              </div>
             )}
           </div>
 
@@ -617,22 +595,22 @@ export const ResultsExplorer: React.FC<ResultsExplorerProps> = ({
             </div>
           ) : runDetail ? (
             <>
-              {/* KPI Summary Cards for K and M */}
+              {/* KPI Summary for the permuted matrix */}
               {runDetail.kpi_summary && (
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-                  {(['K', 'M'] as const).map((mName) => {
-                    const kpi = runDetail.kpi_summary[mName];
+                <div className="grid grid-cols-1 gap-5">
+                  {[runDetail.kpi_summary].map((kpi: any) => {
                     if (!kpi) return null;
-                    const bwRed = kpi.bandwidth_reduction_pct ?? 0;
-                    const nb2Red = kpi.nb2_reduction_pct ?? 0;
+                    // Backend reports reductions (positive = smaller); show signed change (negative = better).
+                    const bwChange = -(kpi.bandwidth_reduction_pct ?? 0);
+                    const nb2Change = -(kpi.nb2_reduction_pct ?? 0);
                     return (
                       <div
-                        key={mName}
+                        key="matrix"
                         className="bg-slate-900/80 border border-slate-800 rounded-2xl p-5 space-y-4"
                       >
                         <div className="flex items-center justify-between">
                           <h3 className="text-sm font-bold text-white">
-                            Matrix {mName} Structural Performance
+                            Matrix Structural Performance
                           </h3>
                           {kpi.permutation_check?.mismatches === 0 && (
                             <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
@@ -643,56 +621,46 @@ export const ResultsExplorer: React.FC<ResultsExplorerProps> = ({
 
                         <div className="grid grid-cols-3 gap-3">
                           <div className="p-3 rounded-xl bg-slate-950 border border-slate-800">
-                            <div className="text-[11px] text-slate-400">Max Bandwidth B({mName})</div>
+                            <div className="text-xs text-slate-400">Max Bandwidth B</div>
                             <div className="text-sm font-mono font-bold text-white mt-0.5">
                               {kpi.bandwidth_original?.toLocaleString()} →{' '}
                               {kpi.bandwidth_permuted?.toLocaleString()}
                             </div>
-                            <div
-                              className={`text-xs font-mono font-semibold mt-0.5 ${
-                                bwRed >= 0 ? 'text-emerald-400' : 'text-amber-400'
-                              }`}
-                            >
-                              {bwRed >= 0
-                                ? `-${bwRed.toFixed(2)}% reduction`
-                                : `+${Math.abs(bwRed).toFixed(2)}%`}
+                            <div className={`text-xs font-mono font-semibold mt-0.5 ${changeClass(bwChange)}`}>
+                              {fmtChange(bwChange, 2)} change
                             </div>
                           </div>
 
                           <div className="p-3 rounded-xl bg-slate-950 border border-slate-800">
-                            <div className="text-[11px] text-slate-400">Avg. Bandwidth</div>
+                            <div className="text-xs text-slate-400">Avg. Bandwidth</div>
                             <div className="text-sm font-mono font-bold text-white mt-0.5">
                               {kpi.avg_bandwidth_original?.toFixed(1)} →{' '}
                               {kpi.avg_bandwidth_permuted?.toFixed(1)}
                             </div>
-                            <div className="text-[11px] font-mono text-slate-400 mt-0.5">
+                            <div className="text-xs font-mono text-slate-400 mt-0.5">
                               NNZ: {kpi.nnz_permuted?.toLocaleString()}
                             </div>
                           </div>
 
                           <div className="p-3 rounded-xl bg-slate-950 border border-slate-800">
-                            <div className="text-[11px] text-slate-400">nB² Complexity</div>
-                            <div
-                              className={`text-sm font-mono font-bold mt-0.5 ${
-                                nb2Red >= 0 ? 'text-emerald-400' : 'text-amber-400'
-                              }`}
-                            >
-                              {nb2Red >= 0
-                                ? `-${nb2Red.toFixed(1)}%`
-                                : `+${Math.abs(nb2Red).toFixed(1)}%`}
+                            <div className="text-xs text-slate-400">nB² change</div>
+                            <div className={`text-sm font-mono font-bold mt-0.5 ${changeClass(nb2Change)}`}>
+                              {fmtChange(nb2Change)}
                             </div>
-                            <div className="text-[11px] font-mono text-slate-400 mt-0.5">
+                            <div className="text-xs font-mono text-slate-400 mt-0.5">
                               frac 0.4%: {((kpi.frac_0_4pct_permuted || 0) * 100).toFixed(1)}%
                             </div>
                           </div>
                         </div>
 
                         {/* Interactive 100-Point Locality Curve */}
-                        {runDetail.curves?.[mName]?.length > 0 && (
+                        {runDetail.curves?.length > 0 && (
                           <SingleRunCurveSvg
-                            points={runDetail.curves[mName]}
-                            comparePoints={compareRunDetail?.curves?.[mName]}
-                            matrixName={mName}
+                            points={runDetail.curves}
+                            compareSeries={compared
+                              .filter((c) => c.detail.curves?.length)
+                              .map((c) => ({ label: c.label, color: c.color, points: c.detail.curves }))}
+                            exportName={`${runShortName(runDetail.result_dir)}_locality`}
                           />
                         )}
                       </div>
@@ -701,119 +669,12 @@ export const ResultsExplorer: React.FC<ResultsExplorerProps> = ({
                 </div>
               )}
 
-              {/* Side-by-Side Single Run Comparator (Run A vs. Run B) */}
-              {compareRunDetail?.kpi_summary && runDetail?.kpi_summary && (
-                <div className="bg-slate-900/80 border border-amber-500/30 rounded-2xl p-5 space-y-4 overflow-hidden">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <div className="flex items-center gap-2">
-                      <ArrowLeftRight className="w-4 h-4 text-amber-400" />
-                      <h3 className="text-sm font-bold text-white">
-                        Side-by-Side Single Run Comparison (Run A vs. Run B)
-                      </h3>
-                    </div>
-                    <div className="flex items-center gap-3 text-xs font-mono">
-                      <span className="text-indigo-300">
-                        Run A: {activeResultDir?.split('/').pop()}
-                      </span>
-                      <span className="text-slate-600">vs.</span>
-                      <span className="text-amber-300">
-                        Run B: {compareResultDir.split('/').pop()}
-                      </span>
-                    </div>
-                  </div>
-
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-left border-collapse text-xs font-mono">
-                      <thead>
-                        <tr className="bg-slate-950/90 text-slate-400 border-b border-slate-800 uppercase text-[11px]">
-                          <th className="py-2.5 px-3 font-sans">Matrix</th>
-                          <th className="py-2.5 px-3 font-sans">Metric</th>
-                          <th className="py-2.5 px-3 text-right text-indigo-300">Run A (Permuted)</th>
-                          <th className="py-2.5 px-3 text-right text-amber-300">Run B (Permuted)</th>
-                          <th className="py-2.5 px-3 text-right">Delta (A vs B)</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-800/70">
-                        {(['K', 'M'] as const).flatMap((mName) => {
-                          const kA = runDetail.kpi_summary[mName];
-                          const kB = compareRunDetail.kpi_summary[mName];
-                          if (!kA || !kB) return [];
-                          return [
-                            {
-                              matrix: mName,
-                              label: `Max Bandwidth B(${mName})`,
-                              a: kA.bandwidth_permuted,
-                              b: kB.bandwidth_permuted,
-                              fmt: (v: number) => v?.toLocaleString(),
-                              lowerIsBetter: true,
-                            },
-                            {
-                              matrix: mName,
-                              label: `Bandwidth Reduction (%)`,
-                              a: kA.bandwidth_reduction_pct,
-                              b: kB.bandwidth_reduction_pct,
-                              fmt: (v: number) => `${v?.toFixed(2)}%`,
-                              lowerIsBetter: false,
-                            },
-                            {
-                              matrix: mName,
-                              label: `nB² Complexity Reduction (%)`,
-                              a: kA.nb2_reduction_pct,
-                              b: kB.nb2_reduction_pct,
-                              fmt: (v: number) => `${v?.toFixed(2)}%`,
-                              lowerIsBetter: false,
-                            },
-                            {
-                              matrix: mName,
-                              label: `Avg. Bandwidth`,
-                              a: kA.avg_bandwidth_permuted,
-                              b: kB.avg_bandwidth_permuted,
-                              fmt: (v: number) => v?.toFixed(2),
-                              lowerIsBetter: true,
-                            },
-                            {
-                              matrix: mName,
-                              label: `Diagonal Band frac 0.4%`,
-                              a: (kA.frac_0_4pct_permuted || 0) * 100,
-                              b: (kB.frac_0_4pct_permuted || 0) * 100,
-                              fmt: (v: number) => `${v?.toFixed(2)}%`,
-                              lowerIsBetter: false,
-                            },
-                          ].map((row, idx) => {
-                            const diff = (row.a ?? 0) - (row.b ?? 0);
-                            const aBetter = row.lowerIsBetter ? diff < 0 : diff > 0;
-                            const bBetter = row.lowerIsBetter ? diff > 0 : diff < 0;
-                            return (
-                              <tr key={`${mName}-${idx}`} className="hover:bg-slate-800/40">
-                                <td className="py-2 px-3 font-bold text-white">{row.matrix}</td>
-                                <td className="py-2 px-3 font-sans text-slate-300">{row.label}</td>
-                                <td
-                                  className={`py-2 px-3 text-right ${
-                                    aBetter ? 'text-emerald-400 font-bold' : 'text-slate-200'
-                                  }`}
-                                >
-                                  {row.fmt(row.a)}
-                                </td>
-                                <td
-                                  className={`py-2 px-3 text-right ${
-                                    bBetter ? 'text-amber-300 font-bold' : 'text-slate-200'
-                                  }`}
-                                >
-                                  {row.fmt(row.b)}
-                                </td>
-                                <td className="py-2 px-3 text-right text-slate-400">
-                                  {Math.abs(diff) < 1e-6
-                                    ? 'Equal'
-                                    : `${diff > 0 ? '+' : ''}${diff.toFixed(2)}`}
-                                </td>
-                              </tr>
-                            );
-                          });
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
+              {/* Multi-run comparison (Run A vs. B, C, …) */}
+              {compared.length > 0 && runDetail?.kpi_summary && (
+                <RunComparisonTable
+                  runA={{ label: 'Run A', dir: activeResultDir || '', detail: runDetail }}
+                  others={compared}
+                />
               )}
 
               {/* 10-Plot Matrix & Graph Partitioning Visual Gallery */}
@@ -905,21 +766,48 @@ export const ResultsExplorer: React.FC<ResultsExplorerProps> = ({
               )}
             </>
           ) : (
-            <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-12 text-center space-y-3">
-              <div className="text-sm font-bold text-white">
-                No Local Single Run Selected for {demId}
-              </div>
-              <p className="text-xs text-slate-400 max-w-md mx-auto">
-                Run a simulation in the Pipeline Studio to generate local matrix and graph artifacts, or switch to the{' '}
-                <button
-                  onClick={() => setMode('batch')}
-                  className="text-indigo-400 underline font-semibold"
-                >
-                  Batch & Thesis Study Comparison
-                </button>{' '}
-                mode to explore existing thesis results.
-              </p>
-            </div>
+            <EmptyState
+              title={
+                !singleRunsLoaded
+                  ? `Loading runs for ${demId}…`
+                  : singleRuns.length === 0
+                  ? `No runs yet for ${demId}`
+                  : 'Could not load this run'
+              }
+              body={
+                !singleRunsLoaded
+                  ? ''
+                  : singleRuns.length === 0
+                  ? `Run the pipeline on ${demId} from Single Run — each run writes its metrics and plots to simulations/${demId}/results/ and shows up here.` +
+                    (matricesWithRuns.length > 0 ? ' Or open a matrix that already has runs:' : '')
+                  : 'The selected run folder has no readable metrics (it may still be running or was interrupted). Pick another run above.'
+              }
+              actions={
+                singleRunsLoaded ? (
+                  <>
+                    {singleRuns.length === 0 &&
+                      matricesWithRuns.map((d) => (
+                        <button
+                          key={d.id}
+                          onClick={() => {
+                            setDemId(d.id);
+                            setActiveResultDir(null);
+                            setCompareResultDirs([]);
+                          }}
+                          className={EMPTY_BTN}
+                        >
+                          {d.id} ({d.runs_count} runs)
+                        </button>
+                      ))}
+                    {batchRuns.length > 0 && (
+                      <button onClick={() => setMode('batch')} className={EMPTY_BTN}>
+                        Compare methods in a batch study instead
+                      </button>
+                    )}
+                  </>
+                ) : undefined
+              }
+            />
           )}
         </div>
       )}
@@ -958,11 +846,13 @@ export const ResultsExplorer: React.FC<ResultsExplorerProps> = ({
 };
 
 /* Interactive SVG Curve Component for Single Run (0% to 5%) */
+type CurvePoint = { percent: number; original: number; permuted: number };
+
 const SingleRunCurveSvg: React.FC<{
-  points: Array<{ percent: number; original: number; permuted: number }>;
-  comparePoints?: Array<{ percent: number; original: number; permuted: number }>;
-  matrixName: string;
-}> = ({ points, comparePoints, matrixName }) => {
+  points: CurvePoint[];
+  compareSeries: Array<{ label: string; color: string; points: CurvePoint[] }>;
+  exportName: string;
+}> = ({ points, compareSeries, exportName }) => {
   const width = 520;
   const height = 210;
   const padL = 42;
@@ -974,7 +864,6 @@ const SingleRunCurveSvg: React.FC<{
 
   const maxPct = 2.0; // Thesis plots focus on 0% to 2.0% band range
   const filtered = points.filter((p) => p.percent <= maxPct);
-  const filteredCompare = comparePoints?.filter((p) => p.percent <= maxPct) || [];
 
   const toX = (pct: number) => padL + (pct / maxPct) * plotW;
   const toY = (val: number) => padT + plotH - Math.min(1, Math.max(0, val)) * plotH;
@@ -985,9 +874,13 @@ const SingleRunCurveSvg: React.FC<{
   const permPath = filtered
     .map((p, i) => `${i === 0 ? 'M' : 'L'}${toX(p.percent).toFixed(1)},${toY(p.permuted).toFixed(1)}`)
     .join(' ');
-  const comparePermPath = filteredCompare
-    .map((p, i) => `${i === 0 ? 'M' : 'L'}${toX(p.percent).toFixed(1)},${toY(p.permuted).toFixed(1)}`)
-    .join(' ');
+  const comparePaths = compareSeries.map((c) => ({
+    ...c,
+    d: c.points
+      .filter((p) => p.percent <= maxPct)
+      .map((p, i) => `${i === 0 ? 'M' : 'L'}${toX(p.percent).toFixed(1)},${toY(p.permuted).toFixed(1)}`)
+      .join(' '),
+  }));
 
   return (
     <div className="p-3 rounded-xl bg-slate-950 border border-slate-800">
@@ -995,20 +888,21 @@ const SingleRunCurveSvg: React.FC<{
         <span className="font-semibold text-slate-300">
           Fraction of Nonzeros within Diagonal Band (0% – 2% of n)
         </span>
-        <div className="flex items-center gap-3 text-[11px]">
+        <div className="flex items-center gap-3 text-xs">
           <span className="flex items-center gap-1 text-slate-400">
-            <span className="w-2.5 h-0.5 bg-slate-400 inline-block" /> Original {matrixName}
+            <span className="w-2.5 h-0.5 bg-slate-400 inline-block" /> Original
           </span>
           <span className="flex items-center gap-1 text-indigo-400 font-semibold">
             <span className="w-2.5 h-0.5 bg-indigo-400 inline-block" /> Run A Permuted
           </span>
-          {filteredCompare.length > 0 && (
-            <span className="flex items-center gap-1 text-amber-400 font-semibold">
-              <span className="w-2.5 h-0.5 bg-amber-400 inline-block" /> Run B Permuted
+          {comparePaths.map((c) => (
+            <span key={c.label} className="flex items-center gap-1 font-semibold" style={{ color: c.color }}>
+              <span className="w-2.5 h-0.5 inline-block" style={{ backgroundColor: c.color }} /> {c.label}
             </span>
-          )}
+          ))}
         </div>
       </div>
+      <ChartExport filename={exportName}>
       <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-auto">
         {[0, 0.25, 0.5, 0.75, 1.0].map((yVal) => (
           <g key={yVal}>
@@ -1020,7 +914,7 @@ const SingleRunCurveSvg: React.FC<{
               stroke="rgb(var(--c-slate-800))"
               strokeDasharray="3 3"
             />
-            <text x={padL - 6} y={toY(yVal) + 3} textAnchor="end" fontSize="9" fill="#64748b">
+            <text x={padL - 6} y={toY(yVal) + 3} textAnchor="end" fontSize="10.5" fill="rgb(var(--c-slate-400))">
               {yVal.toFixed(2)}
             </text>
           </g>
@@ -1031,24 +925,19 @@ const SingleRunCurveSvg: React.FC<{
             x={toX(xVal)}
             y={height - 8}
             textAnchor="middle"
-            fontSize="9"
-            fill="#64748b"
+            fontSize="10.5"
+            fill="rgb(var(--c-slate-400))"
           >
             {xVal.toFixed(1)}%
           </text>
         ))}
         <path d={origPath} fill="none" stroke="#94a3b8" strokeWidth="2" />
         <path d={permPath} fill="none" stroke="#6366f1" strokeWidth="2.5" />
-        {comparePermPath && (
-          <path
-            d={comparePermPath}
-            fill="none"
-            stroke="#f59e0b"
-            strokeWidth="2.2"
-            strokeDasharray="5 3"
-          />
-        )}
+        {comparePaths.map((c) => (
+          <path key={c.label} d={c.d} fill="none" stroke={c.color} strokeWidth="2.2" strokeDasharray="5 3" />
+        ))}
       </svg>
+      </ChartExport>
     </div>
   );
 };
@@ -1083,7 +972,7 @@ const MultiMethodSvgChart: React.FC<{
               stroke="rgb(var(--c-slate-800))"
               strokeDasharray="3 3"
             />
-            <text x={padL - 5} y={toY(yVal) + 3} textAnchor="end" fontSize="9" fill="#64748b">
+            <text x={padL - 5} y={toY(yVal) + 3} textAnchor="end" fontSize="10.5" fill="rgb(var(--c-slate-400))">
               {yVal.toFixed(2)}
             </text>
           </g>
@@ -1094,8 +983,8 @@ const MultiMethodSvgChart: React.FC<{
             x={toX(xVal)}
             y={height - 6}
             textAnchor="middle"
-            fontSize="9"
-            fill="#64748b"
+            fontSize="10.5"
+            fill="rgb(var(--c-slate-400))"
           >
             {xVal}%
           </text>
@@ -1106,7 +995,7 @@ const MultiMethodSvgChart: React.FC<{
           const d = validPts
             .map((pt, i) => `${i === 0 ? 'M' : 'L'}${toX(pt.percent).toFixed(1)},${toY(pt[m]).toFixed(1)}`)
             .join(' ');
-          const color = METHOD_COLORS[m] || '#38bdf8';
+          const color = methodColor(m);
           return (
             <g key={m}>
               <path
@@ -1132,12 +1021,12 @@ const MultiMethodSvgChart: React.FC<{
 
       <div className="flex flex-wrap gap-2 pt-1">
         {methods.map((m) => (
-          <span key={m} className="inline-flex items-center gap-1.5 text-[11px] text-slate-300">
+          <span key={m} className="inline-flex items-center gap-1.5 text-xs text-slate-300">
             <span
               className="w-2.5 h-2.5 rounded-full"
-              style={{ backgroundColor: METHOD_COLORS[m] || '#38bdf8' }}
+              style={{ backgroundColor: methodColor(m) }}
             />
-            {METHOD_LABELS[m] || m}
+            {seriesLabel(m, true)}
           </span>
         ))}
       </div>
@@ -1145,3 +1034,559 @@ const MultiMethodSvgChart: React.FC<{
   );
 };
 
+
+/* Wraps a chart and adds PNG / SVG download buttons for its <svg>. */
+const ChartExport: React.FC<{ filename: string; children: React.ReactNode }> = ({ filename, children }) => {
+  const ref = useRef<HTMLDivElement | null>(null);
+  const toast = useToast();
+  const getSvg = () => ref.current?.querySelector('svg') as SVGSVGElement | null;
+  const name = safeFilename(filename);
+  return (
+    <div className="relative group">
+      <div ref={ref}>{children}</div>
+      <div className="absolute top-1.5 right-1.5 flex gap-1 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition">
+        <button
+          onClick={async () => {
+            const svg = getSvg();
+            if (!svg) return;
+            try {
+              await downloadSvgAsPng(svg, `${name}.png`);
+            } catch (err: any) {
+              toast.error(`PNG export failed: ${err.message}`);
+            }
+          }}
+          className="px-1.5 py-0.5 rounded text-xs font-semibold bg-slate-800/90 text-slate-200 border border-slate-700 hover:bg-slate-700"
+          title="Download chart as PNG"
+        >
+          PNG
+        </button>
+        <button
+          onClick={() => {
+            const svg = getSvg();
+            if (svg) downloadSvg(svg, `${name}.svg`);
+          }}
+          className="px-1.5 py-0.5 rounded text-xs font-semibold bg-slate-800/90 text-slate-200 border border-slate-700 hover:bg-slate-700"
+          title="Download chart as SVG (vector, for papers)"
+        >
+          SVG
+        </button>
+      </div>
+    </div>
+  );
+};
+
+/* KPI table comparing Run A with up to five other runs; best value per row is highlighted. */
+const RunComparisonTable: React.FC<{
+  runA: { label: string; dir: string; detail: any };
+  others: Array<{ label: string; dir: string; color: string; detail: any }>;
+}> = ({ runA, others }) => {
+  const runs = [{ ...runA, color: '#818cf8' }, ...others];
+  const metrics: Array<{
+    label: string;
+    get: (k: any) => number | null | undefined;
+    fmt: (v: number) => string;
+    lowerIsBetter: boolean;
+  }> = [
+    { label: 'Max Bandwidth', get: (k) => k?.bandwidth_permuted, fmt: (v) => v.toLocaleString(), lowerIsBetter: true },
+    {
+      label: 'BW change (%)',
+      get: (k) => (k?.bandwidth_reduction_pct == null ? null : -k.bandwidth_reduction_pct),
+      fmt: (v) => fmtChange(v, 2),
+      lowerIsBetter: true,
+    },
+    {
+      label: 'nB² change (%)',
+      get: (k) => (k?.nb2_reduction_pct == null ? null : -k.nb2_reduction_pct),
+      fmt: (v) => fmtChange(v, 2),
+      lowerIsBetter: true,
+    },
+    { label: 'Avg. Bandwidth', get: (k) => k?.avg_bandwidth_permuted, fmt: (v) => v.toFixed(2), lowerIsBetter: true },
+    {
+      label: 'Diagonal Band frac 0.4%',
+      get: (k) => (k?.frac_0_4pct_permuted == null ? null : k.frac_0_4pct_permuted * 100),
+      fmt: (v) => `${v.toFixed(2)}%`,
+      lowerIsBetter: false,
+    },
+  ];
+
+  const rows = metrics.map((metric) => {
+    const values = runs.map((r) => {
+      const v = metric.get(r.detail.kpi_summary);
+      return typeof v === 'number' && isFinite(v) ? v : null;
+    });
+    const valid = values.filter((v): v is number => v !== null);
+    const best = valid.length > 1 ? (metric.lowerIsBetter ? Math.min(...valid) : Math.max(...valid)) : null;
+    return { metric, values, best };
+  });
+
+  const exportCsv = () => {
+    downloadCsv(
+      ['metric', ...runs.map((r) => `${r.label} (${runShortName(r.dir)})`)],
+      rows.map((r) => [r.metric.label, ...r.values]),
+      'run_comparison.csv'
+    );
+  };
+
+  return (
+    <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-5 space-y-4 overflow-hidden">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <ArrowLeftRight className="w-4 h-4 text-indigo-400" />
+          <h3 className="text-sm font-bold text-white">Run Comparison ({runs.length} runs)</h3>
+        </div>
+        <button
+          onClick={exportCsv}
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-slate-800 text-slate-200 hover:bg-slate-700 border border-slate-700"
+        >
+          <Download className="w-3.5 h-3.5" /> CSV
+        </button>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full text-left border-collapse text-xs font-mono">
+          <thead>
+            <tr className="bg-slate-950/90 text-slate-400 border-b border-slate-800 uppercase text-xs">
+              <th className="py-2.5 px-3 font-sans">Metric (permuted)</th>
+              {runs.map((r) => (
+                <th key={r.dir} className="py-2.5 px-3 text-right normal-case" style={{ color: r.color }} title={r.dir}>
+                  {r.label}
+                  <div className="text-xs text-slate-500 font-normal truncate max-w-[160px]">
+                    {runShortName(r.dir)}
+                  </div>
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-800/70">
+            {rows.map((row, idx) => (
+              <tr key={idx} className="hover:bg-slate-800/40">
+                <td className="py-2 px-3 font-sans text-slate-300">{row.metric.label}</td>
+                {row.values.map((v, i) => (
+                  <td
+                    key={i}
+                    className={`py-2 px-3 text-right ${
+                      v !== null && v === row.best ? 'text-emerald-400 font-bold' : 'text-slate-200'
+                    }`}
+                  >
+                    {v === null ? '—' : row.metric.fmt(v)}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <p className="text-xs text-slate-500">Best value in each row is highlighted in green.</p>
+    </div>
+  );
+};
+
+const EMPTY_BTN =
+  'px-3 py-1.5 rounded-lg text-xs font-semibold bg-slate-800 text-slate-200 border border-slate-700 hover:bg-slate-700 hover:text-white transition';
+
+/** Guidance panel shown instead of a bare "nothing here" sentence. */
+const EmptyState: React.FC<{ title: string; body?: string; actions?: React.ReactNode }> = ({ title, body, actions }) => (
+  <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-10 text-center space-y-3">
+    <div className="text-sm font-bold text-white">{title}</div>
+    {body && <p className="text-xs text-slate-400 max-w-lg mx-auto leading-relaxed">{body}</p>}
+    {actions && <div className="flex flex-wrap items-center justify-center gap-2 pt-1">{actions}</div>}
+  </div>
+);
+
+/* ---------- Batch summary table: sortable columns, best-value highlight, grouping, failure summaries ---------- */
+
+type SortDir = 'asc' | 'desc';
+type GroupBy = 'none' | 'method' | 'scale';
+
+interface MetricColumn {
+  id: string;
+  label: string;
+  /** Wiki topic for the header tooltip. */
+  topic?: string;
+  /** Extra header tooltip text. */
+  hint?: string;
+  better: 'lower' | 'higher';
+  get: (row: any) => number | null;
+  render: (v: number) => React.ReactNode;
+  /** Optional text colour for the value (e.g. green for a reduction). */
+  tone?: (v: number) => string;
+}
+
+const num = (v: unknown): number | null => (typeof v === 'number' && isFinite(v) ? v : null);
+const pctChange = (orig: number | null, perm: number | null, square = false) => {
+  if (orig == null || perm == null || orig <= 0) return null;
+  const o = square ? orig * orig : orig;
+  const p = square ? perm * perm : perm;
+  return ((p - o) / o) * 100;
+};
+const fracCol = (key: string, label: string, topic?: string): MetricColumn => ({
+  id: `frac_${key}`,
+  label,
+  topic,
+  hint: 'Share of nonzeros inside a diagonal band of this width (higher is better)',
+  better: 'higher',
+  get: (r) => num(r[`frac_${key}pct_permuted`]),
+  render: (v) => `${(v * 100).toFixed(2)}%`,
+});
+
+const METRIC_COLUMNS: MetricColumn[] = [
+  {
+    id: 'bandwidth',
+    label: 'Bandwidth B',
+    topic: 'metric-bandwidth',
+    better: 'lower',
+    get: (r) => num(r.bandwidth_permuted),
+    render: (v) => v.toLocaleString(),
+  },
+  {
+    id: 'bw_change',
+    label: 'BW change',
+    hint: 'Bandwidth after permutation vs. original. Negative = smaller = better.',
+    better: 'lower',
+    get: (r) => pctChange(num(r.bandwidth_original), num(r.bandwidth_permuted)),
+    render: (v) => fmtChange(v),
+    tone: changeClass,
+  },
+  {
+    id: 'nb2_change',
+    label: 'nB² change',
+    topic: 'metric-nb2',
+    hint: 'Change of the banded-solver cost n·B² vs. original. Negative = cheaper = better.',
+    better: 'lower',
+    get: (r) => pctChange(num(r.bandwidth_original), num(r.bandwidth_permuted), true),
+    render: (v) => fmtChange(v),
+    tone: changeClass,
+  },
+  {
+    id: 'avg_bandwidth',
+    label: 'Avg. bandwidth',
+    topic: 'metric-avg-bandwidth',
+    better: 'lower',
+    get: (r) => num(r.avg_bandwidth_permuted),
+    render: (v) => v.toFixed(2),
+  },
+  fracCol('0_1', 'frac 0.1%', 'metric-diag-fractions'),
+  fracCol('0_4', 'frac 0.4%'),
+  fracCol('0_7', 'frac 0.7%'),
+  fracCol('1_0', 'frac 1.0%'),
+];
+
+const SCALE_ORDER = ['small', 'medium', 'big'];
+const TOTAL_COLS = 3 + METRIC_COLUMNS.length;
+
+const BatchSummaryTable: React.FC<{
+  rows: any[];
+  title: string;
+  onExportCsv: () => void;
+  onOpenWiki: (topicId: string) => void;
+}> = ({ rows, title, onExportCsv, onOpenWiki }) => {
+  const [sort, setSort] = useState<{ col: string; dir: SortDir } | null>(null);
+  const [groupBy, setGroupBy] = useState<GroupBy>('none');
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+
+  const completed = rows.filter((r) => r.status === 'completed');
+  const failed = rows.filter((r) => r.status !== 'completed');
+  const baseline = completed[0];
+
+  const toggleSort = (col: string) =>
+    setSort((cur) => (cur?.col !== col ? { col, dir: 'asc' } : cur.dir === 'asc' ? { col, dir: 'desc' } : null));
+
+  const toggleExpanded = (key: string) =>
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+
+  const sortRows = (list: any[]) => {
+    if (!sort) return list;
+    const col = METRIC_COLUMNS.find((c) => c.id === sort.col);
+    const keyOf = (r: any): string | number | null =>
+      sort.col === 'method'
+        ? methodLabel(r.algorithm)
+        : sort.col === 'scale'
+        ? SCALE_ORDER.indexOf(r.coarsening_size)
+        : col
+        ? col.get(r)
+        : null;
+    const sign = sort.dir === 'asc' ? 1 : -1;
+    return [...list].sort((a, b) => {
+      const ka = keyOf(a);
+      const kb = keyOf(b);
+      if (ka == null && kb == null) return 0;
+      if (ka == null) return 1; // missing values always last
+      if (kb == null) return -1;
+      if (typeof ka === 'string' || typeof kb === 'string') return String(ka).localeCompare(String(kb)) * sign;
+      return (ka - kb) * sign;
+    });
+  };
+
+  // Groups: [{ key, label, color?, rows }]; a single unnamed group when not grouping.
+  const groups = useMemo(() => {
+    if (groupBy === 'none') return [{ key: 'all', label: '', color: undefined as string | undefined, rows }];
+    const keyOf = (r: any) => (groupBy === 'method' ? r.algorithm : r.coarsening_size) || '—';
+    const order: string[] = [];
+    const byKey = new Map<string, any[]>();
+    for (const r of rows) {
+      const k = keyOf(r);
+      if (!byKey.has(k)) {
+        byKey.set(k, []);
+        order.push(k);
+      }
+      byKey.get(k)!.push(r);
+    }
+    if (groupBy === 'scale') order.sort((a, b) => SCALE_ORDER.indexOf(a) - SCALE_ORDER.indexOf(b));
+    return order.map((k) => ({
+      key: k,
+      label: groupBy === 'method' ? methodLabel(k) : `${scaleLabel(k)} scale`,
+      color: groupBy === 'method' ? methodColor(k) : undefined,
+      rows: byKey.get(k)!,
+    }));
+  }, [rows, groupBy]);
+
+  /** Best value per metric column within a set of rows (only meaningful with ≥2 values). */
+  const bestFor = (list: any[]) => {
+    const best: Record<string, number | null> = {};
+    for (const col of METRIC_COLUMNS) {
+      const vals = list
+        .filter((r) => r.status === 'completed')
+        .map((r) => col.get(r))
+        .filter((v): v is number => v !== null);
+      best[col.id] = vals.length > 1 ? (col.better === 'lower' ? Math.min(...vals) : Math.max(...vals)) : null;
+    }
+    return best;
+  };
+
+  const ariaSort = (col: string): React.AriaAttributes['aria-sort'] =>
+    sort?.col === col ? (sort.dir === 'asc' ? 'ascending' : 'descending') : 'none';
+
+  // A render function (not a nested component) so the header buttons keep focus across re-sorts.
+  const sortHeader = ({
+    col,
+    label,
+    align = 'right',
+    topic,
+    hint,
+    better,
+  }: {
+    col: string;
+    label: string;
+    align?: 'left' | 'right';
+    topic?: string;
+    hint?: string;
+    better?: 'lower' | 'higher';
+  }) => {
+    const active = sort?.col === col;
+    const Icon = !active ? ChevronsUpDown : sort!.dir === 'asc' ? ArrowUp : ArrowDown;
+    return (
+      <th key={col} aria-sort={ariaSort(col)} className={`py-2.5 px-3 ${align === 'right' ? 'text-right' : 'text-left'} whitespace-nowrap`}>
+        <span className={`inline-flex items-center gap-1 ${align === 'right' ? 'justify-end' : ''}`}>
+          <button
+            type="button"
+            onClick={() => toggleSort(col)}
+            title={`${hint ? `${hint} ` : ''}${better ? `(${better} is better) ` : ''}Click to sort`}
+            className={`inline-flex items-center gap-1 rounded px-1 -mx-1 hover:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400 ${
+              active ? 'text-indigo-300' : ''
+            }`}
+          >
+            {label}
+            <Icon className={`w-3 h-3 ${active ? '' : 'opacity-50'}`} aria-hidden />
+          </button>
+          {topic && <InfoTooltip topicId={topic} onOpenWiki={onOpenWiki} />}
+        </span>
+      </th>
+    );
+  };
+
+  const renderRow = (row: any, best: Record<string, number | null>) => {
+    if (row.status !== 'completed') {
+      const reason = shortFailureReason(row.error_message, row.error_type);
+      const open = expanded.has(row.case_key);
+      return (
+        <React.Fragment key={row.case_key}>
+          <tr className="bg-rose-950/20">
+            <td className="py-2.5 px-4 font-sans">
+              <MethodName method={row.algorithm} />
+            </td>
+            <td className="py-2.5 px-3">
+              <ScaleChip scale={row.coarsening_size} />
+            </td>
+            <td colSpan={METRIC_COLUMNS.length + 1} className="py-2.5 px-3 font-sans text-xs">
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                <span className="text-rose-300 font-semibold">Failed: {reason}</span>
+                {(row.error_message || row.error_type) && (
+                  <button
+                    type="button"
+                    onClick={() => toggleExpanded(row.case_key)}
+                    aria-expanded={open}
+                    className="inline-flex items-center gap-0.5 text-xs text-slate-400 hover:text-white underline-offset-2 hover:underline"
+                  >
+                    {open ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
+                    {open ? 'hide details' : 'details'}
+                  </button>
+                )}
+              </div>
+            </td>
+          </tr>
+          {open && (
+            <tr className="bg-rose-950/10">
+              <td colSpan={TOTAL_COLS} className="px-4 pb-3 pt-0">
+                <pre className="whitespace-pre-wrap break-words text-xs leading-relaxed text-rose-200/90 bg-slate-950 border border-rose-900/50 rounded-lg p-3 max-h-60 overflow-auto">
+                  {row.error_type ? `${row.error_type}: ` : ''}
+                  {row.error_message || ''}
+                  {'\n'}case: {row.case_key}
+                </pre>
+              </td>
+            </tr>
+          )}
+        </React.Fragment>
+      );
+    }
+    return (
+      <tr key={row.case_key} className="hover:bg-slate-800/40 transition text-slate-200">
+        <td className="py-2.5 px-4 font-sans">
+          <MethodName method={row.algorithm} />
+        </td>
+        <td className="py-2.5 px-3">
+          <ScaleChip scale={row.coarsening_size} />
+        </td>
+        {METRIC_COLUMNS.map((col) => {
+          const v = col.get(row);
+          const isBest = v !== null && best[col.id] !== null && v === best[col.id];
+          return (
+            <td
+              key={col.id}
+              className={`py-2.5 px-3 text-right whitespace-nowrap ${col.tone && v !== null ? col.tone(v) : ''} ${
+                isBest ? 'font-bold bg-emerald-500/10 shadow-[inset_0_0_0_1px_rgba(16,185,129,0.45)]' : ''
+              }`}
+              title={isBest ? `Best ${col.label} (${col.better} is better)` : undefined}
+            >
+              {v === null ? '—' : col.render(v)}
+              {isBest && <span className="sr-only"> (best)</span>}
+            </td>
+          );
+        })}
+        <td className="py-2.5 px-3 text-center">
+          {row.permutation_mismatches === 0 ? (
+            <span className="inline-flex items-center gap-1 text-emerald-400 text-xs">
+              <CheckCircle2 className="w-3.5 h-3.5" /> 0 err
+            </span>
+          ) : (
+            <span className="text-rose-400">Mismatch</span>
+          )}
+        </td>
+      </tr>
+    );
+  };
+
+  return (
+    <div className="bg-slate-900/80 border border-slate-800 rounded-2xl overflow-hidden shadow-lg">
+      <div className="p-4 border-b border-slate-800 flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h3 className="text-sm font-bold text-white">{title}</h3>
+          <div className="text-xs text-slate-400 mt-0.5">
+            {completed.length} completed
+            {failed.length > 0 && <span className="text-rose-300"> · {failed.length} failed</span>} · outlined cell = best
+            value in its column{groupBy !== 'none' ? ' within the group' : ''}
+          </div>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="flex items-center gap-1 bg-slate-950 p-1 rounded-lg border border-slate-800" role="group" aria-label="Group rows by">
+            <span className="text-xs text-slate-400 px-1.5">Group by</span>
+            {(['none', 'method', 'scale'] as const).map((g) => (
+              <button
+                key={g}
+                type="button"
+                onClick={() => setGroupBy(g)}
+                aria-pressed={groupBy === g}
+                className={`px-2.5 py-1 rounded-md text-xs font-semibold capitalize transition ${
+                  groupBy === g ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                {g}
+              </button>
+            ))}
+          </div>
+          <button
+            onClick={onExportCsv}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-slate-800 text-slate-200 hover:bg-slate-700 border border-slate-700"
+            title="Download this table (raw values, all cases) as CSV"
+          >
+            <Download className="w-3.5 h-3.5" /> CSV
+          </button>
+        </div>
+      </div>
+
+      <div className="overflow-x-auto">
+        <table className="w-full text-left border-collapse text-xs">
+          <thead>
+            <tr className="bg-slate-950/90 text-slate-400 border-b border-slate-800 font-sans font-semibold text-xs">
+              {sortHeader({ col: 'method', label: 'Method', align: 'left' })}
+              {sortHeader({ col: 'scale', label: 'Scale', align: 'left' })}
+              {METRIC_COLUMNS.map((c) =>
+                sortHeader({ col: c.id, label: c.label, topic: c.topic, hint: c.hint, better: c.better })
+              )}
+              <th className="py-2.5 px-3 text-center whitespace-nowrap">Perm check</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-800/70 font-mono">
+            {baseline && (
+              <tr className="bg-slate-950/40 text-slate-300 font-semibold">
+                <td className="py-2.5 px-4 font-sans text-white">Original (unpermuted)</td>
+                <td className="py-2.5 px-3 text-slate-500 font-sans">—</td>
+                <td className="py-2.5 px-3 text-right">{num(baseline.bandwidth_original)?.toLocaleString() ?? '—'}</td>
+                <td className="py-2.5 px-3 text-right text-slate-500">—</td>
+                <td className="py-2.5 px-3 text-right text-slate-500">—</td>
+                <td className="py-2.5 px-3 text-right">{num(baseline.avg_bandwidth_original)?.toFixed(2) ?? '—'}</td>
+                {['0_1', '0_4', '0_7', '1_0'].map((k) => {
+                  const v = num(baseline[`frac_${k}pct_original`]);
+                  return (
+                    <td key={k} className="py-2.5 px-3 text-right">
+                      {v === null ? '—' : `${(v * 100).toFixed(2)}%`}
+                    </td>
+                  );
+                })}
+                <td className="py-2.5 px-3 text-center text-slate-500 font-sans">Baseline</td>
+              </tr>
+            )}
+            {groups.map((g) => {
+              const best = bestFor(g.rows);
+              const ordered = [...sortRows(g.rows.filter((r) => r.status === 'completed')), ...g.rows.filter((r) => r.status !== 'completed')];
+              return (
+                <React.Fragment key={g.key}>
+                  {groupBy !== 'none' && (
+                    <tr className="bg-slate-950/80 border-t border-slate-700">
+                      <th colSpan={TOTAL_COLS} scope="rowgroup" className="py-2 px-4 text-left font-sans text-xs font-semibold text-slate-200">
+                        <span className="inline-flex items-center gap-2">
+                          {g.color && <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: g.color }} aria-hidden />}
+                          {g.label}
+                          <span className="text-xs font-normal text-slate-500">
+                            {g.rows.length} {g.rows.length === 1 ? 'case' : 'cases'}
+                          </span>
+                        </span>
+                      </th>
+                    </tr>
+                  )}
+                  {ordered.map((r) => renderRow(r, best))}
+                </React.Fragment>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+};
+
+const MethodName: React.FC<{ method: string }> = ({ method }) => (
+  <span className="inline-flex items-center gap-2 font-semibold text-white whitespace-nowrap" title={methodLabel(method)}>
+    <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: methodColor(method) }} aria-hidden />
+    {methodLabel(method, undefined, true)}
+  </span>
+);
+
+const ScaleChip: React.FC<{ scale: string }> = ({ scale }) => (
+  <span className="px-2 py-0.5 rounded-md bg-slate-800 border border-slate-700 text-slate-200 text-xs font-sans font-medium">
+    {scaleLabel(scale)}
+  </span>
+);

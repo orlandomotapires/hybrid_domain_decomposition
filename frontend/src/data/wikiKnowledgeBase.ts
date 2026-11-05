@@ -37,10 +37,10 @@ export const WIKI_CATEGORIES: Array<{
   },
   {
     key: 'stage1',
-    label: '2. Stage 1 — FEM Matrices & Graph Mapping',
-    shortLabel: 'Stage 1: FEM & Graph',
+    label: '2. Stage 1 — Input Matrix & Graph Mapping',
+    shortLabel: 'Stage 1: Matrix & Graph',
     description:
-      'Stiffness (K) and Mass (M) Matrix Market inputs, nodal block compression (dof_per_node), vertex/edge weighting, and deterministic seeding.',
+      'Any square Matrix Market input, block compression (dof_per_node), vertex/edge weighting, and deterministic seeding.',
   },
   {
     key: 'stage2',
@@ -68,7 +68,7 @@ export const WIKI_CATEGORIES: Array<{
     label: '6. Stage 5 — Matrix Permutation & Output Artifacts',
     shortLabel: 'Stage 5: Permutation',
     description:
-      'Subdomain-contiguous DOF reordering (P K P^T and P M P^T), randomized entry verification, and saved run artifacts.',
+      'Subdomain-contiguous reordering (P A P^T), randomized entry verification, and saved run artifacts.',
   },
   {
     key: 'metrics',
@@ -96,18 +96,18 @@ export const WIKI_TOPICS: Record<string, WikiTopic> = {
     title: 'Finite Element Systems & Domain Decomposition Preconditioning',
     badge: 'Thesis Ch. 1–3',
     shortSummary:
-      'Explains how reordering sparse FEM stiffness (K) and mass (M) matrices via graph partitioning reduces bandwidth and clusters nonzeros near the diagonal for faster linear solvers.',
-    formula: "K u = f   and   (K - ω² M) φ = 0   →   K' = P K Pᵀ,  M' = P M Pᵀ",
+      'Explains how reordering a sparse matrix via graph partitioning reduces bandwidth and clusters nonzeros near the diagonal for faster linear solvers.',
+    formula: "A x = b   →   A' = P A Pᵀ,   (P A Pᵀ)(P x) = P b",
     scientificBackground: [
-      'In computational mechanics and Finite Element Analysis (FEA)—such as structural simulations of turbine blades in ANSYS—discretizing partial differential equations over a 3D mesh yields large, sparse symmetric linear systems involving a global stiffness matrix K and mass matrix M.',
-      'When solving static systems (K u = f) or modal/harmonic eigenvalue problems ((K - ω² M) φ = 0), both direct sparse factorizations (Cholesky / LU) and preconditioned Krylov subspace solvers (Conjugate Gradient, GMRES with ILU or Schwarz domain-decomposition preconditioners) depend heavily on the ordering of Degrees of Freedom (DOFs).',
-      'By partitioning the underlying finite-element mesh graph into k balanced subdomains with minimal inter-subdomain coupling (edge cut) and permuting DOFs contiguously by subdomain, the reordered matrices K’ = P K Pᵀ and M’ = P M Pᵀ concentrate nonzero entries into dense diagonal subdomain blocks with sparse off-diagonal interface coupling.',
+      'Large sparse matrices appear everywhere: Finite Element Analysis (e.g. stiffness and mass matrices of a turbine blade), circuit simulation, graph and network problems, and discretized PDEs in general.',
+      'Both direct sparse factorizations (Cholesky / LU) and preconditioned Krylov solvers (CG, GMRES with ILU or Schwarz domain-decomposition preconditioners) depend heavily on the ordering of the unknowns.',
+      'By partitioning the matrix graph into k balanced subdomains with minimal coupling (edge cut) and numbering unknowns contiguously by subdomain, the reordered matrix A’ = P A Pᵀ concentrates nonzeros into diagonal subdomain blocks with sparse off-diagonal interface coupling.',
     ],
     implementationDetails: [
-      'The pipeline ingests K and M in Matrix Market (.mtx) format, extracts the nodal connectivity graph G_0 from K, computes a k-way partition via a multilevel hybrid scheme, and expands the nodal partition into a global DOF permutation vector p.',
-      'Both K and M are permuted identically using p so that dynamic/modal ratios and eigenvalue spectra remain strictly invariant under similarity transformation.',
+      'The pipeline reads one matrix A in Matrix Market (.mtx) format, builds its graph G_0, computes a k-way partition via a multilevel hybrid scheme, and expands the node partition into a row permutation vector p.',
+      'The permutation is symmetric (rows and columns), so A’ has the same eigenvalues as A; if you need to reorder a companion matrix (e.g. a mass matrix), apply the saved permutation.txt to it.',
     ],
-    sourceFile: 'src/orchestrator.py',
+    sourceFile: 'src/libs/domain_decomposition.py',
   },
 
   'theory-multilevel': {
@@ -126,7 +126,7 @@ export const WIKI_TOPICS: Record<string, WikiTopic> = {
     implementationDetails: [
       'Three canonical coarsening scales are benchmarked in the thesis: Small (4–5 coarse vertices for gate-based QAOA), Medium (100–175 coarse vertices for D-Wave Advantage clique embeddings), and Big (1500–2500 coarse vertices for classical METIS and simulated annealing).',
     ],
-    sourceFile: 'src/orchestrator.py',
+    sourceFile: 'src/libs/domain_decomposition.py',
   },
 
   'theory-qubo-ising': {
@@ -146,7 +146,7 @@ export const WIKI_TOPICS: Record<string, WikiTopic> = {
     implementationDetails: [
       'Because a single QUBO binary vector naturally encodes a 2-way split, k-way partitioning for k_target > 2 is achieved via recursive bipartitioning: the largest remaining subdomain is split proportionally until k_target subdomains are formed (requiring k_target - 1 bipartitions per multi-start run).',
     ],
-    sourceFile: 'src/libs/multilevel_scheme/partitioning/quantum_annealing.py',
+    sourceFile: 'src/libs/multilevel_scheme/partitioning/qa/annealing.py',
   },
 
   // ==========================================
@@ -155,21 +155,21 @@ export const WIKI_TOPICS: Record<string, WikiTopic> = {
   'stage-1': {
     id: 'stage-1',
     category: 'stage1',
-    title: 'Stage 1: Input FEM Matrices (K & M) & Graph Construction',
+    title: 'Stage 1: Input Matrix & Graph Construction',
     badge: 'Pipeline Stage 01',
     shortSummary:
-      'Loads sparse stiffness (K) and mass (M) matrices from Matrix Market (.mtx) files and compresses nodal DOF blocks into the initial node-weighted graph G_0.',
-    formula: 'K (N × N)  →  G₀ = (V₀, E₀)  with  |V₀| = N / dof_per_node',
+      'Loads one square sparse matrix A from the shared library (Matrix Market .mtx) and turns its sparsity pattern into the node-weighted graph G_0.',
+    formula: 'A (N × N)  →  G₀ = (V₀, E₀)  with  |V₀| = N / dof_per_node',
     scientificBackground: [
-      'In structural Finite Element models, each physical mesh node possesses d = dof_per_node degrees of freedom (for example, d = 3 translational displacements u_x, u_y, u_z in 3D solid elements).',
-      'Partitioning individual DOFs independently would split displacements belonging to the same physical mesh node across different subdomains. Stage 1 therefore groups contiguous d × d blocks along the matrix diagonal into single graph vertices.',
-      'Each vertex u ∈ V_0 receives a vertex weight c(u) equal to the sum of the diagonal stiffness entries of its d DOFs, while each undirected edge (u, v) ∈ E_0 receives a weight w(u, v) equal to the symmetrized sum of absolute off-diagonal stiffness couplings between the DOF blocks of node u and node v.',
+      'The pipeline is matrix-agnostic: any square sparse matrix can be reordered. Row/column i of A is graph vertex i, and every nonzero A_ij (i ≠ j) becomes an edge between i and j.',
+      'When rows come in fixed-size blocks (for example d = 3 displacement DOFs per mesh node in 3D FEM), the block size d = dof_per_node groups each d × d diagonal block into one vertex so a block is never split across subdomains. For general matrices keep d = 1.',
+      'Each vertex u receives a weight c(u) = Σ |A_αα| over its rows (or uniform weights when the diagonal has zero blocks), and each edge (u, v) a weight w(u, v) equal to the symmetrized sum of |A_αβ| between the two blocks.',
     ],
     implementationDetails: [
-      'Implemented in matrix_to_graph(matrix, dof_per_node) inside src/libs/runtime/utils.py.',
-      'Validates that K and M are square, share identical dimensions (N × N), and satisfy N mod dof_per_node == 0.',
+      'Implemented in matrix_to_graph(matrix, dof_per_node) inside src/libs/runtime/utils.py and decompose_matrix() in src/libs/domain_decomposition.py.',
+      'Validates that A is square and that N mod dof_per_node == 0.',
     ],
-    sourceFile: 'src/libs/runtime/utils.py',
+    sourceFile: 'src/libs/domain_decomposition.py',
   },
 
   'param-preset-file': {
@@ -179,9 +179,9 @@ export const WIKI_TOPICS: Record<string, WikiTopic> = {
     codeKey: 'simulation_config.parameters_file_path',
     badge: 'string (.json) • Config',
     shortSummary:
-      'Selects which JSON parameter file inside matrices/<id>/data/ is loaded for the simulation.',
+      'Selects which JSON parameter file inside simulations/<id>/data/ is loaded for the simulation.',
     scientificBackground: [
-      'Decouples the matrix workspace configuration (simulation_config.json) from the algorithmic hyperparameters (simulation_parameters.json), allowing multiple named parameter presets to coexist in the same matrix folder.',
+      'Decouples the simulation configuration (simulation_config.json: input matrix, active preset, outputs) from the algorithmic hyperparameters (simulation_parameters.json), allowing multiple named parameter presets to coexist in the same simulation folder.',
     ],
     implementationDetails: [
       'Stored in data/simulation_config.json under the key "parameters_file_path". You can create new presets via "Save as Preset" and switch between them at any time.',
@@ -189,79 +189,61 @@ export const WIKI_TOPICS: Record<string, WikiTopic> = {
     sourceFile: 'src/libs/runtime/utils.py',
   },
 
-  'param-matrix-k': {
-    id: 'param-matrix-k',
+  'param-matrix': {
+    id: 'param-matrix',
     category: 'stage1',
-    title: 'Global Stiffness Matrix File (K)',
-    codeKey: 'input_matrices.matrix_k_file_path',
-    badge: 'string (.mtx) • Required',
+    title: 'Input Matrix',
+    codeKey: 'simulation_config.input_matrix',
+    badge: 'library id • Required',
     shortSummary:
-      'Matrix Market (.mtx) file containing the sparse Finite Element stiffness matrix K used to build the nodal coupling graph G_0 and benchmarked after permutation.',
-    formula: 'c(u) = Σ_{α∈B(u)} K_{αα},   w(u,v) = ½ Σ_{α∈B(u)} Σ_{β∈B(v)} (|K_{αβ}| + |K_{βα}|)',
+      'The square sparse matrix A to partition and permute, picked from the shared matrix library (matrices/<id>/).',
+    formula: 'c(u) = Σ_{α∈B(u)} |A_{αα}|,   w(u,v) = ½ Σ_{α∈B(u)} Σ_{β∈B(v)} (|A_{αβ}| + |A_{βα}|)',
     scientificBackground: [
-      'The stiffness matrix K encodes elastic mechanical coupling between nodal degrees of freedom. Off-diagonal entries K_ij ≠ 0 indicate that DOF i and DOF j share an element stiffness contribution.',
-      'Because K defines the sparsity pattern of static and implicit structural solvers, the weighted graph G_0 is constructed directly from K.',
+      'Any square matrix works: FEM stiffness or mass matrices, graph Laplacians, circuit or network matrices, or SuiteSparse test matrices. Only its sparsity pattern and magnitudes are used to build the graph.',
+      'Unsymmetric patterns are symmetrized when building the graph, so the permutation P A Pᵀ is always well defined.',
     ],
     implementationDetails: [
-      'Resolved relative to matrices/<id>/data/matrices/. Loaded as a SciPy CSR sparse matrix via scipy.io.mmread.',
+      'Each library folder holds one .mtx file plus matrix.json ({"name", "file"}). Loaded as a SciPy CSR sparse matrix via scipy.io.mmread.',
     ],
-    sourceFile: 'src/libs/runtime/utils.py',
-  },
-
-  'param-matrix-m': {
-    id: 'param-matrix-m',
-    category: 'stage1',
-    title: 'Global Mass Matrix File (M)',
-    codeKey: 'input_matrices.matrix_m_file_path',
-    badge: 'string (.mtx) • Required',
-    shortSummary:
-      'Matrix Market (.mtx) file containing the sparse Finite Element mass matrix M. Reordered using the exact same DOF permutation vector P derived from K.',
-    formula: "M' = P M Pᵀ   (must match shape of K: N × N)",
-    scientificBackground: [
-      'In dynamic, modal, and harmonic structural analyses, the mass matrix M represents inertial coupling and must be permuted congruently with K so that generalized eigenvalue problems (K - ω² M) φ = 0 remain consistent.',
-    ],
-    implementationDetails: [
-      'Verified at runtime to have the exact same dimensions (N × N) as K. Permuted and profiled alongside K in Stage 5.',
-    ],
-    sourceFile: 'src/libs/runtime/runtime.py',
+    sourceFile: 'src/libs/runtime/matrix_library.py',
   },
 
   'stage-1-mtx-tools': {
     id: 'stage-1-mtx-tools',
     category: 'stage1',
-    title: 'Matrix Market (.mtx) Upload & 3D FEM Mesh Generator',
+    title: 'Matrix Upload & Demo Matrix Generator',
     badge: 'Studio Provisioning Tool',
     shortSummary:
-      'Upload custom Matrix Market (.mtx) files or generate a realistic 3D structured hexahedral FEM mesh (K and M) with one click.',
+      'Add a Matrix Market (.mtx) file to the shared library, or generate a synthetic sparse test matrix from a 3D FEM mesh with one click.',
     scientificBackground: [
-      'Because raw industrial Matrix Market files can be tens or hundreds of megabytes, matrices/*/data/matrices/*.mtx are excluded from Git tracking via .gitignore.',
-      'To allow immediate experimentation on fresh clones or custom geometries, the Studio provides both a direct .mtx file uploader and a synthetic 3D FEM hexahedral elastic mesh generator.',
+      'Because real matrices can be tens or hundreds of megabytes, the .mtx files in the library (matrices/<id>/) are excluded from Git via .gitignore; only matrix.json is tracked.',
+      'The demo generator gives fresh clones something to run: a symmetric positive-definite matrix with a scrambled node order, so the bandwidth reduction is easy to see.',
     ],
     implementationDetails: [
-      'Implemented in backend/services/matrix_service.py. Builds a 3D structured nodal grid with 26-neighbor 3D brick stencil couplings and 3 DOFs per node, writing valid symmetric positive-definite K and M .mtx files.',
+      'Upload and generation live in backend/routes/library.py; the generator is in backend/services/matrix_service.py (3D brick stencil, 26 neighbours per node).',
     ],
-    sourceFile: 'backend/services/matrix_service.py',
+    sourceFile: 'backend/routes/library.py',
   },
 
   'param-dof-per-node': {
     id: 'param-dof-per-node',
     category: 'stage1',
-    title: 'Degrees of Freedom per Mesh Node',
+    title: 'Block Size (Rows per Graph Node)',
     codeKey: 'general_parameters.dof_per_node',
-    badge: 'integer > 0 • Default: 3',
+    badge: 'integer > 0 • Default: 1',
     shortSummary:
-      'Number of matrix rows/columns belonging to each physical mesh vertex. Compresses d × d matrix blocks into a single graph node during graph construction.',
+      'How many consecutive rows/columns form one graph node. 1 = one node per row, which works for any matrix.',
     formula: '|V₀| = N / dof_per_node   (requires N mod dof_per_node == 0)',
     scientificBackground: [
-      'In 3D solid mechanics (e.g., ANSYS SOLID185/SOLID186 elements), each node has 3 translational DOFs (u_x, u_y, u_z), so dof_per_node = 3. In 3D shell/beam elements with rotational DOFs, dof_per_node = 6; in scalar thermal/acoustic problems, dof_per_node = 1.',
-      'Grouping all DOFs of a physical node into one graph vertex reduces graph size by a factor of d and guarantees that all DOFs of a mesh node remain in the same subdomain after permutation.',
+      'For general matrices keep 1. Use a larger value only when rows come in fixed-size blocks that must stay together, e.g. 3 translational DOFs per node in 3D solid FEM, or 6 with rotations in shells/beams.',
+      'Grouping a block into one vertex shrinks the graph by a factor of d and guarantees the block is never split across subdomains after permutation.',
     ],
     implementationDetails: [
-      'Validated in src/libs/runtime/validation.py and checked against matrix dimension N before coarsening begins.',
+      'Validated in src/libs/runtime/utils.py (validate_and_normalize_simulation_parameters) and checked against the matrix size N before coarsening begins.',
     ],
     tuningGuidelines: [
-      'Set to 3 for standard 3D solid structural matrices.',
-      'If you receive "Global size N not divisible by DOF_PER_NODE", check whether your matrix dimension N is a multiple of 3 or set dof_per_node = 1 for pre-condensed scalar graphs.',
+      'Leave at 1 unless you know the matrix is assembled in d × d blocks.',
+      'If you see "Matrix size N not divisible by the block size", pick a d that divides N (1 always works).',
     ],
     sourceFile: 'src/libs/runtime/utils.py',
   },
@@ -285,7 +267,7 @@ export const WIKI_TOPICS: Record<string, WikiTopic> = {
       'Keep fixed (e.g., 42) when comparing two partitioning algorithms on the exact same coarsened graph G_c.',
       'Vary across multiple runs to evaluate statistical variance.',
     ],
-    sourceFile: 'src/orchestrator.py',
+    sourceFile: 'src/libs/runtime/utils.py',
   },
 
   // ==========================================
@@ -509,9 +491,9 @@ export const WIKI_TOPICS: Record<string, WikiTopic> = {
       'The Studio exposes 5 execution modes across 3 algorithmic families so you can benchmark classical heuristics, noiseless/emulated quantum heuristics, and physical quantum processors on identical coarse graphs.',
     ],
     implementationDetails: [
-      'Dispatched by partition_coarse_graph() in src/orchestrator.py based on partitioning_parameters.partitioning_strategy and the strategy’s simulated flag.',
+      'Dispatched by decompose_matrix() in src/libs/domain_decomposition.py based on partitioning_parameters.partitioning_strategy and the strategy’s simulated flag.',
     ],
-    sourceFile: 'src/orchestrator.py',
+    sourceFile: 'src/libs/domain_decomposition.py',
   },
 
   'param-k-target': {
@@ -524,7 +506,7 @@ export const WIKI_TOPICS: Record<string, WikiTopic> = {
       'Number of subdomains k into which the mesh graph and matrices are decomposed.',
     formula: 'k = k_target   (Recursive quantum solvers perform k - 1 bipartitions per start)',
     scientificBackground: [
-      'Determines the number of diagonal subdomain blocks in the permuted matrices K’ and M’. In parallel domain decomposition solvers, k typically corresponds to the number of MPI subdomains / processor cores.',
+      'Determines the number of diagonal subdomain blocks in the permuted matrix A’. In parallel domain decomposition solvers, k typically corresponds to the number of MPI subdomains / processor cores.',
     ],
     implementationDetails: [
       'Passed directly as nparts to PyMETIS, or used as the target leaf count in the recursive bipartitioning queue for Quantum Annealing and QAOA.',
@@ -532,7 +514,7 @@ export const WIKI_TOPICS: Record<string, WikiTopic> = {
     tuningGuidelines: [
       'Powers of two (2, 4, 8, 16) produce symmetric recursive bipartition trees, though any integer k ≥ 2 is supported (via proportional target split ratio k_left / k_curr).',
     ],
-    sourceFile: 'src/libs/runtime/validation.py',
+    sourceFile: 'src/libs/runtime/utils.py',
   },
 
   'param-balance-tolerance': {
@@ -548,9 +530,9 @@ export const WIKI_TOPICS: Record<string, WikiTopic> = {
       'Ensures computational load balance across subdomains. A tolerance of 2.0 (interpreted as ε = 0.02 or 2%) requires every subdomain weight to lie within ±2% of the ideal mean weight.',
     ],
     implementationDetails: [
-      'Normalized via _normalize_balance_tolerance(): values > 1.0 are divided by 100 (e.g., 2.0 → 0.02), while values ≤ 1.0 are used directly as fractions (e.g., 0.02 → 2%). Used in METIS ufactor, QA/QAOA candidate scoring, and Stage 4 KL refinement bounds.',
+      'Normalized via _tol_to_ratio() in uncoarsening.py: values > 1.0 are divided by 100 (e.g., 2.0 → 0.02), while values ≤ 1.0 are used directly as fractions (e.g., 0.02 → 2%). Used in METIS ufactor, QA/QAOA candidate scoring, and Stage 4 KL refinement bounds.',
     ],
-    sourceFile: 'src/libs/multilevel_scheme/partitioning/metis_partitioning.py',
+    sourceFile: 'src/libs/multilevel_scheme/partitioning/partitioning.py',
   },
 
   'method-metis': {
@@ -566,10 +548,10 @@ export const WIKI_TOPICS: Record<string, WikiTopic> = {
       'METIS is the industry-standard classical graph partitioner for finite-element meshes. Running PyMETIS on the coarse graph G_c provides a fast, deterministic classical baseline against which Quantum Annealing and QAOA are benchmarked.',
     ],
     implementationDetails: [
-      'Implemented in src/libs/multilevel_scheme/partitioning/metis_partitioning.py.',
+      'Implemented in src/libs/multilevel_scheme/partitioning/partitioning.py (partition_graph_metis).',
       'Scales floating-point vertex and edge weights to positive integers (weight_scale = 1000) and builds CSR adjacency arrays (xadj, adjncy).',
     ],
-    sourceFile: 'src/libs/multilevel_scheme/partitioning/metis_partitioning.py',
+    sourceFile: 'src/libs/multilevel_scheme/partitioning/partitioning.py',
   },
 
   'method-qa-emulated': {
@@ -586,9 +568,9 @@ export const WIKI_TOPICS: Record<string, WikiTopic> = {
       'This allows testing large coarse graphs (up to 2500 nodes) and tuning qubo_balance_lambda locally before submitting to physical superconducting hardware.',
     ],
     implementationDetails: [
-      'Implemented in src/libs/multilevel_scheme/partitioning/quantum_annealing.py using neal.SimulatedAnnealingSampler().sample_qubo().',
+      'Implemented in src/libs/multilevel_scheme/partitioning/qa/annealing.py (anneal_bipartition) using neal.SimulatedAnnealingSampler().sample_qubo().',
     ],
-    sourceFile: 'src/libs/multilevel_scheme/partitioning/quantum_annealing.py',
+    sourceFile: 'src/libs/multilevel_scheme/partitioning/qa/annealing.py',
   },
 
   'method-qa-hardware': {
@@ -608,7 +590,7 @@ export const WIKI_TOPICS: Record<string, WikiTopic> = {
       'Connects via DWaveSampler(region=qpu_region, solver=qpu_solver_name) wrapped in EmbeddingComposite.',
       'Requires DWAVE_API_TOKEN or a configured D-Wave Leap profile, and coarse graph size |V_c| ≤ max clique capacity (~100–175 nodes).',
     ],
-    sourceFile: 'src/libs/multilevel_scheme/partitioning/quantum_annealing.py',
+    sourceFile: 'src/libs/multilevel_scheme/partitioning/qa/annealing.py',
   },
 
   'method-qaoa-emulated': {
@@ -625,10 +607,10 @@ export const WIKI_TOPICS: Record<string, WikiTopic> = {
       'A classical optimizer (Adam in simulated mode) iteratively updates the 2p variational angles (γ, β) to minimize the expected energy ⟨ψ(γ, β)| H_P |ψ(γ, β)⟩, after which computational-basis measurement shots sample low-energy bitstrings.',
     ],
     implementationDetails: [
-      'Implemented in src/libs/multilevel_scheme/partitioning/quantum_approximation_optimizer.py using qml.device("default.qubit") and qml.AdamOptimizer(stepsize=adam_learning_rate).',
+      'Implemented in src/libs/multilevel_scheme/partitioning/qaoa/qaoa.py using qml.device("default.qubit") and qml.AdamOptimizer(stepsize=adam_learning_rate).',
       'Because full statevector simulation scales as O(2^n), keep coarse graph size |V_c| ≤ 18–20 nodes (typically the Small 4–5 node preset).',
     ],
-    sourceFile: 'src/libs/multilevel_scheme/partitioning/quantum_approximation_optimizer.py',
+    sourceFile: 'src/libs/multilevel_scheme/partitioning/qaoa/qaoa.py',
   },
 
   'method-qaoa-hardware': {
@@ -647,7 +629,7 @@ export const WIKI_TOPICS: Record<string, WikiTopic> = {
     implementationDetails: [
       'Loads the QPU backend dynamically via module:Class specification in qlm_qpu_name (default "qat.qpus:QSolidQPU10").',
     ],
-    sourceFile: 'src/libs/multilevel_scheme/partitioning/quantum_approximation_optimizer.py',
+    sourceFile: 'src/libs/multilevel_scheme/partitioning/qaoa/qaoa.py',
   },
 
   'param-qubo-balance-lambda': {
@@ -664,13 +646,13 @@ export const WIKI_TOPICS: Record<string, WikiTopic> = {
       'Before building the QUBO, vertex weights c_u and edge weights w_uv are normalized by their respective maximum values on the subproblem so that qubo_balance_lambda is scale-invariant across different meshes and coarsening levels.',
     ],
     implementationDetails: [
-      'Used in _build_balanced_bipartition_qubo() for both Quantum Annealing and QAOA.',
+      'Used in build_qubo_from_graph() (partitioning/utils/qubo.py) for both Quantum Annealing and QAOA.',
     ],
     tuningGuidelines: [
       'Values in [1.0, 5.0] (default 2.0) provide a strong balance restoring force without drowning out the edge-cut couplings.',
       'Setting qubo_balance_lambda = 0 removes all-to-all balance terms, making the QUBO sparse (matching G_c’s topology) at the risk of unbalanced splits.',
     ],
-    sourceFile: 'src/libs/multilevel_scheme/partitioning/quantum_annealing.py',
+    sourceFile: 'src/libs/multilevel_scheme/partitioning/utils/qubo.py',
   },
 
   'param-num-starts': {
@@ -686,12 +668,12 @@ export const WIKI_TOPICS: Record<string, WikiTopic> = {
       'Because recursive bipartitioning is a greedy tree of (k_target - 1) splits and quantum sampling is stochastic, running multiple independent starts with different random seeds explores diverse partition trees and selects the globally best k-way partition.',
     ],
     implementationDetails: [
-      'Outer loop in partition_graph_quantum_annealing() and partition_graph_qaoa().',
+      'Outer loop in recursive_kway_anneal() and recursive_kway_qaoa() (partitioning/partitioning.py).',
     ],
     tuningGuidelines: [
       'For emulated runs, 10–20 starts improve robustness. For remote D-Wave / QLM hardware runs, reduce to 1–5 starts to conserve QPU quota.',
     ],
-    sourceFile: 'src/libs/multilevel_scheme/partitioning/quantum_annealing.py',
+    sourceFile: 'src/libs/multilevel_scheme/partitioning/partitioning.py',
   },
 
   'param-num-reads': {
@@ -709,7 +691,7 @@ export const WIKI_TOPICS: Record<string, WikiTopic> = {
     implementationDetails: [
       'Passed as num_reads to sampler.sample_qubo(Q, num_reads=num_reads).',
     ],
-    sourceFile: 'src/libs/multilevel_scheme/partitioning/quantum_annealing.py',
+    sourceFile: 'src/libs/multilevel_scheme/partitioning/qa/annealing.py',
   },
 
   'param-balance-violation-lambda': {
@@ -725,9 +707,9 @@ export const WIKI_TOPICS: Record<string, WikiTopic> = {
       'Even with qubo_balance_lambda in the Hamiltonian, noisy quantum hardware samples may occasionally violate the hard balance tolerance ε. This high penalty guarantees that any sample satisfying the balance tolerance is strictly preferred over an imbalanced sample during bitstring post-selection.',
     ],
     implementationDetails: [
-      'Used when ranking samples in _solve_bipartition_qa() and _solve_bipartition_qaoa(), as well as when comparing full k-way partitions across multi-starts.',
+      'Used when ranking samples in anneal_bipartition() and qaoa_bipartition(), as well as when comparing full k-way partitions across multi-starts.',
     ],
-    sourceFile: 'src/libs/multilevel_scheme/partitioning/quantum_annealing.py',
+    sourceFile: 'src/libs/multilevel_scheme/partitioning/qa/annealing.py',
   },
 
   'param-qpu-solver-name': {
@@ -744,7 +726,7 @@ export const WIKI_TOPICS: Record<string, WikiTopic> = {
     implementationDetails: [
       'Passed as solver=qpu_solver_name to dwave.system.DWaveSampler.',
     ],
-    sourceFile: 'src/libs/multilevel_scheme/partitioning/quantum_annealing.py',
+    sourceFile: 'src/libs/multilevel_scheme/partitioning/qa/annealing.py',
   },
 
   'param-qpu-region': {
@@ -761,7 +743,7 @@ export const WIKI_TOPICS: Record<string, WikiTopic> = {
     implementationDetails: [
       'Passed as region=qpu_region to DWaveSampler.',
     ],
-    sourceFile: 'src/libs/multilevel_scheme/partitioning/quantum_annealing.py',
+    sourceFile: 'src/libs/multilevel_scheme/partitioning/qa/annealing.py',
   },
 
   'param-qpu-problem-label': {
@@ -773,12 +755,12 @@ export const WIKI_TOPICS: Record<string, WikiTopic> = {
     shortSummary:
       'Human-readable label attached to QPU submissions in your D-Wave Leap cloud dashboard.',
     scientificBackground: [
-      'Helps identify and filter QPU jobs belonging to a specific demonstrator or experiment in the D-Wave Leap web console.',
+      'Helps identify and filter QPU jobs belonging to a specific simulation or experiment in the D-Wave Leap web console.',
     ],
     implementationDetails: [
       'Passed as label=qpu_problem_label to sample_qubo().',
     ],
-    sourceFile: 'src/libs/multilevel_scheme/partitioning/quantum_annealing.py',
+    sourceFile: 'src/libs/multilevel_scheme/partitioning/qa/annealing.py',
   },
 
   'param-circuit-depth': {
@@ -794,9 +776,9 @@ export const WIKI_TOPICS: Record<string, WikiTopic> = {
       'In the limit p → ∞, QAOA converges to the exact ground state of the cost Hamiltonian by trotterizing adiabatic evolution. At finite NISQ depths (p = 1..5), larger p increases circuit expressivity at the cost of deeper two-qubit CNOT/MultiRZ gate counts and a 2p-dimensional classical optimization landscape.',
     ],
     implementationDetails: [
-      'Controls the shape (2, circuit_depth) of the variational parameter tensor in _solve_bipartition_qaoa().',
+      'Controls the shape (2, circuit_depth) of the variational parameter tensor in _build_qaoa_circuit() (qaoa/qaoa.py).',
     ],
-    sourceFile: 'src/libs/multilevel_scheme/partitioning/quantum_approximation_optimizer.py',
+    sourceFile: 'src/libs/multilevel_scheme/partitioning/qaoa/qaoa.py',
   },
 
   'param-num-steps': {
@@ -814,7 +796,7 @@ export const WIKI_TOPICS: Record<string, WikiTopic> = {
     implementationDetails: [
       'Controls the training loop iterations in PennyLane (Adam) and maxiter in SciPy minimize(method="COBYLA") for QLM.',
     ],
-    sourceFile: 'src/libs/multilevel_scheme/partitioning/quantum_approximation_optimizer.py',
+    sourceFile: 'src/libs/multilevel_scheme/partitioning/qaoa/qaoa.py',
   },
 
   'param-num-shots': {
@@ -831,7 +813,7 @@ export const WIKI_TOPICS: Record<string, WikiTopic> = {
     implementationDetails: [
       'Passed as shots=num_shots to the PennyLane sampling device and QLM circuit.to_job(nbshots=num_shots).',
     ],
-    sourceFile: 'src/libs/multilevel_scheme/partitioning/quantum_approximation_optimizer.py',
+    sourceFile: 'src/libs/multilevel_scheme/partitioning/qaoa/qaoa.py',
   },
 
   'param-adam-learning-rate': {
@@ -848,7 +830,7 @@ export const WIKI_TOPICS: Record<string, WikiTopic> = {
     implementationDetails: [
       'Passed to qml.AdamOptimizer(stepsize=adam_learning_rate) when simulated = true.',
     ],
-    sourceFile: 'src/libs/multilevel_scheme/partitioning/quantum_approximation_optimizer.py',
+    sourceFile: 'src/libs/multilevel_scheme/partitioning/qaoa/qaoa.py',
   },
 
   'param-qlm-qpu-name': {
@@ -863,9 +845,9 @@ export const WIKI_TOPICS: Record<string, WikiTopic> = {
       'Allows targeting either remote hardware QPUs (such as QSolidQPU10) or local myQLM noisy/linlag simulators (such as qat.qpus:PyLinalg) without changing code.',
     ],
     implementationDetails: [
-      'Resolved dynamically via importlib.import_module(module_name) and getattr(mod, class_name)() in _load_qlm_qpu().',
+      'Resolved dynamically via importlib.import_module(module_name) and getattr(mod, class_name)() in get_qlm_qpu() (qaoa/qlm_access.py).',
     ],
-    sourceFile: 'src/libs/multilevel_scheme/partitioning/quantum_approximation_optimizer.py',
+    sourceFile: 'src/libs/multilevel_scheme/partitioning/qaoa/qlm_access.py',
   },
 
   // ==========================================
@@ -988,15 +970,15 @@ export const WIKI_TOPICS: Record<string, WikiTopic> = {
     title: 'Stage 5: Matrix Permutation, Verification & Output Artifacts',
     badge: 'Pipeline Stage 05',
     shortSummary:
-      'Converts the final fine-graph partition on G_0 into a global DOF permutation vector p, symmetrically permutes K and M, verifies exact entry correspondence, and saves run outputs.',
-    formula: "K'[i, j] = K[p[i], p[j]],   M'[i, j] = M[p[i], p[j]]",
+      'Converts the final fine-graph partition on G_0 into a row permutation vector p, symmetrically permutes the matrix, verifies exact entry correspondence, and saves run outputs.',
+    formula: "A'[i, j] = A[p[i], p[j]]",
     scientificBackground: [
       'Once every vertex u ∈ V_0 has a final subdomain label part[u] ∈ {0, ..., k-1}, vertices are ordered contiguously by subdomain label: all vertices of subdomain 0 first, then subdomain 1, up to subdomain k-1.',
-      'Each node u is expanded back into its d = dof_per_node contiguous global DOF indices [u·d, u·d + 1, ..., u·d + d - 1], yielding a global permutation array p of length N.',
-      'Applying p to both rows and columns of K and M produces the domain-block-reordered matrices K’ = P K Pᵀ and M’ = P M Pᵀ. Finally, 1,000 random coordinate pairs (i, j) are sampled to verify that K’[i, j] == K[p[i], p[j]] with zero mismatches.',
+      'Each node u is expanded back into its d = dof_per_node contiguous rows [u·d, u·d + 1, ..., u·d + d - 1], yielding a permutation array p of length N.',
+      'Applying p to both rows and columns produces the domain-block-reordered matrix A’ = P A Pᵀ. Random coordinate pairs (i, j) are then sampled to verify that A’[i, j] == A[p[i], p[j]] with zero mismatches.',
     ],
     implementationDetails: [
-      'Implemented in permute_fem_matrices_from_graph_partition() inside src/libs/runtime/utils.py and profiled via compute_run_metrics() in src/libs/runtime/metrics.py.',
+      'Implemented in permute_matrix() inside src/libs/permutation.py and profiled via collect_metrics() in src/libs/profiling/matrix_metrics.py.',
     ],
     sourceFile: 'src/libs/runtime/utils.py',
   },
@@ -1010,46 +992,29 @@ export const WIKI_TOPICS: Record<string, WikiTopic> = {
     shortSummary:
       'Exports the weighted adjacency matrix of the final coarse graph G_c (with vertex weights on the diagonal) in Matrix Market format.',
     scientificBackground: [
-      'Allows inspecting the exact coarse graph topology and weight distribution that was handed to METIS, Quantum Annealing, or QAOA, and powers Plot #7 (Coarse Graph Partition Topology) in the Results Explorer.',
+      'Allows inspecting the exact coarse graph topology and weight distribution that was handed to METIS, Quantum Annealing, or QAOA, and powers the Coarsened Graph plot in the Results Explorer.',
     ],
     implementationDetails: [
-      'Written by save_coarsened_graph_matrix() in src/libs/runtime/reporting.py.',
+      'Written by save_coarse_graph_outputs() in src/libs/runtime/utils.py.',
     ],
-    sourceFile: 'src/libs/runtime/reporting.py',
+    sourceFile: 'src/libs/runtime/utils.py',
   },
 
-  'output-matrix-k-permuted': {
-    id: 'output-matrix-k-permuted',
+  'output-matrix-permuted': {
+    id: 'output-matrix-permuted',
     category: 'stage5',
-    title: 'Permuted Stiffness Matrix (matrix_k_permuted.mtx)',
-    codeKey: 'save_output includes "matrix_k_permuted"',
+    title: 'Permuted Matrix (matrix_permuted.mtx)',
+    codeKey: 'save_output includes "matrix_permuted"',
     badge: 'Output Artifact (.mtx)',
     shortSummary:
-      'Exports the domain-decomposed stiffness matrix K’ = P K Pᵀ in Matrix Market format for downstream solvers and spy-plot diagnostics.',
+      'Exports the reordered matrix A’ = P A Pᵀ in Matrix Market format for downstream solvers and spy-plot diagnostics.',
     scientificBackground: [
-      'Required to visualize the permuted sparsity pattern, distance-to-diagonal histograms, and 2D log10(|K|) density heatmaps in the Results Explorer.',
+      'Required to render the permuted matrix plots in the Results Explorer.',
     ],
     implementationDetails: [
-      'Written via scipy.io.mmwrite to results/run_<timestamp>/matrix_k_permuted.mtx.',
+      'Written via scipy.io.mmwrite to results/run_<timestamp>/matrix_permuted.mtx.',
     ],
-    sourceFile: 'src/orchestrator.py',
-  },
-
-  'output-matrix-m-permuted': {
-    id: 'output-matrix-m-permuted',
-    category: 'stage5',
-    title: 'Permuted Mass Matrix (matrix_m_permuted.mtx)',
-    codeKey: 'save_output includes "matrix_m_permuted"',
-    badge: 'Output Artifact (.mtx)',
-    shortSummary:
-      'Exports the congruently permuted mass matrix M’ = P M Pᵀ in Matrix Market format.',
-    scientificBackground: [
-      'Used alongside K’ in modal/harmonic structural solvers.',
-    ],
-    implementationDetails: [
-      'Written via scipy.io.mmwrite to results/run_<timestamp>/matrix_m_permuted.mtx.',
-    ],
-    sourceFile: 'src/orchestrator.py',
+    sourceFile: 'src/libs/runtime/runtime.py',
   },
 
   'output-permutation': {
@@ -1066,7 +1031,7 @@ export const WIKI_TOPICS: Record<string, WikiTopic> = {
     implementationDetails: [
       'Saved as newline-delimited integers via np.savetxt("permutation.txt", perm, fmt="%d").',
     ],
-    sourceFile: 'src/orchestrator.py',
+    sourceFile: 'src/libs/runtime/runtime.py',
   },
 
   'output-run-metrics': {
@@ -1081,9 +1046,9 @@ export const WIKI_TOPICS: Record<string, WikiTopic> = {
       'Primary quantitative benchmark record used for thesis tables and cross-algorithm comparisons.',
     ],
     implementationDetails: [
-      'Generated by compute_run_metrics() and write_run_metrics_files() in src/libs/runtime/metrics.py.',
+      'Generated by collect_metrics() in src/libs/profiling/matrix_metrics.py and written by run_simulation() in src/libs/runtime/runtime.py.',
     ],
-    sourceFile: 'src/libs/runtime/metrics.py',
+    sourceFile: 'src/libs/profiling/matrix_metrics.py',
   },
 
   'output-run-simulation-parameters': {
@@ -1098,9 +1063,9 @@ export const WIKI_TOPICS: Record<string, WikiTopic> = {
       'Guarantees that every historical run folder is self-documenting even if data/simulation_parameters.json is later modified.',
     ],
     implementationDetails: [
-      'Written via save_json() in src/orchestrator.py.',
+      'Written via write_json() in src/libs/runtime/runtime.py.',
     ],
-    sourceFile: 'src/orchestrator.py',
+    sourceFile: 'src/libs/runtime/runtime.py',
   },
 
   // ==========================================
@@ -1120,9 +1085,9 @@ export const WIKI_TOPICS: Record<string, WikiTopic> = {
       'In banded Gaussian elimination or Cholesky factorization, fill-in is strictly confined within the envelope |i - j| ≤ B(A). Reducing B(A) shrinks memory footprint and worst-case elimination work.',
     ],
     implementationDetails: [
-      'Computed on upper-triangular nonzero coordinates (i ≤ j) in matrix_bandwidth_stats() inside src/libs/runtime/metrics.py.',
+      'Computed as max |i − j| over all nonzero coordinates in _sparsity_metrics() inside src/libs/profiling/matrix_metrics.py.',
     ],
-    sourceFile: 'src/libs/runtime/metrics.py',
+    sourceFile: 'src/libs/profiling/matrix_metrics.py',
   },
 
   'metric-nb2': {
@@ -1139,7 +1104,7 @@ export const WIKI_TOPICS: Record<string, WikiTopic> = {
       'Because B(A) appears squared, even a 15–25% reduction in maximum bandwidth B(A) yields a 28–44% reduction in the worst-case factorization complexity bound nB².',
     ],
     implementationDetails: [
-      'Computed automatically in the Results Explorer and thesis LaTeX table generator from original_bw, permuted_bw, and matrix dimension N.',
+      'Computed automatically in the Results Explorer from original_bw, permuted_bw, and matrix dimension N.',
     ],
     sourceFile: 'backend/routes/results.py',
   },
@@ -1158,9 +1123,9 @@ export const WIKI_TOPICS: Record<string, WikiTopic> = {
       'Note: Domain-block ordering groups vertices by subdomain (0, 1, ..., k-1); interface edges connecting subdomain 0 and subdomain k-1 can have large index distance, so always inspect B̄(A) alongside local diagonal band fractions.',
     ],
     implementationDetails: [
-      'Computed as float(np.mean(dist)) over upper-triangular nonzeros in matrix_bandwidth_stats().',
+      'Computed as float(np.mean(|i − j|)) over all nonzeros in _sparsity_metrics().',
     ],
-    sourceFile: 'src/libs/runtime/metrics.py',
+    sourceFile: 'src/libs/profiling/matrix_metrics.py',
   },
 
   'metric-diag-fractions': {
@@ -1177,9 +1142,9 @@ export const WIKI_TOPICS: Record<string, WikiTopic> = {
       'Measuring the fraction of nonzeros captured within 0.1%, 0.4%, 0.7%, and 1.0% of the matrix dimension N directly quantifies local diagonal concentration after domain permutation.',
     ],
     implementationDetails: [
-      'Evaluated at percentages (0.1, 0.2, 0.3, 0.4, 0.5, 0.7, 1.0) in matrix_band_Metrics() inside src/libs/runtime/metrics.py.',
+      'Evaluated at percentages (0.1, 0.2, 0.3, 0.4, 0.5, 0.7, 1.0) in _sparsity_metrics() inside src/libs/profiling/matrix_metrics.py.',
     ],
-    sourceFile: 'src/libs/runtime/metrics.py',
+    sourceFile: 'src/libs/profiling/matrix_metrics.py',
   },
 
   'metric-edge-cut': {
@@ -1196,9 +1161,9 @@ export const WIKI_TOPICS: Record<string, WikiTopic> = {
       'Minimizing Cut(P) while maintaining subdomain weight balance minimizes the coupling strength outside the block-diagonal preconditioner.',
     ],
     implementationDetails: [
-      'Computed on both G_c (coarse_graph_partition) and G_0 (fine_graph_partition) in graph_partition_stats().',
+      'Computed by cut_value() in src/libs/multilevel_scheme/partitioning/utils/metrics.py when scoring candidate partitions.',
     ],
-    sourceFile: 'src/libs/runtime/metrics.py',
+    sourceFile: 'src/libs/multilevel_scheme/partitioning/utils/metrics.py',
   },
 
   'batch-study': {
@@ -1211,7 +1176,7 @@ export const WIKI_TOPICS: Record<string, WikiTopic> = {
       'Automates Cartesian benchmarking across multiple matrices (geometries), coarsening scales (small, medium, big), and partitioning backends.',
     formula: 'Cases = Matrices × Allowed(Algorithm_Presets × Coarsening_Scales)',
     scientificBackground: [
-      'To systematically evaluate classical vs. quantum partitioning, each matrix case (matrix_01, matrix_02, matrix_03) is tested across multiple coarse graph scales and solver backends under identical uncoarsening rules.',
+      'To systematically evaluate classical vs. quantum partitioning, each selected library matrix is tested across multiple coarse graph scales and solver backends under identical uncoarsening rules.',
       'Each algorithm preset specifies allowed_sizes (for instance, QAOA runs on "small" 4–5 node coarse graphs due to qubit simulation/hardware limits, whereas METIS and QA run on "small", "medium", and "big").',
     ],
     implementationDetails: [
@@ -1280,9 +1245,9 @@ export const WIKI_TOPICS: Record<string, WikiTopic> = {
     codeKey: 'Compare Configs / Compare Run B',
     badge: 'Side-by-Side Diff Tools',
     shortSummary:
-      'Compares two parameter presets side-by-side in the Pipeline Studio, or compares two completed runs (Run A vs. Run B) in the Results Explorer.',
+      'Compares two parameter presets side-by-side in Single Run, or compares two completed runs (Run A vs. Run B) in the Results Explorer.',
     scientificBackground: [
-      'Highlights parameter differences across Stages 1–4 before execution, and compares Matrix K & M bandwidth, nB² reduction, and diagonal locality curves across two runs.',
+      'Highlights parameter differences across Stages 1–4 before execution, and compares bandwidth, nB² reduction, and diagonal locality curves across runs.',
     ],
     implementationDetails: [
       'Implemented in PipelineStudio.tsx and ResultsExplorer.tsx.',

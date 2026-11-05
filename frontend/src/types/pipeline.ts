@@ -10,12 +10,25 @@ export interface MatrixInfo {
   field_type?: string | null;
 }
 
+/** A sparse matrix in the shared matrix library (matrices/<id>/). Any square matrix can be permuted. */
+export interface LibraryMatrix {
+  id: string;
+  name: string;
+  description?: string | null;
+  /** Header of the .mtx file (size, nnz, symmetry). */
+  info: MatrixInfo;
+  ready: boolean;
+  /** rows === cols (required for a symmetric permutation P A Pᵀ). */
+  square: boolean;
+  /** Simulations whose config points at this matrix. */
+  used_by: string[];
+  error?: string;
+}
+
 export interface SimulationConfig {
   parameters_file_path: string;
-  input_matrices: {
-    matrix_k_file_path: string;
-    matrix_m_file_path: string;
-  };
+  /** Id of the library matrix to partition and permute (a folder in matrices/). */
+  input_matrix: string;
   save_output: string[];
 }
 
@@ -109,11 +122,13 @@ export interface Demonstrator {
   simulation_parameters: SimulationParameters;
   active_parameters_file: string;
   preset_files: string[];
-  matrices: {
-    matrix_k: MatrixInfo;
-    matrix_m: MatrixInfo;
+  /** The matrix this simulation uses (as saved). */
+  matrix: {
+    id: string | null;
+    name: string | null;
+    error?: string;
+    info: MatrixInfo;
     ready: boolean;
-    available_files: MatrixInfo[];
   };
   runs_count: number;
   latest_run: string | null;
@@ -154,6 +169,14 @@ export interface SimulationJob {
   job_type: 'single' | 'batch';
   title: string;
   demonstrator_dir?: string | null;
+  /** Simulation id (e.g. "simulation_01"); null for batch jobs. */
+  demonstrator_id?: string | null;
+  /** Raw partitioning strategy key (e.g. "quantum_annealing"). */
+  partitioning_strategy?: string | null;
+  /** Emulated (true) vs hardware (false); null for METIS / unknown. */
+  simulated?: boolean | null;
+  /** Requested number of parts. */
+  k_target?: number | null;
   status: 'running' | 'completed' | 'failed' | 'cancelled';
   current_stage: string;
   stage_progress: number;
@@ -173,6 +196,11 @@ export interface SimulationJob {
     coarse_edges?: number;
     coarsening_levels?: number;
     coarse_parts?: number;
+    batch_total?: number;
+    batch_index?: number;
+    batch_case?: string;
+    batch_done?: number;
+    batch_failed?: number;
   };
   log_count: number;
   logs?: LogEntry[];
