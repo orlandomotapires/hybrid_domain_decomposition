@@ -4,15 +4,15 @@
 
 ## Runtime Flow
 
-1. **[main.py](main.py)** parses the target matrix workspace directory (e.g. `matrices/matrix_01`).
+1. **[main.py](main.py)** parses the target simulation directory (e.g. `simulations/simulation_01`); its matrix is read from the shared library in `matrices/`.
 2. **[libs/runtime/runtime.py](libs/runtime/runtime.py)** loads `data/simulation_config.json` and the active parameter preset JSON, validates all inputs, and resolves `.mtx` paths.
 3. **[libs/domain_decomposition.py](libs/domain_decomposition.py)** executes the 5-stage pipeline:
-   - **Stage 1 — Graph Construction:** Aggregates nodal $(d \times d)$ blocks of the stiffness matrix $K$ into a weighted undirected graph $G_0 = (V_0, E_0, c, w)$.
+   - **Stage 1 — Graph Construction:** Turns the input matrix $A$ into a weighted undirected graph $G_0 = (V_0, E_0, c, w)$, one vertex per row or per $(d \times d)$ diagonal block (`dof_per_node`, default 1).
    - **Stage 2 — Coarsening:** Contracts $G_0 \to G_1 \to \dots \to G_L$ using Heavy-Edge Matching (`random`, `heavy_edge`, `modified`, `light_edge`) until the vertex count reaches `[coarsen_inferior_limit, coarsen_superior_limit]`.
    - **Stage 3 — Coarse Partitioning:** Partitions the coarse graph $G_L$ into $k$ subdomains using classical METIS (`metis_partitioning`), recursive QUBO Quantum Annealing (`quantum_annealing`), or recursive Ising QAOA (`quantum_approximation_optimizer`).
    - **Stage 4 — Uncoarsening & Refinement:** Projects the partition back level-by-level to $G_0$, applying multi-way Kernighan–Lin boundary refinement (`cut` or `cut_balance`) at every level.
-   - **Stage 5 — Matrix Permutation & Profiling:** Builds the global DOF permutation vector $P$, computes $K' = P K P^\top$ and $M' = P M P^\top$, and evaluates structural bandwidth and diagonal locality metrics.
-4. **[libs/runtime/runtime.py](libs/runtime/runtime.py)** writes the enabled artifacts (`save_output`) to `matrices/<name>/results/run_<timestamp>/`.
+   - **Stage 5 — Matrix Permutation & Profiling:** Builds the row permutation vector $P$, computes $A' = P A P^\top$, and evaluates structural bandwidth and diagonal locality metrics.
+4. **[libs/runtime/runtime.py](libs/runtime/runtime.py)** writes the enabled artifacts (`save_output`) to `simulations/<name>/results/run_<timestamp>/`.
 
 ## Core Modules
 

@@ -19,7 +19,8 @@ Interactive OpenAPI / Swagger documentation is served automatically at `http://1
 backend/
 ├── app.py                     # FastAPI application factory, CLI (--host, --port, --reload), and SPA static file serving
 ├── routes/
-│   ├── matrices.py            # /api/demonstrators: CRUD for matrices/<id>, config/parameters, presets, .mtx upload, demo mesh generator, dry-run coarsening preview
+│   ├── matrices.py            # /api/demonstrators: CRUD for simulations/<id>, config/parameters, presets, dry-run coarsening preview
+│   ├── library.py             # /api/matrix-library: list / upload / generate-demo / delete matrices in matrices/
 │   ├── execution.py           # /api/execution: start, list, poll (incremental log streaming), cancel, and delete simulation jobs
 │   ├── batch.py               # /api/batch: read/write batch_configuration.json, launch batch studies, inspect batch runs
 │   ├── results.py             # /api/results: per-matrix run list, single-run KPIs & curves, cached plot images, .zip bundle download, batch LaTeX tables
