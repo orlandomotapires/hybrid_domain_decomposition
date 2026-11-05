@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 import numpy as np
 import scipy.sparse as sp
 from scipy.io import mmwrite
+
+from libs.runtime.matrix_library import SIMULATIONS_DIR, load_matrix_meta
 
 
 def inspect_mtx_file(path: Path) -> dict[str, Any]:
@@ -69,32 +72,98 @@ def inspect_mtx_file(path: Path) -> dict[str, Any]:
     }
 
 
-def list_demonstrator_matrices(data_dir: Path, simulation_config: dict[str, Any]) -> dict[str, Any]:
-    """List all .mtx files in data/matrices and inspect the configured K and M matrices."""
-    matrices_dir = data_dir / "matrices"
-    input_matrices = simulation_config.get("input_matrices", {})
-    k_filename = str(input_matrices.get("matrix_k_file_path", "")).strip()
-    m_filename = str(input_matrices.get("matrix_m_file_path", "")).strip()
+def validate_mtx_header(path: Path) -> str | None:
+    """Strictly check a Matrix Market header. Returns an error message, or None if the file looks valid."""
+    try:
+        with path.open("r", encoding="utf-8", errors="strict") as fh:
+            banner = fh.readline().strip()
+            parts = banner.split()
+            if len(parts) < 5 or parts[0] != "%%MatrixMarket" or parts[1].lower() != "matrix":
+                return "Missing '%%MatrixMarket matrix ...' header line — is this a Matrix Market file?"
+            fmt, field, symmetry = (p.lower() for p in parts[2:5])
+            if fmt != "coordinate":
+                return f"Unsupported format '{fmt}': only sparse 'coordinate' matrices are supported"
+            if field not in {"real", "integer", "double", "pattern"}:
+                return f"Unsupported field type '{field}': expected real, integer or pattern"
+            if symmetry not in {"general", "symmetric"}:
+                return f"Unsupported symmetry '{symmetry}': expected general or symmetric"
 
-    k_info = inspect_mtx_file(matrices_dir / k_filename) if k_filename else {"filename": "", "exists": False}
-    m_info = inspect_mtx_file(matrices_dir / m_filename) if m_filename else {"filename": "", "exists": False}
+            for line in fh:
+                stripped = line.strip()
+                if not stripped or stripped.startswith("%"):
+                    continue
+                dims = stripped.split()
+                if len(dims) != 3:
+                    return "Size line must contain three integers: rows cols nnz"
+                rows, cols, nnz = (int(d) for d in dims)
+                if rows <= 0 or cols <= 0:
+                    return f"Invalid matrix dimensions {rows} × {cols}"
+                if rows != cols:
+                    return f"Matrix must be square, got {rows} × {cols}"
+                if nnz <= 0:
+                    return "Matrix has no nonzero entries"
+                return None
+        return "File ends before the size line (rows cols nnz)"
+    except UnicodeDecodeError:
+        return "File is not a text Matrix Market file"
+    except ValueError:
+        return "Size line must contain three integers: rows cols nnz"
+    except OSError as exc:
+        return f"Could not read file: {exc}"
 
-    available_files: list[dict[str, Any]] = []
-    if matrices_dir.exists() and matrices_dir.is_dir():
-        for mtx_file in sorted(matrices_dir.glob("*.mtx")):
-            available_files.append(inspect_mtx_file(mtx_file))
 
+def inspect_matrix(matrix_id: str) -> dict[str, Any]:
+    """Library matrix summary: name, header info (size, nnz, symmetry) and which simulations use it."""
+    meta = load_matrix_meta(matrix_id)
+    info = inspect_mtx_file(meta["dir"] / meta["file"])
     return {
-        "matrix_k": k_info,
-        "matrix_m": m_info,
-        "ready": bool(k_info.get("exists") and m_info.get("exists")),
-        "available_files": available_files,
+        "id": matrix_id,
+        "name": meta["name"],
+        "description": meta.get("description"),
+        "info": info,
+        "ready": bool(info.get("exists")),
+        "square": bool(info.get("exists")) and info.get("rows") == info.get("cols"),
+        "used_by": simulations_using_matrix(matrix_id),
     }
 
 
+def simulations_using_matrix(matrix_id: str) -> list[str]:
+    users: list[str] = []
+    if not SIMULATIONS_DIR.exists():
+        return users
+    for sim in sorted(SIMULATIONS_DIR.iterdir()):
+        cfg_path = sim / "data" / "simulation_config.json"
+        if not cfg_path.exists():
+            continue
+        try:
+            cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        if cfg.get("input_matrix") == matrix_id:
+            users.append(sim.name)
+    return users
+
+
+def simulation_matrix_info(simulation_config: dict[str, Any]) -> dict[str, Any]:
+    """The matrix a simulation uses, with its header info (or an error when it's not in the library)."""
+    matrix_id = simulation_config.get("input_matrix")
+    try:
+        m = inspect_matrix(str(matrix_id))
+    except (FileNotFoundError, ValueError) as exc:
+        return {
+            "id": matrix_id,
+            "name": None,
+            "error": str(exc),
+            "info": {"filename": "", "exists": False},
+            "ready": False,
+        }
+    return {"id": matrix_id, "name": m["name"], "info": m["info"], "ready": m["ready"]}
+
+
 def generate_demo_fem_matrices(
-    data_dir: Path,
-    simulation_config: dict[str, Any],
+    target_dir: Path,
+    k_filename: str,
+    m_filename: str | None = None,
     *,
     nx_nodes: int = 12,
     ny_nodes: int = 5,
@@ -102,18 +171,17 @@ def generate_demo_fem_matrices(
     dof_per_node: int = 3,
     seed: int = 42,
 ) -> dict[str, Any]:
-    """Generate a realistic 3D Finite Element Method (FEM) structural blade mesh K & M matrix pair.
+    """Generate a synthetic sparse test matrix from a 3D Finite Element (FEM) blade mesh.
+
+    Writes the stiffness-like matrix to ``k_filename`` (and the mass-like one to ``m_filename`` when
+    given). Returns the header info of the written matrix.
 
     Constructs a 3D hexahedral/tetrahedral elastic lattice with `dof_per_node` DOFs per vertex,
     numbered initially in a non-optimal/scrambled finite-element assembly order so that graph
     partitioning and permutation demonstrably improve bandwidth and locality metrics.
     """
-    matrices_dir = data_dir / "matrices"
+    matrices_dir = Path(target_dir)
     matrices_dir.mkdir(parents=True, exist_ok=True)
-
-    input_matrices = simulation_config.get("input_matrices", {})
-    k_filename = str(input_matrices.get("matrix_k_file_path") or "K_demo_fem.mtx").strip()
-    m_filename = str(input_matrices.get("matrix_m_file_path") or "M_demo_fem.mtx").strip()
 
     rng = np.random.default_rng(seed)
     num_nodes = int(nx_nodes) * int(ny_nodes) * int(nz_nodes)
@@ -199,10 +267,11 @@ def generate_demo_fem_matrices(
     mat_m = sp.coo_matrix((vals_m, (rows_m, cols_m)), shape=(n_total, n_total)).tocsr()
 
     k_path = matrices_dir / k_filename
-    m_path = matrices_dir / m_filename
+    m_path = matrices_dir / m_filename if m_filename else None
 
     mmwrite(k_path, mat_k, comment=f"Demo 3D FEM Stiffness Matrix K ({nx_nodes}x{ny_nodes}x{nz_nodes} nodes, {d} DOF/node)")
-    mmwrite(m_path, mat_m, comment=f"Demo 3D FEM Mass Matrix M ({nx_nodes}x{ny_nodes}x{nz_nodes} nodes, {d} DOF/node)")
+    if m_path is not None:
+        mmwrite(m_path, mat_m, comment=f"Demo 3D FEM Mass Matrix M ({nx_nodes}x{ny_nodes}x{nz_nodes} nodes, {d} DOF/node)")
 
-    return list_demonstrator_matrices(data_dir, simulation_config)
+    return inspect_mtx_file(k_path)
 

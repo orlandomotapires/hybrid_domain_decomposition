@@ -18,6 +18,7 @@ for p in (str(ROOT_DIR), str(SRC_DIR)):
         sys.path.insert(0, p)
 
 from backend.routes.matrices import router as matrices_router
+from backend.routes.library import router as library_router
 from backend.routes.execution import router as execution_router
 from backend.routes.batch import router as batch_router
 from backend.routes.results import router as results_router
@@ -38,6 +39,7 @@ app.add_middleware(
 )
 
 app.include_router(matrices_router)
+app.include_router(library_router)
 app.include_router(execution_router)
 app.include_router(batch_router)
 app.include_router(results_router)

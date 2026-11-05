@@ -7,13 +7,24 @@ import batch.run_batch as run_batch
 
 
 class RunBatchTest(unittest.TestCase):
-    def test_default_batch_covers_both_thesis_demonstrators(self) -> None:
-        geometry_keys = {geometry.key for geometry in run_batch.GEOMETRIES}
-        self.assertTrue({"matrix_01", "matrix_02"}.issubset(geometry_keys))
+    def test_default_batch_uses_library_matrices(self) -> None:
+        self.assertTrue(run_batch.GEOMETRIES)
+        for geometry in run_batch.GEOMETRIES:
+            self.assertTrue(
+                (run_batch.ROOT_DIR / "matrices" / geometry.key / "matrix.json").exists(),
+                f"{geometry.key} is not a matrix in the library",
+            )
+
+    def test_case_results_go_to_the_batch_cases_folder(self) -> None:
+        case = run_batch.build_cases()[0]
+        batch_dir = run_batch.BATCH_RUNS_DIR / "batch_test"
+        kwargs = run_batch._case_run_kwargs(case, batch_dir)
+        self.assertEqual(f"batch/runs/batch_test/cases/{case.case_key}", kwargs["results_dir_override"])
+        self.assertEqual(case.geometry.key, kwargs["simulation_config_override"]["input_matrix"])
 
     def test_extract_summary_metrics_exports_percentage_band_columns(self) -> None:
         run_metrics = {
-            "K": {
+            "matrix": {
                 "structural_metrics": {
                     "original": {
                         "bandwidth": 10,
@@ -41,11 +52,11 @@ class RunBatchTest(unittest.TestCase):
             }
         }
 
-        summary = run_batch._extract_summary_metrics(run_metrics, "K")
+        summary = run_batch._extract_summary_metrics(run_metrics)
 
-        self.assertEqual(0.1, summary["K_frac_0_1pct_original"])
-        self.assertEqual(0.8, summary["K_frac_1_0pct_permuted"])
-        self.assertNotIn("K_frac_within_200_original", summary)
+        self.assertEqual(0.1, summary["frac_0_1pct_original"])
+        self.assertEqual(0.8, summary["frac_1_0pct_permuted"])
+        self.assertNotIn("frac_within_200_original", summary)
 
     def test_finalize_batch_writes_only_json_summary(self) -> None:
         manifest = {

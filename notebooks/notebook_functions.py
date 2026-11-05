@@ -317,10 +317,8 @@ def _curve_points_from_metrics(structural_metrics: dict[str, dict]) -> tuple[np.
     return percent_values, original_curve, permuted_curve
 
 def load_case_from_summary(row: dict) -> dict:
+    """Load one run's artifacts: the original and permuted matrix, permutation, partitions, metrics."""
     result_dir = REPO_ROOT / row["result_dir"]
-    demonstrator_dir = result_dir.parents[1]
-    data_dir = demonstrator_dir / "data"
-    simulation_config = json.loads((data_dir / "simulation_config.json").read_text())
     run_params = json.loads((result_dir / "run_simulation_parameters.json").read_text())
     permutation = np.loadtxt(result_dir / "permutation.txt", dtype=np.int64)
     coarsened_graph_matrix = load_mtx(result_dir / "coarsened_graph.mtx", label="coarsened graph")
@@ -328,96 +326,57 @@ def load_case_from_summary(row: dict) -> dict:
     run_metrics = json.loads(run_metrics_path.read_text()) if run_metrics_path.exists() else None
     partition_artifacts = load_partition_artifacts(result_dir)
 
-    matrices_dir = data_dir / "matrices"
-    matrix_k_original = load_mtx(matrices_dir / simulation_config["input_matrices"]["matrix_k_file_path"], label="K original")
-    matrix_m_original = load_mtx(matrices_dir / simulation_config["input_matrices"]["matrix_m_file_path"], label="M original")
-    matrix_k_permuted = load_mtx(result_dir / "matrix_k_permuted.mtx", label="K permuted")
-    matrix_m_permuted = load_mtx(result_dir / "matrix_m_permuted.mtx", label="M permuted")
+    # Every run records which library matrix it used (batch cases have no simulation folder).
+    inputs = json.loads((result_dir / "run_inputs.json").read_text())
+    matrix_original = load_mtx(REPO_ROOT / inputs["matrix_path"], label="original matrix")
+    matrix_permuted = load_mtx(result_dir / "matrix_permuted.mtx", label="permuted matrix")
 
     return {
         "row": row,
         "result_dir": result_dir,
-        "demonstrator_dir": demonstrator_dir,
-        "simulation_config": simulation_config,
+        "matrix_id": inputs.get("matrix"),
         "run_params": run_params,
         "run_metrics": run_metrics,
         "permutation": permutation,
         "partition_artifacts": partition_artifacts,
         "coarsened_graph_matrix": coarsened_graph_matrix,
-        "matrix_k_original": matrix_k_original,
-        "matrix_m_original": matrix_m_original,
-        "matrix_k_permuted": matrix_k_permuted,
-        "matrix_m_permuted": matrix_m_permuted,
+        "matrix_original": matrix_original,
+        "matrix_permuted": matrix_permuted,
     }
 
 _CASE_PLOT_SPECS = {
-    "k_original_matrix_partitioned": {
+    "original_matrix_partitioned": {
         "kind": "matrix",
-        "matrix_key": "matrix_k_original",
+        "matrix_key": "matrix_original",
         "partition_key": "final_partition",
-        "title": "Original K",
+        "title": "Original matrix",
     },
-    "k_permuted_matrix_partitioned": {
+    "permuted_matrix_partitioned": {
         "kind": "matrix",
-        "matrix_key": "matrix_k_permuted",
+        "matrix_key": "matrix_permuted",
         "partition_key": "final_partition",
-        "title": "Permuted K",
+        "title": "Permuted matrix",
         "use_permutation": True,
     },
-    "k_original_graph_partitioned": {
+    "original_graph_partitioned": {
         "kind": "graph",
-        "matrix_key": "matrix_k_original",
+        "matrix_key": "matrix_original",
         "partition_key": "final_partition",
-        "title": "Original K graph",
+        "title": "Original graph",
     },
-    "k_coarsened_graph_partitioned": {
+    "coarsened_graph_partitioned": {
         "kind": "graph",
         "matrix_key": "coarsened_graph_matrix",
         "partition_key": "coarse_partition",
-        "title": "Coarsened K graph",
+        "title": "Coarsened graph",
         "margin_mode": "coarsened_right_margin",
         "dof_per_node": 1,
     },
-    "k_uncoarsened_graph_partitioned": {
+    "uncoarsened_graph_partitioned": {
         "kind": "graph",
-        "matrix_key": "matrix_k_original",
+        "matrix_key": "matrix_original",
         "partition_key": "final_partition",
-        "title": "Uncoarsened K graph",
-        "margin_mode": "uncoarsened_match",
-        "use_partition_order": True,
-    },
-    "m_original_matrix_partitioned": {
-        "kind": "matrix",
-        "matrix_key": "matrix_m_original",
-        "partition_key": "final_partition",
-        "title": "Original M",
-    },
-    "m_permuted_matrix_partitioned": {
-        "kind": "matrix",
-        "matrix_key": "matrix_m_permuted",
-        "partition_key": "final_partition",
-        "title": "Permuted M",
-        "use_permutation": True,
-    },
-    "m_original_graph_partitioned": {
-        "kind": "graph",
-        "matrix_key": "matrix_m_original",
-        "partition_key": "final_partition",
-        "title": "Original M graph",
-    },
-    "m_coarsened_graph_partitioned": {
-        "kind": "graph",
-        "matrix_key": "coarsened_graph_matrix",
-        "partition_key": "coarse_partition",
-        "title": "Coarsened M graph",
-        "margin_mode": "coarsened_right_margin",
-        "dof_per_node": 1,
-    },
-    "m_uncoarsened_graph_partitioned": {
-        "kind": "graph",
-        "matrix_key": "matrix_m_original",
-        "partition_key": "final_partition",
-        "title": "Uncoarsened M graph",
+        "title": "Uncoarsened graph",
         "margin_mode": "uncoarsened_match",
         "use_partition_order": True,
     },
@@ -521,7 +480,7 @@ def render_case_plot(
     )
 
 
-def render_k_curve_comparison(
+def render_curve_comparison(
     backend_case: dict,
     metis_case: dict,
     *,
@@ -547,17 +506,17 @@ def render_k_curve_comparison(
         raise ValueError("Both curve comparison cases must have run_metrics.json")
 
     percent_values, backend_original_curve, backend_permuted_curve = _curve_points_from_metrics(
-        backend_case["run_metrics"]["K"]["structural_metrics"]
+        backend_case["run_metrics"]["matrix"]["structural_metrics"]
     )
-    _, _, metis_permuted_curve = _curve_points_from_metrics(metis_case["run_metrics"]["K"]["structural_metrics"])
+    _, _, metis_permuted_curve = _curve_points_from_metrics(metis_case["run_metrics"]["matrix"]["structural_metrics"])
 
     fig, ax = plt.subplots(1, 1, figsize=_figure_size_from_display_width(display_width, display_height, square=False), constrained_layout=True)
     if display_height is not None:
         fig.set_size_inches(fig.get_size_inches()[0], max(1.0, float(display_height) / 100.0))
     curves = [
-        (backend_original_curve, "Original K"),
-        (backend_permuted_curve, f"{backend_label} permuted K"),
-        (metis_permuted_curve, f"{metis_label} permuted K"),
+        (backend_original_curve, "Original"),
+        (backend_permuted_curve, f"{backend_label} permuted"),
+        (metis_permuted_curve, f"{metis_label} permuted"),
     ]
     for curve_values, curve_label in curves:
         ax.plot(percent_values, curve_values, linewidth=2.0, label=curve_label)
@@ -618,65 +577,10 @@ def _build_partition_color_map(partitions: set[int]) -> dict[int, str]:
         for index, partition in enumerate(sorted_partitions)
     }
 
-def render_m_curve_comparison(
-    backend_case: dict,
-    metis_case: dict,
-    *,
-    title: str,
-    backend_label: str,
-    metis_label: str,
-    display_width: int | None = None,
-    display_height: int | None = None,
-    title_fontsize: float = 16,
-    label_fontsize: float = 14,
-    tick_labelsize: float = 12,
-    save_path: str | Path | None = None,
-    dpi: int = 200,
-) -> None:
-    backend_row = backend_case["row"]
-    metis_row = metis_case["row"]
-    if backend_row["geometry"] != metis_row["geometry"]:
-        raise ValueError("Curve comparisons must use the same geometry")
-    if backend_row["coarsening_size"] != metis_row["coarsening_size"]:
-        raise ValueError("Curve comparisons must use the same coarsening size")
-
-    if backend_case["run_metrics"] is None or metis_case["run_metrics"] is None:
-        raise ValueError("Both curve comparison cases must have run_metrics.json")
-
-    percent_values, backend_original_curve, backend_permuted_curve = _curve_points_from_metrics(
-        backend_case["run_metrics"]["M"]["structural_metrics"]
-    )
-    _, _, metis_permuted_curve = _curve_points_from_metrics(metis_case["run_metrics"]["M"]["structural_metrics"])
-
-    fig, ax = plt.subplots(1, 1, figsize=_figure_size_from_display_width(display_width, display_height, square=False), constrained_layout=True)
-    if display_height is not None:
-        fig.set_size_inches(fig.get_size_inches()[0], max(1.0, float(display_height) / 100.0))
-    curves = [
-        (backend_original_curve, "Original M"),
-        (backend_permuted_curve, f"{backend_label} permuted M"),
-        (metis_permuted_curve, f"{metis_label} permuted M"),
-    ]
-    for curve_values, curve_label in curves:
-        ax.plot(percent_values, curve_values, linewidth=2.0, label=curve_label)
-    ax.set_title(f"{title}: fraction within bandwidth (M)", fontsize=title_fontsize)
-    ax.set_xlabel("Band range (% of n)", fontsize=label_fontsize)
-    ax.set_ylabel("Fraction of nonzeros within band", fontsize=label_fontsize)
-    ax.set_xlim(0.0, 2.0)
-    ax.set_ylim(0.0, 1.02)
-    ax.grid(True, alpha=0.3)
-    ax.tick_params(axis="both", labelsize=tick_labelsize)
-    ax.legend()
-    if save_path:
-        fig.savefig(str(save_path), dpi=dpi)
-        plt.close(fig)
-    else:
-        plt.show()
-        plt.close(fig)
-def build_matrix_summary_lines(prefix, DEMONSTRATOR, demo_rows, demo_suffix=None):
+def build_matrix_summary_lines(DEMONSTRATOR, demo_rows, demo_suffix=None):
     """
-    Generate LaTeX table lines for K or M matrix metrics from batch summary rows.
-    prefix: 'K' or 'M'
-    DEMONSTRATOR: demonstrator name (e.g. 'matrix_01')
+    Generate LaTeX table lines for the matrix metrics of one batch matrix from batch summary rows.
+    DEMONSTRATOR: library matrix id used in the batch (case keys start with it)
     demo_rows: filtered rows for this demonstrator
     demo_suffix: string of digits for display/label (optional)
     """
@@ -711,12 +615,12 @@ def build_matrix_summary_lines(prefix, DEMONSTRATOR, demo_rows, demo_suffix=None
             (
                 "Original",
                 "N/A",
-                fmt_int(original_row.get(f"{prefix}_bandwidth_original")),
-                fmt_avg(original_row.get(f"{prefix}_avg_bandwidth_original")),
-                fmt_frac(original_row.get(f"{prefix}_frac_0_1pct_original")),
-                fmt_frac(original_row.get(f"{prefix}_frac_0_4pct_original")),
-                fmt_frac(original_row.get(f"{prefix}_frac_0_7pct_original")),
-                fmt_frac(original_row.get(f"{prefix}_frac_1_0pct_original")),
+                fmt_int(original_row.get("bandwidth_original")),
+                fmt_avg(original_row.get("avg_bandwidth_original")),
+                fmt_frac(original_row.get("frac_0_1pct_original")),
+                fmt_frac(original_row.get("frac_0_4pct_original")),
+                fmt_frac(original_row.get("frac_0_7pct_original")),
+                fmt_frac(original_row.get("frac_1_0pct_original")),
             )
         )
 
@@ -730,21 +634,21 @@ def build_matrix_summary_lines(prefix, DEMONSTRATOR, demo_rows, demo_suffix=None
                 (
                     pretty_method(method),
                     size,
-                    fmt_int(row.get(f"{prefix}_bandwidth_permuted")),
-                    fmt_avg(row.get(f"{prefix}_avg_bandwidth_permuted")),
-                    fmt_frac(row.get(f"{prefix}_frac_0_1pct_permuted")),
-                    fmt_frac(row.get(f"{prefix}_frac_0_4pct_permuted")),
-                    fmt_frac(row.get(f"{prefix}_frac_0_7pct_permuted")),
-                    fmt_frac(row.get(f"{prefix}_frac_1_0pct_permuted")),
+                    fmt_int(row.get("bandwidth_permuted")),
+                    fmt_avg(row.get("avg_bandwidth_permuted")),
+                    fmt_frac(row.get("frac_0_1pct_permuted")),
+                    fmt_frac(row.get("frac_0_4pct_permuted")),
+                    fmt_frac(row.get("frac_0_7pct_permuted")),
+                    fmt_frac(row.get("frac_1_0pct_permuted")),
                 )
             )
 
     demo_display = f"Demonstrator~{demo_suffix}" if demo_suffix else DEMONSTRATOR
-    demo_label = f"tab:results_demo{int(demo_suffix)}_{prefix.lower()}" if demo_suffix else f"tab:results_{prefix.lower()}"
+    demo_label = f"tab:results_demo{int(demo_suffix)}" if demo_suffix else "tab:results"
 
     lines = [
         "\\begin{table}[H]",
-        f"\\caption{{{prefix}-matrix numerical summary for {demo_display}}}",
+        f"\\caption{{Matrix numerical summary for {demo_display}}}",
         "\\scriptsize",
         "\\renewcommand{\\arraystretch}{1.15}",
         "\\begin{tabularx}{\\textwidth}{X l r r r r r r}",

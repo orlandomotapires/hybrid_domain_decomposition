@@ -6,7 +6,7 @@ import re
 import shutil
 import time
 from typing import Any
-from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from libs.multilevel_scheme.coarsening.coarsening import coarsen_graph
@@ -14,34 +14,30 @@ from libs.runtime.utils import (
     AVAILABLE_SAVE_OUTPUTS,
     load_mtx,
     matrix_to_graph,
-    resolve_matrix_input_path,
     resolve_parameters_file_path,
+    resolve_simulation_matrix,
     validate_and_normalize_simulation_config,
     validate_and_normalize_simulation_parameters,
     write_json,
 )
-from backend.services.matrix_service import (
-    generate_demo_fem_matrices,
-    list_demonstrator_matrices,
-)
+from libs.runtime.matrix_library import list_matrix_ids
+from backend.services.matrix_service import simulation_matrix_info
 
 router = APIRouter(prefix="/api/demonstrators", tags=["matrices"])
 
 ROOT_DIR = Path(__file__).resolve().parents[2]
-DEMONSTRATORS_ROOT = ROOT_DIR / "matrices"
+# "Demonstrators" are simulations: simulations/<id>/data/{simulation_config.json, *.json presets}.
+# The route prefix keeps its historical name; the UI calls them simulations.
+DEMONSTRATORS_ROOT = ROOT_DIR / "simulations"
 
 
 class CreateDemonstratorRequest(BaseModel):
-    name: str
-    clone_from: str | None = "matrix_01"
-
-
-class GenerateDemoMatricesRequest(BaseModel):
-    nx_nodes: int = 12
-    ny_nodes: int = 5
-    nz_nodes: int = 4
-    dof_per_node: int = 3
-    seed: int = 42
+    # Empty -> next free simulation_NN.
+    name: str | None = None
+    # Copy parameters/presets (and matrix pair) from this simulation.
+    clone_from: str | None = None
+    # Library matrix to use; defaults to the cloned simulation's matrix, else the first library matrix.
+    matrix: str | None = None
 
 
 class SavePresetRequest(BaseModel):
@@ -53,8 +49,16 @@ class SavePresetRequest(BaseModel):
 def _sanitize_dem_name(name: str) -> str:
     cleaned = re.sub(r"[^a-zA-Z0-9_-]", "_", name.strip())
     if not cleaned:
-        raise HTTPException(status_code=400, detail="Demonstrator name must contain alphanumeric characters")
+        raise HTTPException(status_code=400, detail="Simulation name must contain alphanumeric characters")
     return cleaned
+
+
+def _next_simulation_id() -> str:
+    used = {d.name for d in DEMONSTRATORS_ROOT.iterdir()} if DEMONSTRATORS_ROOT.exists() else set()
+    n = 1
+    while f"simulation_{n:02d}" in used:
+        n += 1
+    return f"simulation_{n:02d}"
 
 
 def _compute_quantum_estimates(normalized_params: dict[str, Any]) -> dict[str, Any]:
@@ -120,7 +124,7 @@ def _inspect_demonstrator(dem_dir: Path) -> dict[str, Any]:
         if f.name != "simulation_config.json"
     ]
 
-    matrices_info = list_demonstrator_matrices(data_dir, simulation_config)
+    matrix_info = simulation_matrix_info(simulation_config)
 
     results_dir = dem_dir / "results"
     runs_count = 0
@@ -133,16 +137,16 @@ def _inspect_demonstrator(dem_dir: Path) -> dict[str, Any]:
         )
         runs_count = len(run_dirs)
         if run_dirs:
-            latest_run = f"matrices/{dem_dir.name}/results/{run_dirs[0].name}"
+            latest_run = f"simulations/{dem_dir.name}/results/{run_dirs[0].name}"
 
     return {
         "id": dem_dir.name,
-        "demonstrator_dir": f"matrices/{dem_dir.name}",
+        "demonstrator_dir": f"simulations/{dem_dir.name}",
         "simulation_config": simulation_config,
         "simulation_parameters": simulation_parameters,
         "active_parameters_file": params_path.name,
         "preset_files": preset_files,
-        "matrices": matrices_info,
+        "matrix": matrix_info,
         "runs_count": runs_count,
         "latest_run": latest_run,
         "estimates": _compute_quantum_estimates(simulation_parameters),
@@ -162,7 +166,7 @@ def list_demonstrators() -> dict[str, Any]:
                     items.append(
                         {
                             "id": d.name,
-                            "demonstrator_dir": f"matrices/{d.name}",
+                            "demonstrator_dir": f"simulations/{d.name}",
                             "error": str(exc),
                         }
                     )
@@ -173,7 +177,7 @@ def list_demonstrators() -> dict[str, Any]:
 def get_demonstrator(dem_id: str) -> dict[str, Any]:
     dem_dir = DEMONSTRATORS_ROOT / _sanitize_dem_name(dem_id)
     if not dem_dir.exists():
-        raise HTTPException(status_code=404, detail=f"Demonstrator {dem_id!r} not found")
+        raise HTTPException(status_code=404, detail=f"Simulation {dem_id!r} not found")
     try:
         return _inspect_demonstrator(dem_dir)
     except Exception as exc:
@@ -182,44 +186,38 @@ def get_demonstrator(dem_id: str) -> dict[str, Any]:
 
 @router.post("")
 def create_demonstrator(req: CreateDemonstratorRequest) -> dict[str, Any]:
-    dem_id = _sanitize_dem_name(req.name)
+    dem_id = _sanitize_dem_name(req.name) if req.name and req.name.strip() else _next_simulation_id()
     target_dir = DEMONSTRATORS_ROOT / dem_id
     if target_dir.exists():
-        raise HTTPException(status_code=409, detail=f"Demonstrator {dem_id!r} already exists")
+        raise HTTPException(status_code=409, detail=f"Simulation {dem_id!r} already exists")
 
     target_data_dir = target_dir / "data"
     target_data_dir.mkdir(parents=True, exist_ok=True)
-    (target_data_dir / "matrices").mkdir(parents=True, exist_ok=True)
 
     if req.clone_from:
-        src_dir = DEMONSTRATORS_ROOT / _sanitize_dem_name(req.clone_from)
-        src_data_dir = src_dir / "data"
+        src_data_dir = DEMONSTRATORS_ROOT / _sanitize_dem_name(req.clone_from) / "data"
         if src_data_dir.exists():
             for json_file in src_data_dir.glob("*.json"):
                 shutil.copy2(json_file, target_data_dir / json_file.name)
-            src_mat_dir = src_data_dir / "matrices"
-            if src_mat_dir.exists():
-                for mtx_file in src_mat_dir.glob("*.mtx"):
-                    shutil.copy2(mtx_file, target_data_dir / "matrices" / mtx_file.name)
 
-    if not (target_data_dir / "simulation_config.json").exists():
-        write_json(
-            target_data_dir / "simulation_config.json",
-            {
-                "parameters_file_path": "simulation_parameters.json",
-                "input_matrices": {
-                    "matrix_k_file_path": f"K_{dem_id}.mtx",
-                    "matrix_m_file_path": f"M_{dem_id}.mtx",
-                },
-                "save_output": sorted(AVAILABLE_SAVE_OUTPUTS),
-            },
-        )
+    config_path = target_data_dir / "simulation_config.json"
+    config = json.loads(config_path.read_text(encoding="utf-8")) if config_path.exists() else {
+        "parameters_file_path": "simulation_parameters.json",
+        "save_output": sorted(AVAILABLE_SAVE_OUTPUTS),
+    }
+    matrix_id = req.matrix or config.get("input_matrix")
+    if not matrix_id:
+        ids = list_matrix_ids()
+        # Empty library: keep a placeholder until a matrix is uploaded/generated in Single Run.
+        matrix_id = ids[0] if ids else "none"
+    config["input_matrix"] = matrix_id
+    write_json(config_path, config)
 
     if not (target_data_dir / "simulation_parameters.json").exists():
         write_json(
             target_data_dir / "simulation_parameters.json",
             {
-                "general_parameters": {"dof_per_node": 3, "seed": 42},
+                "general_parameters": {"dof_per_node": 1, "seed": 42},
                 "coarsening_parameters": {
                     "coarsen_inferior_limit": 100,
                     "coarsen_superior_limit": 175,
@@ -269,7 +267,7 @@ def create_demonstrator(req: CreateDemonstratorRequest) -> dict[str, Any]:
 def update_simulation_config(dem_id: str, config_payload: dict[str, Any]) -> dict[str, Any]:
     dem_dir = DEMONSTRATORS_ROOT / _sanitize_dem_name(dem_id)
     if not dem_dir.exists():
-        raise HTTPException(status_code=404, detail=f"Demonstrator {dem_id!r} not found")
+        raise HTTPException(status_code=404, detail=f"Simulation {dem_id!r} not found")
     data_dir = dem_dir / "data"
     try:
         normalized = validate_and_normalize_simulation_config(config_payload)
@@ -284,7 +282,7 @@ def update_simulation_config(dem_id: str, config_payload: dict[str, Any]) -> dic
 def update_simulation_parameters(dem_id: str, params_payload: dict[str, Any]) -> dict[str, Any]:
     dem_dir = DEMONSTRATORS_ROOT / _sanitize_dem_name(dem_id)
     if not dem_dir.exists():
-        raise HTTPException(status_code=404, detail=f"Demonstrator {dem_id!r} not found")
+        raise HTTPException(status_code=404, detail=f"Simulation {dem_id!r} not found")
     data_dir = dem_dir / "data"
     try:
         raw_config = json.loads((data_dir / "simulation_config.json").read_text(encoding="utf-8"))
@@ -338,7 +336,7 @@ def get_parameter_preset(dem_id: str, preset_file: str) -> dict[str, Any]:
 def save_parameter_preset(dem_id: str, req: SavePresetRequest) -> dict[str, Any]:
     dem_dir = DEMONSTRATORS_ROOT / _sanitize_dem_name(dem_id)
     if not dem_dir.exists():
-        raise HTTPException(status_code=404, detail=f"Demonstrator {dem_id!r} not found")
+        raise HTTPException(status_code=404, detail=f"Simulation {dem_id!r} not found")
     data_dir = dem_dir / "data"
 
     fname = req.filename.strip()
@@ -382,50 +380,6 @@ def validate_parameters_endpoint(params_payload: dict[str, Any]) -> dict[str, An
         }
 
 
-@router.post("/{dem_id}/matrices/generate-demo")
-def generate_demo_matrices_endpoint(dem_id: str, req: GenerateDemoMatricesRequest) -> dict[str, Any]:
-    dem_dir = DEMONSTRATORS_ROOT / _sanitize_dem_name(dem_id)
-    if not dem_dir.exists():
-        raise HTTPException(status_code=404, detail=f"Demonstrator {dem_id!r} not found")
-    data_dir = dem_dir / "data"
-    try:
-        raw_config = json.loads((data_dir / "simulation_config.json").read_text(encoding="utf-8"))
-        sim_config = validate_and_normalize_simulation_config(raw_config)
-        generate_demo_fem_matrices(
-            data_dir,
-            sim_config,
-            nx_nodes=req.nx_nodes,
-            ny_nodes=req.ny_nodes,
-            nz_nodes=req.nz_nodes,
-            dof_per_node=req.dof_per_node,
-            seed=req.seed,
-        )
-        return _inspect_demonstrator(dem_dir)
-    except Exception as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-
-@router.post("/{dem_id}/matrices/upload")
-async def upload_matrix_file(dem_id: str, file: UploadFile = File(...)) -> dict[str, Any]:
-    dem_dir = DEMONSTRATORS_ROOT / _sanitize_dem_name(dem_id)
-    if not dem_dir.exists():
-        raise HTTPException(status_code=404, detail=f"Demonstrator {dem_id!r} not found")
-
-    if not file.filename or not file.filename.lower().endswith(".mtx"):
-        raise HTTPException(status_code=400, detail="Only Matrix Market (.mtx) files are supported")
-
-    safe_name = re.sub(r"[^a-zA-Z0-9_.-]", "_", Path(file.filename).name)
-    matrices_dir = dem_dir / "data" / "matrices"
-    matrices_dir.mkdir(parents=True, exist_ok=True)
-    dest_path = matrices_dir / safe_name
-
-    with dest_path.open("wb") as out_fh:
-        while chunk := await file.read(1024 * 1024):
-            out_fh.write(chunk)
-
-    return _inspect_demonstrator(dem_dir)
-
-
 class RenameDemonstratorRequest(BaseModel):
     new_name: str
 
@@ -438,9 +392,9 @@ def rename_demonstrator(dem_id: str, req: RenameDemonstratorRequest) -> dict[str
     dst_dir = DEMONSTRATORS_ROOT / dst_id
 
     if not src_dir.exists():
-        raise HTTPException(status_code=404, detail=f"Demonstrator {src_id!r} not found")
+        raise HTTPException(status_code=404, detail=f"Simulation {src_id!r} not found")
     if dst_dir.exists():
-        raise HTTPException(status_code=409, detail=f"Demonstrator {dst_id!r} already exists")
+        raise HTTPException(status_code=409, detail=f"Simulation {dst_id!r} already exists")
 
     src_dir.rename(dst_dir)
     return _inspect_demonstrator(dst_dir)
@@ -451,7 +405,7 @@ def delete_demonstrator(dem_id: str) -> dict[str, Any]:
     target_id = _sanitize_dem_name(dem_id)
     target_dir = DEMONSTRATORS_ROOT / target_id
     if not target_dir.exists():
-        raise HTTPException(status_code=404, detail=f"Demonstrator {target_id!r} not found")
+        raise HTTPException(status_code=404, detail=f"Simulation {target_id!r} not found")
 
     existing_dirs = [
         d for d in DEMONSTRATORS_ROOT.iterdir()
@@ -460,18 +414,19 @@ def delete_demonstrator(dem_id: str) -> dict[str, Any]:
     if len(existing_dirs) <= 1:
         raise HTTPException(
             status_code=400,
-            detail="Cannot delete the last remaining demonstrator in the workspace.",
+            detail="Cannot delete the last remaining simulation.",
         )
 
     shutil.rmtree(target_dir)
-    return {"deleted": target_id}
+    remaining = sorted(d.name for d in existing_dirs if d.name != target_id)
+    return {"deleted": target_id, "remaining_demonstrators": remaining}
 
 
 @router.delete("/{dem_id}/presets/{preset_file}")
 def delete_parameter_preset(dem_id: str, preset_file: str) -> dict[str, Any]:
     dem_dir = DEMONSTRATORS_ROOT / _sanitize_dem_name(dem_id)
     if not dem_dir.exists():
-        raise HTTPException(status_code=404, detail=f"Demonstrator {dem_id!r} not found")
+        raise HTTPException(status_code=404, detail=f"Simulation {dem_id!r} not found")
     data_dir = dem_dir / "data"
 
     preset_path = resolve_parameters_file_path(data_dir, preset_file)
@@ -498,29 +453,26 @@ def delete_parameter_preset(dem_id: str, preset_file: str) -> dict[str, Any]:
 def preview_coarsening_trajectory(dem_id: str, params_payload: dict[str, Any]) -> dict[str, Any]:
     dem_dir = DEMONSTRATORS_ROOT / _sanitize_dem_name(dem_id)
     if not dem_dir.exists():
-        raise HTTPException(status_code=404, detail=f"Demonstrator {dem_id!r} not found")
+        raise HTTPException(status_code=404, detail=f"Simulation {dem_id!r} not found")
     data_dir = dem_dir / "data"
 
     t0 = time.perf_counter()
     try:
         raw_config = json.loads((data_dir / "simulation_config.json").read_text(encoding="utf-8"))
         sim_config = validate_and_normalize_simulation_config(raw_config)
+        # Preview the matrix being edited (may be unsaved) when the client sends it.
+        preview_matrix = params_payload.pop("_matrix", None) if isinstance(params_payload, dict) else None
         normalized = validate_and_normalize_simulation_parameters(params_payload)
 
-        k_path = resolve_matrix_input_path(
-            data_dir / "matrices",
-            sim_config["input_matrices"],
-            key="matrix_k_file_path",
-            label="K",
-        )
-        K = load_mtx(k_path, label="K")
+        matrix_path = resolve_simulation_matrix({"input_matrix": preview_matrix} if preview_matrix else sim_config)
+        A = load_mtx(matrix_path, label="matrix")
         dof_per_node = int(normalized["general_parameters"]["dof_per_node"])
-        if K.shape[0] % dof_per_node != 0:
+        if A.shape[0] % dof_per_node != 0:
             raise ValueError(
-                f"Global matrix size N={K.shape[0]} is not divisible by dof_per_node={dof_per_node}"
+                f"Matrix size N={A.shape[0]} is not divisible by dof_per_node={dof_per_node}"
             )
 
-        G_curr = matrix_to_graph(K, dof_per_node=dof_per_node)
+        G_curr = matrix_to_graph(A, dof_per_node=dof_per_node)
         for u in G_curr.nodes():
             if "vweight" not in G_curr.nodes[u]:
                 G_curr.nodes[u]["vweight"] = 1.0

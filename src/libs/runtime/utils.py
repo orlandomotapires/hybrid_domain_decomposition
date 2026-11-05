@@ -12,8 +12,7 @@ from typing import Any
 
 AVAILABLE_SAVE_OUTPUTS = {
     "coarsened_graph",
-    "matrix_k_permuted",
-    "matrix_m_permuted",
+    "matrix_permuted",
     "permutation",
     "run_metrics",
     "run_simulation_parameters",
@@ -52,7 +51,7 @@ def validate_and_normalize_simulation_config(config: dict) -> dict:
     out = dict(config)
     allowed_keys = {
         "parameters_file_path",
-        "input_matrices",
+        "input_matrix",
         "save_output",
     }
     unsupported_keys = sorted(set(out.keys()) - allowed_keys)
@@ -68,13 +67,11 @@ def validate_and_normalize_simulation_config(config: dict) -> dict:
     if Path(parameters_file_path).suffix.lower() != ".json":
         raise ValueError("simulation_config.parameters_file_path must reference a JSON file")
 
-    input_matrices = out.get("input_matrices")
-    if not isinstance(input_matrices, dict):
-        raise ValueError("simulation_config.input_matrices must be a JSON object")
-    for key in ("matrix_k_file_path", "matrix_m_file_path"):
-        value = input_matrices.get(key)
-        if not isinstance(value, str) or not value.strip():
-            raise ValueError(f"simulation_config.input_matrices.{key} must be a non-empty string")
+    # The matrix to partition and permute: a folder id in the shared library (matrices/<id>/).
+    input_matrix = out.get("input_matrix")
+    if not isinstance(input_matrix, str) or not input_matrix.strip():
+        raise ValueError("simulation_config.input_matrix must name a matrix from the library (matrices/<id>/)")
+    input_matrix = input_matrix.strip()
 
     save_output = out.get("save_output", [])
     if save_output is None:
@@ -90,11 +87,7 @@ def validate_and_normalize_simulation_config(config: dict) -> dict:
     out.update(
         {
             "parameters_file_path": parameters_file_path,
-            "input_matrices": {
-                **dict(input_matrices),
-                "matrix_k_file_path": str(input_matrices["matrix_k_file_path"]).strip(),
-                "matrix_m_file_path": str(input_matrices["matrix_m_file_path"]).strip(),
-            },
+            "input_matrix": input_matrix,
             "save_output": list(save_output),
         }
     )
@@ -121,29 +114,11 @@ def load_mtx(path, label=None):
     return _as_csr_matrix(mmread(matrix_path))
 
 
-def resolve_matrix_input_path(
-    matrices_dir: Path,
-    input_matrices: dict[str, Any],
-    *,
-    key: str,
-    label: str,
-) -> Path:
-    raw_value = input_matrices.get(key)
-    if not isinstance(raw_value, str) or not raw_value.strip():
-        raise ValueError(
-            f"simulation_config.input_matrices.{key} must be set to a Matrix Market .mtx file"
-        )
+def resolve_simulation_matrix(simulation_config: dict[str, Any]) -> Path:
+    """Path of the .mtx file a simulation partitions (its library matrix)."""
+    from libs.runtime.matrix_library import resolve_matrix
 
-    matrix_path = matrices_dir / raw_value
-    if matrix_path.suffix.lower() != ".mtx":
-        raise ValueError(
-            f"simulation_config.input_matrices.{key} for matrix {label} must reference a Matrix Market .mtx file; "
-            f"got {raw_value!r}"
-        )
-    if not matrix_path.exists():
-        raise FileNotFoundError(f"Configured matrix file for {label} not found: {matrix_path}")
-
-    return matrix_path
+    return resolve_matrix(str(simulation_config["input_matrix"]))
 
 def write_json(path: Path, obj: Any) -> None:
 	path.parent.mkdir(parents=True, exist_ok=True)

@@ -28,7 +28,7 @@ PIPELINE_STAGES = [
 ]
 
 _STAGE_PATTERNS: list[tuple[str, str]] = [
-    (r"Converting matrices to graphs|Graph G_K with", "initialization"),
+    (r"Converting matrix to graph|Graph G with", "initialization"),
     (r"Coarsening Heavy Edge Matching|Coarse graph has", "coarsening"),
     (
         r"Multilevel Partitioning Scheme using METIS|Running simulated quantum annealing|"
@@ -36,17 +36,28 @@ _STAGE_PATTERNS: list[tuple[str, str]] = [
         "partitioning",
     ),
     (r"Uncoarsening Kernighan-Lin", "uncoarsening"),
-    (r"Permuting matrices|Permutation check", "permutation"),
+    (r"Permuting matrix|Permutation check", "permutation"),
 ]
 
-_INITIAL_GRAPH_RE = re.compile(r"Graph G_K with (\d+) nodes and (\d+) edges")
+_INITIAL_GRAPH_RE = re.compile(r"Graph G with (\d+) nodes and (\d+) edges")
 _COARSE_GRAPH_RE = re.compile(r"Coarse graph has (\d+) nodes and (\d+) edges with (\d+) levels")
 _PARTS_RE = re.compile(r"Partitioning on coarse graph produced (\d+) parts")
 _RESULTS_SAVED_RE = re.compile(r"Results saved in (.+)$")
+_BATCH_PREPARED_RE = re.compile(r"^Prepared (\d+) batch cases")
+_BATCH_CASE_RE = re.compile(r"^\[(\d+)/(\d+)\] Running (\S+)")
+_BATCH_CASE_DONE_RE = re.compile(r"^\s+(Result|FAILED):")
 _ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-9;]*m")
 _BRACKET_LOG_RE = re.compile(
     r"^\[(?:(?P<date_prefix>.*?\b(?P<hms>\d{2}:\d{2}:\d{2})\b[^\]]*?)\s+)?(?P<level>INFO|VERBOSE|WARNING|ERROR)\]\s*(?P<msg>.*)$"
 )
+
+
+# "FAILED:", "failed", "ValueError:", "Traceback", "error:" — but not "0 failed" / "no failed".
+_ERROR_TEXT_RE = re.compile(
+    r"(?i)(?<!\b0 )(?<!\bno )\bfail(?:ed|ure|s)?\b|^\s*error\b|^\s*\w*(?:Error|Exception)\s*:|traceback \(most recent call last\)"
+)
+# "warning:", "UserWarning:", "PennyLaneDeprecationWarning:", and the "warnings.warn(" echo line.
+_WARNING_TEXT_RE = re.compile(r"(?i)^\s*warning\b|\w*Warning:|^\s*warnings\.warn\(")
 
 
 def _parse_log_line(raw_line: str, default_hms: str | None = None) -> dict[str, str]:
@@ -61,21 +72,56 @@ def _parse_log_line(raw_line: str, default_hms: str | None = None) -> dict[str, 
             hms = m.group("hms")
         level = m.group("level").upper()
         message = m.group("msg").strip()
-    else:
-        lower = clean.lower()
-        if lower.startswith("error:") or "traceback (most recent call last)" in lower:
-            level = "ERROR"
-        elif lower.startswith("warning:") or "userwarning:" in lower:
-            level = "WARNING"
 
-    if level in ("INFO", "VERBOSE") and message.lower().startswith("warning:"):
-        level = "WARNING"
+    # Escalate by content: a line that reports a failure is an ERROR even when the
+    # emitting logger tagged it INFO (e.g. batch "  FAILED: ValueError: ...").
+    if level in ("INFO", "VERBOSE"):
+        if _ERROR_TEXT_RE.search(message):
+            level = "ERROR"
+        elif _WARNING_TEXT_RE.search(message):
+            level = "WARNING"
 
     return {
         "timestamp": hms,
         "level": level,
         "message": message,
     }
+
+
+def _run_meta_from_params(params: dict[str, Any] | None) -> dict[str, Any]:
+    """Extract display metadata (strategy, simulated flag, k_target) from simulation parameters."""
+    meta: dict[str, Any] = {"partitioning_strategy": None, "simulated": None, "k_target": None}
+    if not isinstance(params, dict):
+        return meta
+    try:
+        pp = params.get("partitioning_parameters") or {}
+        strat = pp.get("partitioning_strategy") or None
+        meta["partitioning_strategy"] = strat
+        if strat and strat != "metis_partitioning":
+            sim = (pp.get("strategies") or {}).get(strat, {}).get("simulated")
+            meta["simulated"] = bool(sim) if sim is not None else None
+        k_t = (pp.get("common") or {}).get("k_target")
+        if k_t is not None:
+            meta["k_target"] = int(k_t)
+    except Exception:
+        pass
+    return meta
+
+
+def _load_params_file(demonstrator_dir: str, parameters_file: str | None) -> dict[str, Any] | None:
+    """Best-effort load of the parameters file a live run will use (when no in-memory override)."""
+    try:
+        data_dir = ROOT_DIR / demonstrator_dir / "data"
+        name = parameters_file
+        if not name:
+            cfg = json.loads((data_dir / "simulation_config.json").read_text(encoding="utf-8"))
+            name = cfg.get("parameters_file_path") or "simulation_parameters.json"
+        path = Path(name)
+        if not path.is_absolute():
+            path = data_dir / path
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
 
 
 @dataclass
@@ -101,6 +147,10 @@ class SimulationJob:
     error_message: str | None = None
     logs: list[dict[str, Any]] = field(default_factory=list)
     telemetry: dict[str, Any] = field(default_factory=dict)
+    demonstrator_id: str | None = None
+    partitioning_strategy: str | None = None
+    simulated: bool | None = None
+    k_target: int | None = None
     _process: subprocess.Popen | None = field(default=None, repr=False)
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
@@ -123,6 +173,10 @@ class SimulationJob:
                 "job_type": self.job_type,
                 "title": self.title,
                 "demonstrator_dir": self.demonstrator_dir,
+                "demonstrator_id": self.demonstrator_id,
+                "partitioning_strategy": self.partitioning_strategy,
+                "simulated": self.simulated,
+                "k_target": self.k_target,
                 "status": self.status,
                 "current_stage": self.current_stage,
                 "stage_progress": self.stage_progress,
@@ -150,7 +204,7 @@ class JobManager:
         self._load_historical_runs()
 
     def _load_historical_runs(self) -> None:
-        dem_root = ROOT_DIR / "matrices"
+        dem_root = ROOT_DIR / "simulations"
         if not dem_root.exists():
             return
         for dem_dir in sorted(dem_root.iterdir()):
@@ -161,14 +215,16 @@ class JobManager:
                 if not run_dir.is_dir() or not run_dir.name.startswith("run_"):
                     continue
                 job_id = f"hist_{dem_dir.name}_{run_dir.name}"
-                rel_res = f"matrices/{dem_dir.name}/results/{run_dir.name}"
+                rel_res = f"simulations/{dem_dir.name}/results/{run_dir.name}"
                 strategy_str = ""
                 telemetry: dict[str, Any] = {}
+                run_meta = _run_meta_from_params(None)
 
                 params_file = run_dir / "run_simulation_parameters.json"
                 if params_file.exists():
                     try:
                         p = json.loads(params_file.read_text(encoding="utf-8"))
+                        run_meta = _run_meta_from_params(p)
                         strat = p.get("partitioning_parameters", {}).get("partitioning_strategy", "")
                         if strat:
                             strategy_str = f" ({strat})"
@@ -182,7 +238,7 @@ class JobManager:
                 if metrics_file.exists():
                     try:
                         m = json.loads(metrics_file.read_text(encoding="utf-8"))
-                        k_m = m.get("K", {})
+                        k_m = m.get("matrix", {})
                         fg = k_m.get("fine_graph_partition", {})
                         cg = k_m.get("coarse_graph_partition", {})
                         if fg.get("num_nodes") is not None:
@@ -212,11 +268,19 @@ class JobManager:
                             parsed_logs.append(entry)
                             if entry["level"] == "ERROR":
                                 has_error_log = True
-                            m_coarse = _COARSE_GRAPH_RE.search(entry["message"])
+                            msg = entry["message"]
+                            m_init = _INITIAL_GRAPH_RE.search(msg)
+                            if m_init:
+                                telemetry["initial_nodes"] = int(m_init.group(1))
+                                telemetry["initial_edges"] = int(m_init.group(2))
+                            m_coarse = _COARSE_GRAPH_RE.search(msg)
                             if m_coarse:
                                 telemetry["coarse_nodes"] = int(m_coarse.group(1))
                                 telemetry["coarse_edges"] = int(m_coarse.group(2))
                                 telemetry["coarsening_levels"] = int(m_coarse.group(3))
+                            m_parts = _PARTS_RE.search(msg)
+                            if m_parts:
+                                telemetry["coarse_parts"] = int(m_parts.group(1))
                     except Exception:
                         pass
 
@@ -234,7 +298,7 @@ class JobManager:
                     job_id=job_id,
                     job_type="single",
                     title=f"{dem_dir.name}{strategy_str}",
-                    demonstrator_dir=f"matrices/{dem_dir.name}",
+                    demonstrator_dir=f"simulations/{dem_dir.name}",
                     status=status_val,
                     current_stage="permutation" if status_val == "completed" else "initialization",
                     stage_progress=100 if status_val == "completed" else 15,
@@ -246,6 +310,8 @@ class JobManager:
                     exit_code=0 if status_val == "completed" else 1,
                     telemetry=telemetry,
                     logs=parsed_logs,
+                    demonstrator_id=dem_dir.name,
+                    **run_meta,
                 )
                 self._jobs[job_id] = job
 
@@ -274,7 +340,7 @@ class JobManager:
         if delete_files and job.result_dir:
             target = (ROOT_DIR / job.result_dir).resolve()
             try:
-                target.relative_to((ROOT_DIR / "matrices").resolve())
+                target.relative_to((ROOT_DIR / "simulations").resolve())
                 if target.exists() and target.is_dir() and target.name.startswith("run_"):
                     shutil.rmtree(target)
             except Exception:
@@ -294,12 +360,20 @@ class JobManager:
         if parameters_override and "partitioning_parameters" in parameters_override:
             strategy = f" ({parameters_override['partitioning_parameters'].get('partitioning_strategy', '')})"
 
+        run_meta = _run_meta_from_params(
+            parameters_override
+            if parameters_override is not None
+            else _load_params_file(demonstrator_dir, parameters_file_override)
+        )
+
         now_t = time.time()
         job = SimulationJob(
             job_id=job_id,
             job_type="single",
             title=f"Simulation: {dem_name}{strategy}",
             demonstrator_dir=demonstrator_dir,
+            demonstrator_id=dem_name,
+            **run_meta,
             parameters_override=parameters_override,
             started_epoch=now_t,
             stage_started_epoch=now_t,
@@ -455,6 +529,28 @@ class JobManager:
                 )
         return job.to_dict(include_logs=True)
 
+    @staticmethod
+    def _update_batch_progress(job: SimulationJob, message: str) -> None:
+        """Track batch case progress (caller holds job._lock)."""
+        t = job.telemetry
+        m_prep = _BATCH_PREPARED_RE.search(message)
+        if m_prep:
+            t["batch_total"] = int(m_prep.group(1))
+            t.setdefault("batch_done", 0)
+            t.setdefault("batch_failed", 0)
+            return
+        m_case = _BATCH_CASE_RE.search(message)
+        if m_case:
+            t["batch_index"] = int(m_case.group(1))
+            t["batch_total"] = int(m_case.group(2))
+            t["batch_case"] = m_case.group(3)
+            return
+        m_done = _BATCH_CASE_DONE_RE.search(message)
+        if m_done:
+            t["batch_done"] = int(t.get("batch_done", 0)) + 1
+            if m_done.group(1) == "FAILED":
+                t["batch_failed"] = int(t.get("batch_failed", 0)) + 1
+
     def _consume_process_output(self, job: SimulationJob) -> None:
         proc = job._process
         if proc is None or proc.stdout is None:
@@ -504,6 +600,9 @@ class JobManager:
                 m_parts = _PARTS_RE.search(message)
                 if m_parts:
                     job.telemetry["coarse_parts"] = int(m_parts.group(1))
+
+                if job.job_type == "batch":
+                    self._update_batch_progress(job, message)
 
                 m_res = _RESULTS_SAVED_RE.search(message)
                 if m_res:

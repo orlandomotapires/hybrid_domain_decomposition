@@ -6,8 +6,9 @@ __pycache__/
 *.pyd
 
 batch/runs/
-matrices/*/results/
-matrices/*/data/matrices/
+simulations/*/results/
+simulations/*/data/matrices/
+matrices/**/*.mtx
 threash_can/staged_deletions/
 results/
 

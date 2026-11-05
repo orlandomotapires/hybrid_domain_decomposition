@@ -66,24 +66,25 @@ def _node_to_dof_permutation(node_perm: np.ndarray, dof_per_node: int) -> np.nda
             dof_perm[base_new + r] = base_old + r
     return dof_perm
 
-def permute_matrices(
-    matrix_k,
-    matrix_m,
+def permute_matrix(
+    matrix,
     partition,
     dof_per_node: int = 1,
 ):
-    
-    if matrix_k.shape != matrix_m.shape:
-        raise ValueError(f"K and M must have the same shape. Got K={matrix_k.shape}, M={matrix_m.shape}")
+    """Symmetrically permute ``matrix`` (P A Pᵀ) so rows/columns of each partition are contiguous.
+
+    ``dof_per_node`` rows/columns form one graph node (block size); node order comes from ``partition``.
+    """
+    if matrix.shape[0] != matrix.shape[1]:
+        raise ValueError(f"Matrix must be square to be symmetrically permuted. Got shape {matrix.shape}")
 
     if dof_per_node <= 0:
         raise ValueError("dof_per_node must be a positive integer")
 
-    n_total = matrix_k.shape[0]
+    n_total = matrix.shape[0]
     if n_total % dof_per_node != 0:
         raise ValueError(
-            f"Matrix size {n_total} is not divisible by dof_per_node={dof_per_node}. "
-            "Ensure matrices are assembled as (n_nodes*dof)x(n_nodes*dof)."
+            f"Matrix size {n_total} is not divisible by the block size dof_per_node={dof_per_node}."
         )
 
     n_nodes = n_total // dof_per_node
@@ -91,17 +92,13 @@ def permute_matrices(
     # Build node-level permutation (new_node -> old_node)
     node_perm = _create_permutation_from_partition(partition, n_nodes)
 
-    # Expand to DOF-level permutation if needed
+    # Expand to row-level permutation if blocks have more than one row
     if dof_per_node == 1:
         permutation = node_perm
     else:
         permutation = _node_to_dof_permutation(node_perm, dof_per_node)
-    
-    matrix_k_permuted = _permute_sparse_matrix(matrix_k, permutation)
-    matrix_m_permuted = _permute_sparse_matrix(matrix_m, permutation)
-    
+
     return {
         'permutation': permutation,
-        'matrix_k_permuted': matrix_k_permuted,
-        'matrix_m_permuted': matrix_m_permuted
+        'matrix_permuted': _permute_sparse_matrix(matrix, permutation),
     }

@@ -21,7 +21,7 @@ class MatrixMetricsTest(unittest.TestCase):
         permutation = np.arange(matrix.shape[0], dtype=int)
 
         metrics = collect_metrics(
-            matrix_name="K",
+            matrix_name="A",
             method_name="identity",
             original=matrix,
             permuted=matrix,

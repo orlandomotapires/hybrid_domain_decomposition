@@ -25,19 +25,18 @@ BATCH_CONFIGURATION_PATH = BATCH_DIR / "batch_configuration.json"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
+from libs.runtime.matrix_library import resolve_matrix
 from libs.runtime.runtime import run_simulation
 from libs.runtime.utils import (
-    resolve_matrix_input_path,
-    resolve_parameters_file_path,
-    validate_and_normalize_simulation_config,
+    AVAILABLE_SAVE_OUTPUTS,
     validate_and_normalize_simulation_parameters,
     write_json,
 )
 
 @dataclass(frozen=True)
 class Geometry:
+    """A matrix from the shared library (matrices/<key>/). Kept as "geometry" in manifests."""
     key: str
-    demonstrator_dir: str
 
 
 @dataclass(frozen=True)
@@ -75,6 +74,16 @@ def _load_json(path: Path) -> dict[str, Any]:
         return json.load(handle)
 
 
+def _load_matrices(configuration: dict[str, Any]) -> tuple[Geometry, ...]:
+    """Library matrices to run (``"matrices": [{"key": "<matrix_id>"}]``), de-duplicated in order."""
+    seen: list[str] = []
+    for entry in configuration.get("matrices", []):
+        key = str(entry["key"])
+        if key not in seen:
+            seen.append(key)
+    return tuple(Geometry(key=key) for key in seen)
+
+
 def _load_batch_configuration() -> dict[str, Any]:
     configuration = _load_json(BATCH_CONFIGURATION_PATH)
 
@@ -82,13 +91,9 @@ def _load_batch_configuration() -> dict[str, Any]:
         "async_remote_case_keys": tuple(str(key) for key in configuration.get("async_remote_case_keys", [])),
         "summary_percent_bands": tuple(float(value) for value in configuration.get("summary_percent_bands", [])),
         "common_defaults": _clone_json_like(configuration.get("common_defaults", {})),
-        "geometries": tuple(
-            Geometry(
-                key=str(entry["key"]),
-                demonstrator_dir=str(entry["demonstrator_dir"]),
-            )
-            for entry in configuration.get("geometries", [])
-        ),
+        "base_parameters": _clone_json_like(configuration.get("base_parameters")),
+        "save_output": list(configuration.get("save_output") or sorted(AVAILABLE_SAVE_OUTPUTS)),
+        "geometries": _load_matrices(configuration),
         "coarsening_presets": tuple(
             CoarseningPreset(
                 key=str(entry["key"]),
@@ -113,6 +118,8 @@ ASYNC_REMOTE_CASE_KEYS = frozenset(BATCH_CONFIGURATION["async_remote_case_keys"]
 SUMMARY_PERCENT_BANDS: tuple[float, ...] = BATCH_CONFIGURATION["summary_percent_bands"]
 COMMON_DEFAULTS: dict[str, Any] = BATCH_CONFIGURATION["common_defaults"]
 GEOMETRIES: tuple[Geometry, ...] = BATCH_CONFIGURATION["geometries"]
+BASE_PARAMETERS: dict[str, Any] | None = BATCH_CONFIGURATION["base_parameters"]
+SAVE_OUTPUT: list[str] = BATCH_CONFIGURATION["save_output"]
 DEFAULT_COARSENING_PRESETS: tuple[CoarseningPreset, ...] = BATCH_CONFIGURATION["coarsening_presets"]
 DEFAULT_ALGORITHM_PRESETS: tuple[AlgorithmPreset, ...] = BATCH_CONFIGURATION["algorithm_presets"]
 
@@ -122,6 +129,9 @@ def _apply_common_defaults(parameters: dict[str, Any], coarsening: CoarseningPre
     updated["general_parameters"].update(_clone_json_like(COMMON_DEFAULTS.get("general_parameters", {})))
     updated["coarsening_parameters"].update(_clone_json_like(COMMON_DEFAULTS.get("coarsening_parameters", {})))
     updated["partitioning_parameters"]["common"].update(_clone_json_like(COMMON_DEFAULTS.get("partitioning_common", {})))
+    updated.setdefault("uncoarsening_parameters", {}).update(
+        _clone_json_like(COMMON_DEFAULTS.get("uncoarsening_parameters", {}))
+    )
     updated["coarsening_parameters"].update(
         {
             "coarsen_inferior_limit": int(coarsening.coarsen_inferior_limit),
@@ -131,22 +141,15 @@ def _apply_common_defaults(parameters: dict[str, Any], coarsening: CoarseningPre
 
     return updated
 
-def _simulation_paths(geometry: Geometry) -> tuple[Path, Path, Path]:
-    demonstrator_dir = ROOT_DIR / geometry.demonstrator_dir
-    data_dir = demonstrator_dir / "data"
-    config_path = data_dir / "simulation_config.json"
-    return demonstrator_dir, data_dir, config_path
+def _load_validated_base_inputs(geometry: Geometry) -> dict[str, Any]:
+    """Base simulation parameters for every case (batch "base_parameters"), after checking the matrix exists."""
+    resolve_matrix(geometry.key)
+    if BASE_PARAMETERS is None:
+        raise ValueError(
+            "batch_configuration.json has no base_parameters; add a full simulation-parameters block under base_parameters"
+        )
+    return validate_and_normalize_simulation_parameters(_clone_json_like(BASE_PARAMETERS))
 
-def _load_validated_base_inputs(geometry: Geometry) -> tuple[dict[str, Any], dict[str, Any], Path]:
-    demonstrator_dir, data_dir, config_path = _simulation_paths(geometry)
-    simulation_config = validate_and_normalize_simulation_config(_load_json(config_path))
-    parameters_path = resolve_parameters_file_path(data_dir, simulation_config["parameters_file_path"])
-    simulation_parameters = validate_and_normalize_simulation_parameters(_load_json(parameters_path))
-
-    matrices_dir = data_dir / "matrices"
-    resolve_matrix_input_path(matrices_dir, simulation_config["input_matrices"], key="matrix_k_file_path", label="K")
-    resolve_matrix_input_path(matrices_dir, simulation_config["input_matrices"], key="matrix_m_file_path", label="M")
-    return simulation_config, simulation_parameters, parameters_path
 
 def _apply_algorithm_preset(parameters: dict[str, Any], case: BatchCase) -> dict[str, Any]:
     updated = _clone_json_like(parameters)
@@ -233,17 +236,37 @@ def _launch_nohup(case_count: int) -> int:
     return 0
 
 
-def _run_one_case(case: BatchCase, simulation_parameters: dict[str, Any]) -> Path:
-    return run_simulation(case.geometry.demonstrator_dir, simulation_parameters_override=simulation_parameters)
+def _case_simulation_config(case: BatchCase) -> dict[str, Any]:
+    return {
+        "parameters_file_path": "simulation_parameters.json",
+        "input_matrix": case.geometry.key,
+        "save_output": list(SAVE_OUTPUT),
+    }
 
 
-def _run_one_case_worker(demonstrator_dir: str, simulation_parameters: dict[str, Any], output_json: Path, log_path: Path) -> None:
+def _case_run_kwargs(case: BatchCase, batch_dir: Path) -> dict[str, Any]:
+    """Arguments for run_simulation: in-memory config, results under batch/runs/<batch>/cases/<case_key>/."""
+    return {
+        "simulation_config_override": _case_simulation_config(case),
+        "results_dir_override": str((batch_dir / "cases" / case.case_key).relative_to(ROOT_DIR)),
+        "run_label": case.case_key,
+    }
+
+def _run_one_case(case: BatchCase, simulation_parameters: dict[str, Any], batch_dir: Path) -> Path:
+    return run_simulation(
+        None,
+        simulation_parameters_override=simulation_parameters,
+        **_case_run_kwargs(case, batch_dir),
+    )
+
+
+def _run_one_case_worker(run_kwargs: dict[str, Any], simulation_parameters: dict[str, Any], output_json: Path, log_path: Path) -> None:
     output_json.parent.mkdir(parents=True, exist_ok=True)
     log_path.parent.mkdir(parents=True, exist_ok=True)
     with log_path.open("a", encoding="utf-8", buffering=1) as handle:
         with redirect_stdout(handle), redirect_stderr(handle):
             try:
-                result_dir = run_simulation(demonstrator_dir, simulation_parameters_override=simulation_parameters)
+                result_dir = run_simulation(None, simulation_parameters_override=simulation_parameters, **run_kwargs)
                 write_json(
                     output_json,
                     {
@@ -270,7 +293,7 @@ def _case_to_manifest_entry(case: BatchCase) -> dict[str, Any]:
     return {
         "case_key": case.case_key,
         "geometry": case.geometry.key,
-        "demonstrator_dir": case.geometry.demonstrator_dir,
+        "matrix": case.geometry.key,
         "algorithm": case.algorithm.key,
         "partitioning_strategy": case.algorithm.partitioning_strategy,
         "coarsening_size": case.coarsening.key,
@@ -321,7 +344,7 @@ def _launch_async_case(
 
     process = Process(
         target=_run_one_case_worker,
-        args=(case.geometry.demonstrator_dir, simulation_parameters, async_output_path, async_log_path),
+        args=(_case_run_kwargs(case, batch_dir), simulation_parameters, async_output_path, async_log_path),
         daemon=False,
     )
     process.start()
@@ -417,30 +440,30 @@ def _async_record(
     }
 
 
-def _extract_summary_metrics(run_metrics: dict[str, Any], matrix_name: str) -> dict[str, Any]:
-    metrics = run_metrics.get(matrix_name, {})
+def _extract_summary_metrics(run_metrics: dict[str, Any]) -> dict[str, Any]:
+    metrics = run_metrics.get("matrix", {})
     structural = metrics.get("structural_metrics", {})
     original = structural.get("original", {})
     permuted = structural.get("permuted", {})
     permutation_check = metrics.get("permutation_check", {})
 
     summary_metrics = {
-        f"{matrix_name}_bandwidth_original": original.get("bandwidth"),
-        f"{matrix_name}_bandwidth_permuted": permuted.get("bandwidth"),
-        f"{matrix_name}_avg_bandwidth_original": original.get("avg_bandwidth"),
-        f"{matrix_name}_avg_bandwidth_permuted": permuted.get("avg_bandwidth"),
-        f"{matrix_name}_nnz_original": original.get("nnz"),
-        f"{matrix_name}_nnz_permuted": permuted.get("nnz"),
-        f"{matrix_name}_permutation_mismatches": permutation_check.get("mismatches"),
-        f"{matrix_name}_permutation_max_abs_err": permutation_check.get("max_abs_err"),
+        "bandwidth_original": original.get("bandwidth"),
+        "bandwidth_permuted": permuted.get("bandwidth"),
+        "avg_bandwidth_original": original.get("avg_bandwidth"),
+        "avg_bandwidth_permuted": permuted.get("avg_bandwidth"),
+        "nnz_original": original.get("nnz"),
+        "nnz_permuted": permuted.get("nnz"),
+        "permutation_mismatches": permutation_check.get("mismatches"),
+        "permutation_max_abs_err": permutation_check.get("max_abs_err"),
     }
 
     for percent in SUMMARY_PERCENT_BANDS:
         percent_label = f"{percent:.1f}%" if float(percent).is_integer() else f"{percent}%"
         percent_key = str(percent).replace(".", "_")
         metric_key = f"frac_within_|i-j|<={percent_label}_of_n"
-        summary_metrics[f"{matrix_name}_frac_{percent_key}pct_original"] = original.get(metric_key)
-        summary_metrics[f"{matrix_name}_frac_{percent_key}pct_permuted"] = permuted.get(metric_key)
+        summary_metrics[f"frac_{percent_key}pct_original"] = original.get(metric_key)
+        summary_metrics[f"frac_{percent_key}pct_permuted"] = permuted.get(metric_key)
 
     return summary_metrics
 
@@ -473,8 +496,7 @@ def _build_batch_summary(manifest: dict[str, Any]) -> list[dict[str, Any]]:
             metrics_path = ROOT_DIR / result_dir / "run_metrics.json"
             if metrics_path.exists():
                 run_metrics = _load_json(metrics_path)
-                row.update(_extract_summary_metrics(run_metrics, "K"))
-                row.update(_extract_summary_metrics(run_metrics, "M"))
+                row.update(_extract_summary_metrics(run_metrics))
 
         summary_rows.append(row)
 
@@ -549,8 +571,21 @@ def main(argv: list[str] | None = None) -> int:
         if stop_requested:
             break
 
-        _, base_parameters, _ = _load_validated_base_inputs(case.geometry)
-        simulation_parameters = _build_case_parameters(case, base_parameters)
+        try:
+            base_parameters = _load_validated_base_inputs(case.geometry)
+            simulation_parameters = _build_case_parameters(case, base_parameters)
+        except Exception as exc:
+            entry = _case_to_manifest_entry(case)
+            entry["finished_at"] = datetime.now().isoformat()
+            entry["status"] = "failed"
+            entry["error"] = {"type": type(exc).__name__, "message": str(exc), "traceback": traceback.format_exc()}
+            manifest["cases"].append(entry)
+            _write_manifest(manifest_path, manifest)
+            print(f"[{index:02d}/{len(cases)}] Running {case.case_key}")
+            print(f"  FAILED: {type(exc).__name__}: {exc}")
+            if args.stop_on_error:
+                stop_requested = True
+            continue
         entry = _case_to_manifest_entry(case)
         manifest["cases"].append(entry)
         _write_manifest(manifest_path, manifest)
@@ -581,7 +616,7 @@ def main(argv: list[str] | None = None) -> int:
         _write_manifest(manifest_path, manifest)
 
         try:
-            result_dir = _run_one_case(case, simulation_parameters)
+            result_dir = _run_one_case(case, simulation_parameters, batch_dir)
         except Exception as exc:
             entry["finished_at"] = datetime.now().isoformat()
             entry["status"] = "failed"
@@ -626,8 +661,12 @@ def main(argv: list[str] | None = None) -> int:
     _finalize_batch(batch_dir, manifest_path, manifest)
     print(f"Batch manifest: {manifest_path.relative_to(ROOT_DIR)}")
     print(f"Batch summary: {(batch_dir / 'batch_summary.json').relative_to(ROOT_DIR)}")
-    if any(entry.get("status") == "failed" for entry in manifest.get("cases", [])):
+    case_entries = manifest.get("cases", [])
+    failed_keys = [str(entry.get("case_key")) for entry in case_entries if entry.get("status") == "failed"]
+    if failed_keys:
+        print(f"Batch finished: {len(failed_keys)} of {len(case_entries)} cases FAILED ({', '.join(failed_keys)})")
         return 1
+    print(f"Batch finished: all {len(case_entries)} cases completed")
     return 0
 
 

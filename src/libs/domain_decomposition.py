@@ -1,6 +1,6 @@
 from libs.runtime.log import log
 from libs.runtime.utils import matrix_to_graph
-from libs.permutation import permute_matrices
+from libs.permutation import permute_matrix
 from libs.multilevel_scheme.coarsening.coarsening import coarsen_chain
 from libs.multilevel_scheme.partitioning.partitioning import (
     partition_graph_metis,
@@ -27,17 +27,23 @@ def _set_edge_weight_attr(G, attr_name: str):
     for _, _, data in G.edges(data=True):
         data[attr_name] = data.get('weight', 1.0)
 
-def _set_node_vweight_diag(G, diag: np.ndarray, dof_per_node: int):
+def _set_node_vweight_diag(G, diag: np.ndarray, dof_per_node: int) -> bool:
+    """Node weight = sum of |diagonal| over the node's rows. Falls back to uniform weights
+    (rows per node) when any node's diagonal block is zero, which is common for non-FEM
+    matrices. Returns True when the diagonal was used."""
     d = int(dof_per_node)
-    node_diag = np.add.reduceat(np.asarray(diag).ravel(), np.arange(0, len(diag), d))
+    node_diag = np.add.reduceat(np.abs(np.asarray(diag, dtype=float).ravel()), np.arange(0, len(diag), d))
+    use_diag = bool(node_diag.size) and bool(np.all(node_diag > 0))
     for i in G.nodes():
-        G.nodes[i]['vweight'] = float(node_diag[int(i)])
+        G.nodes[i]['vweight'] = float(node_diag[int(i)]) if use_diag else float(d)
+    return use_diag
 
-def decompose_matrices_m_k(matrix_m, matrix_k, general_parameters, coarsening_parameters, partitioning_parameters, uncoarsening_parameters):
-    """Run the full pipeline: matrix-to-graph, coarsen, partition, uncoarsen, then permute K and M."""
+def decompose_matrix(matrix, general_parameters, coarsening_parameters, partitioning_parameters, uncoarsening_parameters):
+    """Run the full pipeline on one square sparse matrix: matrix-to-graph, coarsen, partition,
+    uncoarsen, then permute it. Returns (matrix_permuted, permutation, artifacts)."""
 
-    if matrix_k.shape != matrix_m.shape:
-        raise ValueError(f"K and M must have the same shape. Got K={matrix_k.shape}, M={matrix_m.shape}")
+    if matrix.shape[0] != matrix.shape[1]:
+        raise ValueError(f"The input matrix must be square. Got shape {matrix.shape}")
 
     # General parameters
     dof_per_node = int(general_parameters.get("dof_per_node"))
@@ -70,35 +76,35 @@ def decompose_matrices_m_k(matrix_m, matrix_k, general_parameters, coarsening_pa
     refine_balance_lambda = float(uncoarsening_parameters.get("refine_balance_lambda"))
     refine_max_passes_per_level = int(uncoarsening_parameters.get("refine_max_passes_per_level"))
     refine_max_moves_per_pass = uncoarsening_parameters.get("refine_max_moves_per_pass")
-    n_total = matrix_k.shape[0]
+    n_total = matrix.shape[0]
 
     if dof_per_node <= 0:
         raise ValueError("DOF_PER_NODE must be a positive integer")
 
     if n_total % dof_per_node != 0:
         raise ValueError(
-            f"Global size {n_total} not divisible by DOF_PER_NODE={dof_per_node}. "
-            "Adjust DOF_PER_NODE to match the assembled matrices."
+            f"Matrix size {n_total} not divisible by the block size DOF_PER_NODE={dof_per_node}. "
+            "Use a block size that divides the number of rows (1 always works)."
         )
 
-    # Build graphs from matrices
-    diag_K = matrix_k.diagonal()
-    log("INFO", "Converting matrices to graphs")
-    G_K = matrix_to_graph(matrix_k, dof_per_node=dof_per_node)
+    # Build the graph from the matrix
+    log("INFO", "Converting matrix to graph")
+    G = matrix_to_graph(matrix, dof_per_node=dof_per_node)
 
-    _set_node_vweight_diag(G_K, diag_K, dof_per_node)
-    _set_edge_weight_attr(G_K, weight)
+    if not _set_node_vweight_diag(G, matrix.diagonal(), dof_per_node):
+        log("VERBOSE", "Matrix diagonal has zero blocks; using uniform node weights")
+    _set_edge_weight_attr(G, weight)
 
     # Common rule of thumb: ~1.5 * (total_node_weight / k_target)
     if max_node_weight is None and k_target is not None and int(k_target) > 1:
-        total_vw = sum(float(G_K.nodes[u].get('vweight', 1.0)) for u in G_K.nodes())
+        total_vw = sum(float(G.nodes[u].get('vweight', 1.0)) for u in G.nodes())
         max_node_weight = 1.5 * (total_vw / float(int(k_target)))
 
-    log("INFO", f"Graph G_K with {G_K.number_of_nodes()} nodes and {G_K.number_of_edges()} edges created from K matrix")
+    log("INFO", f"Graph G with {G.number_of_nodes()} nodes and {G.number_of_edges()} edges created from the matrix")
 
     log("INFO", "Coarsening Heavy Edge Matching")
     graphs, maps = coarsen_chain(
-        G_K,
+        G,
         trial_seed=seed,
         coarsen_inferior_limit=coarsen_inferior_limit,
         coarsen_superior_limit=coarsen_superior_limit,
@@ -288,21 +294,15 @@ def decompose_matrices_m_k(matrix_m, matrix_k, general_parameters, coarsening_pa
         seed=seed,
     )
 
-    log("INFO", "Permuting matrices")
-    # Permute matrices
-    permute_result = permute_matrices(
-        matrix_k=matrix_k,
-        matrix_m=matrix_m,
+    log("INFO", "Permuting matrix")
+    permute_result = permute_matrix(
+        matrix=matrix,
         partition=part_k,
         dof_per_node=dof_per_node,
     )
 
-    permutation = permute_result['permutation']
-    matrix_k_permuted = permute_result['matrix_k_permuted']
-    matrix_m_permuted = permute_result['matrix_m_permuted']
-
-    return matrix_m_permuted, matrix_k_permuted, permutation, {
-        "initial_graph": G_K,
+    return permute_result['matrix_permuted'], permute_result['permutation'], {
+        "initial_graph": G,
         "coarse_graph": Gc,
         "coarsening_maps": list(maps),
         "coarse_partition": dict(part_k_coarse),

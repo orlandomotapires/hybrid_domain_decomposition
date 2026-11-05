@@ -20,10 +20,7 @@ class RuntimeUtilsTest(unittest.TestCase):
             validate_and_normalize_simulation_config(
                 {
                     "parameters_file_path": "simulation_parameters.json",
-                    "input_matrices": {
-                        "matrix_k_file_path": "k.mtx",
-                        "matrix_m_file_path": "m.mtx",
-                    },
+                    "input_matrix": "blade",
                     "save_output": [
                         "matrix_sparsity_comparison",
                         "frac_within_band_plot",
@@ -88,10 +85,7 @@ class RuntimeUtilsTest(unittest.TestCase):
                 json.dumps(
                     {
                         "parameters_file_path": "unused_parameters.json",
-                        "input_matrices": {
-                            "matrix_k_file_path": "K.mtx",
-                            "matrix_m_file_path": "M.mtx",
-                        },
+                        "input_matrix": "blade",
                         "save_output": [],
                     }
                 ),
@@ -99,9 +93,9 @@ class RuntimeUtilsTest(unittest.TestCase):
             )
 
             with patch("libs.runtime.runtime.resolve_parameters_file_path", side_effect=AssertionError("parameter file lookup should not be used")), \
-                patch("libs.runtime.runtime.resolve_matrix_input_path", side_effect=lambda *args, **kwargs: Path("dummy.mtx")), \
-                patch("libs.runtime.runtime.load_mtx", side_effect=["matrix_k", "matrix_m"]), \
-                patch("libs.runtime.runtime.decompose_matrices_m_k", return_value=("perm_m", "perm_k", {0: 1}, {"coarse_partition": {0: 0}, "final_partition": {0: 1}})), \
+                patch("libs.runtime.runtime.resolve_simulation_matrix", return_value=Path("dummy.mtx")), \
+                patch("libs.runtime.runtime.load_mtx", side_effect=["matrix"]), \
+                patch("libs.runtime.runtime.decompose_matrix", return_value=("perm", {0: 1}, {"coarse_partition": {0: 0}, "final_partition": {0: 1}})), \
                 patch("libs.runtime.runtime.set_log_file"), \
                 patch("libs.runtime.runtime.log"), \
                 patch("libs.runtime.runtime.write_json"), \
@@ -116,6 +110,32 @@ class RuntimeUtilsTest(unittest.TestCase):
 
             self.assertEqual(demonstrator_dir / "results", result_dir.parent)
             self.assertTrue(result_dir.name.startswith("run_"))
+
+    def test_simulation_config_takes_one_library_matrix(self) -> None:
+        config = validate_and_normalize_simulation_config(
+            {
+                "parameters_file_path": "simulation_parameters.json",
+                "input_matrix": " blade_h60 ",
+                "save_output": ["matrix_permuted"],
+            }
+        )
+        self.assertEqual("blade_h60", config["input_matrix"])
+
+    def test_simulation_config_requires_a_matrix(self) -> None:
+        with self.assertRaises(ValueError):
+            validate_and_normalize_simulation_config(
+                {"parameters_file_path": "simulation_parameters.json", "save_output": []}
+            )
+
+    def test_old_k_m_keys_are_rejected(self) -> None:
+        with self.assertRaises(ValueError):
+            validate_and_normalize_simulation_config(
+                {
+                    "parameters_file_path": "simulation_parameters.json",
+                    "input_matrix": "blade",
+                    "save_output": ["matrix_k_permuted"],
+                }
+            )
 
 
 if __name__ == "__main__":
