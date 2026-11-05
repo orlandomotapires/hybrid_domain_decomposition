@@ -1,23 +1,32 @@
-# Matrix Workspaces (`matrices/`)
+# Shared Matrix Library (`matrices/`)
 
-Each subfolder inside `matrices/` (such as `matrix_01`, `matrix_02`, `matrix_03`) is a self-contained workspace for a pair of sparse matrices ($K$ and $M$). The pipeline is completely agnostic to the physical origin of the matrices (whether exported from ANSYS, FEniCS, Abaqus, Suitesparse, or generated synthetically).
+The pipeline is matrix-agnostic: any **square sparse matrix** can be partitioned and reordered. Each folder in `matrices/` holds one matrix in Matrix Market (`.mtx`) format, described by a `matrix.json`. Any simulation (`simulations/`) or batch study (`batch/`) can use any matrix, so a matrix is stored once however many simulations use it. Where it comes from does not matter (FEM stiffness or mass matrices from ANSYS/FEniCS/Abaqus, graph Laplacians, SuiteSparse, or generated).
 
-## Workspace Layout
+## Layout
 
 ```text
 matrices/
-└── matrix_01/
-    ├── data/
-    │   ├── simulation_config.json        # Active parameter preset file, input .mtx filenames, enabled save_output artifacts
-    │   ├── simulation_parameters.json    # Default parameter preset (general, coarsening, partitioning, refinement)
-    │   ├── <custom_preset>.json          # Optional additional parameter presets created in the Studio
-    │   └── matrices/                     # Matrix Market (.mtx) files for K and M (gitignored for large meshes)
-    └── results/
-        └── run_YYYYmmdd_HHMMSS_ffffff/   # Timestamped outputs from each simulation run (gitignored)
+└── simpleblade_t14mm_h60_5mm_base/
+    ├── matrix.json                                 # {"name", "file", "description"?}  (tracked)
+    └── Ksparse_SimpleBlade_t14mm_h60_5mm_Base.mtx  # the matrix (gitignored)
 ```
 
-## Adding a New Matrix Workspace
+`matrix.json` names the file inside the folder:
 
-- **Via the Web Studio:** Click **+ New** in the top bar of the **Pipeline** tab, enter a name (e.g. `matrix_04`), and upload your `.mtx` files or generate a demo 3D mesh in Stage 1.
-- **Via the CLI:** Copy an existing folder (`cp -r matrices/matrix_01 matrices/matrix_04`), place your `.mtx` files in `matrices/matrix_04/data/matrices/`, update `input_matrices` in `data/simulation_config.json`, and run `./run.sh matrices/matrix_04`.
+```json
+{
+  "name": "SimpleBlade t14mm h60 5mm base",
+  "file": "Ksparse_SimpleBlade_t14mm_h60_5mm_Base.mtx"
+}
+```
 
+The `.mtx` files are gitignored because they can be large. After cloning, copy them into their folders, or add new matrices as described below.
+
+## Adding a Matrix
+
+- **Web Studio:** In **Single Run → Stage 1 Input Matrix**, click **Upload .mtx** (name it and choose the file), or a **Demo matrix** button to generate a synthetic test matrix. It is added here and selected for the current simulation.
+- **By hand:** Create `matrices/<matrix_id>/`, copy the `.mtx` file into it, and write `matrix.json` as above. `<matrix_id>` may contain letters, digits, `_` and `-`.
+
+If the matrix comes in fixed-size row blocks that must stay together (e.g. 3 DOFs per mesh node in 3D FEM), set the simulation's **Block size** (`dof_per_node`) to that size; otherwise leave it at 1.
+
+A matrix can be deleted from the Studio only when no simulation and no batch configuration uses it.

@@ -2,16 +2,16 @@
   "algorithm_presets": [
     {
       "allowed_sizes": [
-        "big"
+        "big",
+        "medium",
+        "small"
       ],
       "key": "metis",
       "partitioning_strategy": "metis_partitioning",
       "strategy_parameters": {}
     },
     {
-      "allowed_sizes": [
-        "big"
-      ],
+      "allowed_sizes": [],
       "key": "qa_hardware",
       "partitioning_strategy": "quantum_annealing",
       "strategy_parameters": {
@@ -25,7 +25,9 @@
     },
     {
       "allowed_sizes": [
-        "big"
+        "big",
+        "medium",
+        "small"
       ],
       "key": "qa_emulated",
       "partitioning_strategy": "quantum_annealing",
@@ -38,9 +40,7 @@
       }
     },
     {
-      "allowed_sizes": [
-        "big"
-      ],
+      "allowed_sizes": [],
       "key": "qaoa_hardware",
       "partitioning_strategy": "quantum_approximation_optimizer",
       "strategy_parameters": {
@@ -56,7 +56,7 @@
     },
     {
       "allowed_sizes": [
-        "big"
+        "small"
       ],
       "key": "qaoa_emulated",
       "partitioning_strategy": "quantum_approximation_optimizer",
@@ -75,20 +75,72 @@
   "async_remote_case_keys": [
     "qaoa_hardware"
   ],
+  "base_parameters": {
+    "coarsening_parameters": {
+      "coarsen_inferior_limit": 100,
+      "coarsen_ratio": 0.85,
+      "coarsen_superior_limit": 175,
+      "max_levels": 15,
+      "max_node_weight": null,
+      "strategy": "modified",
+      "weight": "weight"
+    },
+    "general_parameters": {
+      "dof_per_node": 3,
+      "seed": 42
+    },
+    "partitioning_parameters": {
+      "common": {
+        "balance_tolerance": 2,
+        "k_target": 8
+      },
+      "partitioning_strategy": "quantum_annealing",
+      "strategies": {
+        "metis_partitioning": {},
+        "quantum_annealing": {
+          "balance_violation_lambda": 1000000,
+          "num_reads": 2,
+          "num_starts": 20,
+          "qpu_problem_label": "DD_ansys_v0_with_base",
+          "qpu_region": "eu-central-1",
+          "qpu_solver_name": "Advantage2_system2.1",
+          "qubo_balance_lambda": 2,
+          "simulated": true
+        },
+        "quantum_approximation_optimizer": {
+          "adam_learning_rate": 0.2,
+          "balance_violation_lambda": 1000000,
+          "circuit_depth": 1,
+          "num_shots": 5,
+          "num_starts": 5,
+          "num_steps": 5,
+          "qubo_balance_lambda": 2,
+          "simulated": true
+        }
+      }
+    },
+    "uncoarsening_parameters": {
+      "refine_balance_lambda": 1,
+      "refine_max_moves_per_pass": 5000,
+      "refine_max_passes_per_level": 50,
+      "refine_objective": "cut_balance",
+      "validate_node_weights": true
+    }
+  },
   "coarsening_presets": [
     {
-      "coarsen_inferior_limit": 1500,
-      "coarsen_superior_limit": 2500,
+      "coarsen_inferior_limit": 500,
+      "coarsen_superior_limit": 1000,
       "key": "big"
     },
     {
       "coarsen_inferior_limit": 100,
-      "coarsen_superior_limit": 175,
+      "coarsen_superior_limit": 250,
       "key": "medium"
     },
     {
       "coarsen_inferior_limit": 4,
-      "coarsen_superior_limit": 5,
+      "coarsen_superior_limit": 10,
       "key": "small"
     }
   ],
@@ -108,24 +160,18 @@
       "k_target": 4
     }
   },
-  "geometries": [
-    {
-      "demonstrator_dir": "matrices/matrix_01",
-      "key": "matrix_01"
-    },
-    {
-      "demonstrator_dir": "matrices/matrix_02",
-      "key": "matrix_02"
-    },
-    {
-      "demonstrator_dir": "matrices/matrix_03",
-      "key": "matrix_03"
-    }
-  ],
   "summary_percent_bands": [
     0.1,
     0.4,
     0.7,
     1
+  ],
+  "matrices": [
+    {
+      "key": "simpleblade_t14mm_h60_5mm_base"
+    },
+    {
+      "key": "simpleblade_t14mm_h60"
+    }
   ]
 }

@@ -1,0 +1,11 @@
+{
+  "input_matrix": "simpleblade_t14mm_h60",
+  "parameters_file_path": "simulation_parameters.json",
+  "save_output": [
+    "matrix_permuted",
+    "run_metrics",
+    "run_simulation_parameters",
+    "permutation",
+    "coarsened_graph"
+  ]
+}
