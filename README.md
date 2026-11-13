@@ -34,7 +34,7 @@ hybrid_domain_decomposition/
 ├── notebooks/            # Jupyter notebooks & plotting helpers for thesis analysis
 ├── tests/                # Python unit test suite
 ├── docs/                 # Thesis / paper PDF and reference documentation
-└── run.sh                # Unified CLI entrypoint for Studio, single runs, batch runs, and QLM inspection
+└── run.sh                # Unified CLI entrypoint for Studio, single runs, batch runs, tuning, and QLM inspection
 ```
 
 Each folder has its own README with implementation details:
@@ -75,12 +75,13 @@ pip install -r requirements.txt
 
 | Tab | What it does |
 | --- | --- |
-The four core tabs sit in the main bar under the title; **Hardware** and **Wiki** are reference pages in the top-right corner.
+The five core tabs sit in the main bar under the title; **Hardware** and **Wiki** are reference pages in the top-right corner.
 
 | Tab | What it does |
 | --- | --- |
 | **Single Run** | One tab per simulation (`simulation_01`, `simulation_02`, …). Configures its five pipeline stages: input matrix (pick any square matrix from the shared library, upload a `.mtx`, or generate a demo matrix), coarsening (HEM strategy, scale presets, *Preview Coarsening* dry run), partitioning (METIS, QA emulated or D-Wave QPU, QAOA emulated or QLM QPU), refinement, and output artifacts. Also creates, renames, and deletes simulations; manages presets; and compares configurations. |
 | **Batch Run** | Edits `batch/batch_configuration.json`: which library matrices to run, coarsening scales, shared parameters, and every algorithm's parameters. Previews the generated cases with duration/QPU estimates and launches the batch. Batches use library matrices directly and ignore per-simulation settings. |
+| **Tuning** | Parameter selection for the selected simulation. *Automatic*: rules from the matrix features plus a coarsening dry-run grid propose a feasible parameter set. *Iterative tuning*: an Optuna study (Bayesian TPE, genetic NSGA-II, CMA-ES, Sobol or random) runs the pipeline repeatedly; tick one or more objectives (edge cut, imbalance, band quality, bandwidth, run time; several = Pareto front or weighted sum) and mark each parameter, including `k_target` and the partitioning strategy, as fixed or free. *Studies*: convergence / Pareto charts, trial table, apply any trial to the simulation, resume, or ask for one suggestion at a time and report the run you made. |
 | **Runs** | Live log of the selected run with level filters (`INFO` / `VERBOSE` / `WARNING` / `ERROR`; any line reporting a failure is an `ERROR`), a 5-stage progress tracker, batch progress and ETA, and the history of every run. |
 | **Results** | *Batch* mode: bandwidth / $nB^2$ / diagonal-band comparison tables and locality curves. *Single Run* mode: $K$ and $M$ KPIs, side-by-side Run A vs Run B comparison, partitioned matrix/graph gallery, and `.zip` bundle download. |
 | **Hardware** | Shows installed classical/quantum SDKs (`PyMETIS`, `dwave-neal`, `dwave-system`, `PennyLane`, `myQLM`), probes D-Wave QPU clique capacity, and inspects QLM QPUs. |
@@ -106,13 +107,26 @@ The simulation's `simulation_config.json` names its matrix (`input_matrix`, a fo
 ./run.sh --run_batch --nohup      # run in background
 ```
 
-### 3. Inspect a QLM Backend
+### 3. Select or Tune Parameters
+
+```sh
+./run.sh --tune simulations/simulation_01 --auto                      # Mode A: print auto-selected parameters
+./run.sh --tune simulations/simulation_01 --n-trials 30 \
+        --objectives edge_cut,imbalance                               # Mode B: Pareto study (NSGA-II)
+./run.sh --tune simulations/simulation_01 --objectives edge_cut \
+        --free k_target,partitioning_strategy --sampler tpe          # single objective, k and method free
+./run.sh --tune --resume simulations/simulation_01/tuning/study_<ts>  # continue a study
+```
+
+Studies are saved in `simulations/<sim>/tuning/study_<timestamp>/` (`study_config.json`, Optuna `study.db`, `trials.jsonl`, `summary.json`, `best_parameters.json`, and one normal run folder per trial). Every run, from any entry point, is also appended to `tuning/history.jsonl`, which later studies use as a warm start. See [src/libs/tuning/](src/libs/tuning/__init__.py).
+
+### 4. Inspect a QLM Backend
 
 ```sh
 ./run.sh --qlm_inspect --help
 ```
 
-### 4. Run Unit Tests
+### 5. Run Unit Tests
 
 ```sh
 PYTHONPATH=src:. python -m unittest discover -s tests -v

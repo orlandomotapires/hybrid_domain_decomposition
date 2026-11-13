@@ -37,6 +37,7 @@ frontend/
     │   ├── notify.ts            # Desktop notifications for finished runs
     │   └── urlState.ts          # Tab + selection <-> URL hash (#/results?run=...)
     ├── types/pipeline.ts        # Shared TypeScript interfaces
+    ├── types/tuning.ts          # Tuning (parameter selection) API types
     ├── data/wikiKnowledgeBase.ts# Structured Wiki articles and (i) popover definitions
     └── components/
         ├── PipelineStudio.tsx   # Single Run tab: simulation tabs, stage flowchart, run-cost bar; wires the stages below
@@ -44,6 +45,8 @@ frontend/
         ├── ExecutionConsole.tsx # Runs tab (live log with search/export, batch progress & ETA, history)
         ├── BatchOrchestrator.tsx# Batch Run tab (matrix × scale × algorithm configurator)
         ├── batch/ParamFields.tsx# Editable algorithm / shared parameter fields for Batch Run
+        ├── TuningStudio.tsx     # Tuning tab (auto-select, study form with fixed/free parameters, study monitor)
+        ├── tuning/TuningCharts.tsx # Convergence and Pareto-front SVG charts
         ├── ResultsExplorer.tsx  # Results tab (batch & multi-run comparison, CSV/PNG/SVG export, re-run)
         ├── HardwareInspector.tsx# Hardware tab (SDK readiness & D-Wave/QLM probes)
         ├── HelpGuide.tsx        # Wiki tab
@@ -57,6 +60,6 @@ frontend/
 | --- | --- |
 | `Ctrl/⌘ + S` | Save configuration & parameters (Single Run) |
 | `Ctrl/⌘ + Enter` | Run the current simulation (Single Run) |
-| `1` – `6` | Switch tab (Single Run, Batch Run, Runs, Results, Hardware, Wiki) |
+| `1` – `7` | Switch tab (Single Run, Batch Run, Tuning, Runs, Results, Hardware, Wiki) |
 | `?` | Show the shortcut list |
 | `Esc` | Close dialogs |

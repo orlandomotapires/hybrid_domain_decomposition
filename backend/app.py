@@ -23,6 +23,7 @@ from backend.routes.execution import router as execution_router
 from backend.routes.batch import router as batch_router
 from backend.routes.results import router as results_router
 from backend.routes.quantum_hw import router as quantum_hw_router
+from backend.routes.tuning import router as tuning_router
 
 app = FastAPI(
     title="Hybrid Domain Decomposition Studio API",
@@ -44,6 +45,7 @@ app.include_router(execution_router)
 app.include_router(batch_router)
 app.include_router(results_router)
 app.include_router(quantum_hw_router)
+app.include_router(tuning_router)
 
 
 @app.get("/api/health")

@@ -20,12 +20,14 @@ show_usage() {
 	echo "  ./run.sh <simulation_dir>" >&2
 	echo "  ./run.sh --ui [--host HOST] [--port PORT] [--reload]" >&2
 	echo "  ./run.sh --run_batch [batch_args...]" >&2
+	echo "  ./run.sh --tune <simulation_dir> [--auto | tuning_args...]" >&2
 	echo "  ./run.sh --qlm_inspect [inspect_args...]" >&2
 	echo "" >&2
 	echo "Examples:" >&2
 	echo "  ./run.sh simulations/simulation_01" >&2
 	echo "  ./run.sh --ui" >&2
 	echo "  ./run.sh --run_batch --dry-run" >&2
+	echo "  ./run.sh --tune simulations/simulation_01 --n-trials 20 --objectives edge_cut,imbalance" >&2
 	echo "  ./run.sh --qlm_inspect --help" >&2
 }
 
@@ -51,6 +53,11 @@ case "$1" in
 	--run_batch)
 		shift
 		exec "$PYTHON_BIN" "$ROOT_DIR/batch/run_batch.py" "$@"
+		;;
+	--tune)
+		shift
+		cd "$ROOT_DIR/src"
+		exec "$PYTHON_BIN" -m libs.tuning.cli "$@"
 		;;
 	--qlm_inspect)
 		shift

@@ -1,7 +1,7 @@
 {
   "coarsening_parameters": {
-    "coarsen_inferior_limit": 1,
-    "coarsen_ratio": 1.0,
+    "coarsen_inferior_limit": 60,
+    "coarsen_ratio": 0.95,
     "coarsen_superior_limit": 300,
     "max_levels": 30,
     "max_node_weight": 1e+18,
@@ -14,7 +14,7 @@
   },
   "partitioning_parameters": {
     "common": {
-      "balance_tolerance": 2.0,
+      "balance_tolerance": 0.3,
       "k_target": 16
     },
     "partitioning_strategy": "metis_partitioning",

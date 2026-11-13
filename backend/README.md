@@ -24,9 +24,10 @@ backend/
 │   ├── execution.py           # /api/execution: start, list, poll (incremental log streaming), cancel, and delete simulation jobs
 │   ├── batch.py               # /api/batch: read/write batch_configuration.json, launch batch studies, inspect batch runs
 │   ├── results.py             # /api/results: per-matrix run list, single-run KPIs & curves, cached plot images, .zip bundle download, batch LaTeX tables
-│   └── quantum_hw.py          # /api/hardware: Python SDK readiness matrix, D-Wave clique capacity probe, QLM QPU inspector
+│   ├── quantum_hw.py          # /api/hardware: Python SDK readiness matrix, D-Wave clique capacity probe, QLM QPU inspector
+│   └── tuning.py              # /api/tuning: matrix features, auto-select, Optuna studies (create/resume/stop/apply), suggest-next & report
 └── services/
-    ├── job_manager.py         # Subprocess lifecycle, real-time log parsing, 5-stage progress & telemetry extraction, historical run discovery
+    ├── job_manager.py         # Subprocess lifecycle (single, batch and tuning jobs), real-time log parsing, progress & telemetry extraction, historical run discovery
     ├── matrix_service.py      # Fast Matrix Market (.mtx) header inspection and synthetic 3D FEM hexahedral mesh generator
     └── plot_service.py        # Bandwidth KPI extraction, density curve sampling, cached Matplotlib rendering, and LaTeX table builders
 ```

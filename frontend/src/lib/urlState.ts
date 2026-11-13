@@ -4,7 +4,7 @@
  * so refresh, back/forward and bookmarks restore the same view.
  */
 
-export const TABS = ['pipeline', 'execution', 'batch', 'results', 'hardware', 'help'] as const;
+export const TABS = ['pipeline', 'execution', 'batch', 'tuning', 'results', 'hardware', 'help'] as const;
 export type ActiveTab = (typeof TABS)[number];
 
 export interface UrlState {

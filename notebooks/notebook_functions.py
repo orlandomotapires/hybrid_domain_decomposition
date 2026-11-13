@@ -11,16 +11,14 @@ from matplotlib.colors import hsv_to_rgb, to_hex
 from libs.runtime.utils import load_mtx, _as_csr_matrix, graph_to_sparse_matrix, matrix_to_graph
 from libs.permutation import _create_permutation_from_partition, _permute_sparse_matrix
 
-cwd = Path.cwd().resolve()
-repo_candidates = [cwd, *cwd.parents]
-
 BATCH_RUNS_REPO = "batch/runs"
 
-REPO_ROOT = next(
-    (path for path in repo_candidates if (path / "src").exists() and (path / BATCH_RUNS_REPO).exists()),
-    None,
-)
-sys.path.insert(0, str(REPO_ROOT / "src"))
+# This file lives in <repo>/notebooks/, so the repo root is its parent's parent. Resolving it from
+# the file (not the working directory or batch/runs, which is gitignored and may not exist yet)
+# works from notebooks, the backend and the CLI alike.
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT / "src") not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT / "src"))
 
 NAME_MAPPING = {
     "qaoa_hardware": "QAOA Hardware",

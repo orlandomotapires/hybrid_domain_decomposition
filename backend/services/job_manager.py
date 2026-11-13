@@ -46,6 +46,8 @@ _RESULTS_SAVED_RE = re.compile(r"Results saved in (.+)$")
 _BATCH_PREPARED_RE = re.compile(r"^Prepared (\d+) batch cases")
 _BATCH_CASE_RE = re.compile(r"^\[(\d+)/(\d+)\] Running (\S+)")
 _BATCH_CASE_DONE_RE = re.compile(r"^\s+(Result|FAILED):")
+_TUNING_TRIAL_RE = re.compile(r"\[tuning\] trial (\d+)/(\d+) status=(\w+)")
+_TUNING_STUDY_RE = re.compile(r"\[tuning\] study (\S+): (\d+) trials")
 _ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-9;]*m")
 _BRACKET_LOG_RE = re.compile(
     r"^\[(?:(?P<date_prefix>.*?\b(?P<hms>\d{2}:\d{2}:\d{2})\b[^\]]*?)\s+)?(?P<level>INFO|VERBOSE|WARNING|ERROR)\]\s*(?P<msg>.*)$"
@@ -127,7 +129,7 @@ def _load_params_file(demonstrator_dir: str, parameters_file: str | None) -> dic
 @dataclass
 class SimulationJob:
     job_id: str
-    job_type: str  # "single" | "batch"
+    job_type: str  # "single" | "batch" | "tuning"
     title: str
     demonstrator_dir: str | None = None
     parameters_override: dict[str, Any] | None = None
@@ -142,6 +144,7 @@ class SimulationJob:
     stage_durations_sec: dict[str, float] = field(default_factory=dict)
     result_dir: str | None = None
     batch_dir: str | None = None
+    study_dir: str | None = None
     pid: int | None = None
     exit_code: int | None = None
     error_message: str | None = None
@@ -186,6 +189,7 @@ class SimulationJob:
                 "stage_durations_sec": durations,
                 "result_dir": self.result_dir,
                 "batch_dir": self.batch_dir,
+                "study_dir": self.study_dir,
                 "pid": self.pid,
                 "exit_code": self.exit_code,
                 "error_message": self.error_message,
@@ -493,6 +497,62 @@ class JobManager:
 
         return job.to_dict(include_logs=True)
 
+    def start_tuning_study(self, *, study_dir: Path, title: str, demonstrator_id: str | None = None) -> dict[str, Any]:
+        """Run ``libs.tuning.cli --resume <study_dir>`` as a background job."""
+        try:
+            study_dir_rel = str(study_dir.resolve().relative_to(ROOT_DIR))
+        except ValueError:
+            study_dir_rel = str(study_dir)
+        job_id = f"tuning_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:6]}"
+        now_t = time.time()
+        job = SimulationJob(
+            job_id=job_id,
+            job_type="tuning",
+            title=title,
+            study_dir=study_dir_rel,
+            demonstrator_id=demonstrator_id,
+            current_stage="initialization",
+            stage_progress=0,
+            started_epoch=now_t,
+            stage_started_epoch=now_t,
+        )
+        with self._lock:
+            self._jobs[job_id] = job
+
+        env = dict(os.environ)
+        env["PYTHONUNBUFFERED"] = "1"
+        proc = subprocess.Popen(
+            [sys.executable, "-u", "-m", "libs.tuning.cli", "--resume", str(study_dir.resolve())],
+            cwd=str(SRC_DIR),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+            start_new_session=True,
+            env=env,
+        )
+        job._process = proc
+        job.pid = proc.pid
+        threading.Thread(target=self._consume_process_output, args=(job,), daemon=True).start()
+        return job.to_dict(include_logs=True)
+
+    @staticmethod
+    def _update_tuning_progress(job: SimulationJob, message: str) -> None:
+        """Track tuning trial progress (caller holds job._lock)."""
+        t = job.telemetry
+        m_study = _TUNING_STUDY_RE.search(message)
+        if m_study:
+            t["tuning_total"] = int(m_study.group(2))
+            t.setdefault("tuning_done", 0)
+            return
+        m_trial = _TUNING_TRIAL_RE.search(message)
+        if m_trial:
+            done, total, status = int(m_trial.group(1)), int(m_trial.group(2)), m_trial.group(3)
+            t["tuning_done"], t["tuning_total"] = done, total
+            key = f"tuning_{status}"
+            t[key] = int(t.get(key, 0)) + 1
+            job.stage_progress = min(99, int(100 * done / max(total, 1)))
+
     def cancel_job(self, job_id: str) -> dict[str, Any] | None:
         with self._lock:
             job = self._jobs.get(job_id)
@@ -571,7 +631,7 @@ class JobManager:
                 now_t = time.time()
                 job.logs.append(entry)
 
-                for pattern, stage_id in _STAGE_PATTERNS:
+                for pattern, stage_id in ([] if job.job_type == "tuning" else _STAGE_PATTERNS):
                     if re.search(pattern, message):
                         if stage_id != job.current_stage:
                             prev_stage = job.current_stage
@@ -603,6 +663,8 @@ class JobManager:
 
                 if job.job_type == "batch":
                     self._update_batch_progress(job, message)
+                elif job.job_type == "tuning":
+                    self._update_tuning_progress(job, message)
 
                 m_res = _RESULTS_SAVED_RE.search(message)
                 if m_res:
@@ -612,7 +674,8 @@ class JobManager:
                     except ValueError:
                         job.result_dir = str(raw_path)
 
-                if level == "ERROR" and job.error_message is None:
+                # Tuning trials may fail individually; only the exit code decides the job status.
+                if level == "ERROR" and job.error_message is None and job.job_type != "tuning":
                     job.error_message = message
 
         exit_code = proc.wait()

@@ -6,6 +6,16 @@ import {
   SimulationJob,
   SimulationParameters,
 } from '../types/pipeline';
+import {
+  AutoSelectResult,
+  CreateStudyResponse,
+  MatrixFeatures,
+  StudyBrief,
+  StudyDetail,
+  StudyRequest,
+  TuningDefaults,
+  TuningMeta,
+} from '../types/tuning';
 
 const BACKEND_UNREACHABLE =
   'Studio backend not reachable — start it locally with ./run.sh --ui';
@@ -252,4 +262,73 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ qlm_qpu_name: qpuName }),
     }),
+
+  // Parameter selection (tuning)
+  getTuningMeta: () => requestJson<TuningMeta>('/api/tuning/meta'),
+
+  getMatrixFeatures: (matrixId: string, dofPerNode = 1) =>
+    requestJson<MatrixFeatures>(
+      `/api/tuning/features/${encodeURIComponent(matrixId)}?dof_per_node=${dofPerNode}`
+    ),
+
+  getTuningDefaults: (simulation: string) =>
+    requestJson<TuningDefaults>(`/api/tuning/defaults/${encodeURIComponent(simulation)}`),
+
+  autoSelectParameters: (simulation: string, parameters?: SimulationParameters | null, apply = false) =>
+    requestJson<AutoSelectResult>('/api/tuning/auto-select', {
+      method: 'POST',
+      body: JSON.stringify({ simulation, parameters: parameters || null, apply }),
+    }),
+
+  listStudies: (simulation: string) =>
+    requestJson<StudyBrief[]>(`/api/tuning/studies?simulation=${encodeURIComponent(simulation)}`),
+
+  createStudy: (req: StudyRequest) =>
+    requestJson<CreateStudyResponse>('/api/tuning/studies', {
+      method: 'POST',
+      body: JSON.stringify(req),
+    }),
+
+  getStudy: (simulation: string, studyId: string) =>
+    requestJson<StudyDetail>(
+      `/api/tuning/studies/${encodeURIComponent(simulation)}/${encodeURIComponent(studyId)}`
+    ),
+
+  resumeStudy: (simulation: string, studyId: string, nTrials?: number) =>
+    requestJson<CreateStudyResponse>(
+      `/api/tuning/studies/${encodeURIComponent(simulation)}/${encodeURIComponent(studyId)}/resume${
+        nTrials ? `?n_trials=${nTrials}` : ''
+      }`,
+      { method: 'POST' }
+    ),
+
+  stopStudy: (simulation: string, studyId: string) =>
+    requestJson<{ stopping: boolean }>(
+      `/api/tuning/studies/${encodeURIComponent(simulation)}/${encodeURIComponent(studyId)}/stop`,
+      { method: 'POST' }
+    ),
+
+  applyStudyParameters: (simulation: string, studyId: string, trialNumber?: number) =>
+    requestJson<Demonstrator>(
+      `/api/tuning/studies/${encodeURIComponent(simulation)}/${encodeURIComponent(studyId)}/apply`,
+      { method: 'POST', body: JSON.stringify({ trial_number: trialNumber ?? null }) }
+    ),
+
+  suggestNext: (simulation: string, studyId: string, apply = true) =>
+    requestJson<{ trial_number: number; parameters: SimulationParameters; applied?: boolean }>(
+      `/api/tuning/studies/${encodeURIComponent(simulation)}/${encodeURIComponent(studyId)}/suggest`,
+      { method: 'POST', body: JSON.stringify({ apply }) }
+    ),
+
+  reportRun: (simulation: string, studyId: string, trialNumber: number, runId?: string) =>
+    requestJson<{ run_id: string }>(
+      `/api/tuning/studies/${encodeURIComponent(simulation)}/${encodeURIComponent(studyId)}/report`,
+      { method: 'POST', body: JSON.stringify({ trial_number: trialNumber, run_id: runId || null }) }
+    ),
+
+  deleteStudy: (simulation: string, studyId: string) =>
+    requestJson<{ deleted: string }>(
+      `/api/tuning/studies/${encodeURIComponent(simulation)}/${encodeURIComponent(studyId)}`,
+      { method: 'DELETE' }
+    ),
 };

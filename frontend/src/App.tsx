@@ -3,6 +3,7 @@ import {
   BarChart3,
   BookOpen,
   Cpu,
+  FlaskConical,
   Keyboard,
   Layers,
   Moon,
@@ -17,6 +18,7 @@ import { HardwareInspector } from './components/HardwareInspector';
 import { HelpGuide } from './components/HelpGuide';
 import { PipelineStudio } from './components/PipelineStudio';
 import { ResultsExplorer } from './components/ResultsExplorer';
+import { TuningStudio } from './components/TuningStudio';
 import { useToast } from './components/Toasts';
 import { notifyIfHidden } from './lib/notify';
 import { ActiveTab, readUrlState, writeUrlState } from './lib/urlState';
@@ -38,6 +40,7 @@ type NavTab = { id: ActiveTab; label: string; title: string; icon: typeof Slider
 const CORE_TABS: NavTab[] = [
   { id: 'pipeline', label: 'Single Run', title: 'Configure and run one simulation', icon: Sliders },
   { id: 'batch', label: 'Batch Run', title: 'Batch study across matrices, algorithms and scales', icon: Layers },
+  { id: 'tuning', label: 'Tuning', title: 'Parameter selection: automatic or iterative tuning', icon: FlaskConical },
   { id: 'execution', label: 'Runs', title: 'Live logs and history of every run', icon: Terminal },
   { id: 'results', label: 'Results', title: 'Results & Plots', icon: BarChart3 },
 ];
@@ -48,13 +51,13 @@ const INFO_TABS: NavTab[] = [
   { id: 'help', label: 'Wiki', title: 'Project Wiki & Guide', icon: BookOpen },
 ];
 
-/** Number-key order for tab shortcuts (1–6). */
+/** Number-key order for tab shortcuts (1–7). */
 const SHORTCUT_TABS: ActiveTab[] = [...CORE_TABS, ...INFO_TABS].map((t) => t.id);
 
 const SHORTCUTS: Array<{ keys: string; action: string }> = [
   { keys: 'Ctrl/⌘ + S', action: 'Save configuration & parameters (Single Run)' },
   { keys: 'Ctrl/⌘ + Enter', action: 'Run the current simulation (Single Run)' },
-  { keys: '1 – 6', action: 'Switch tab (Single Run, Batch Run, Runs, Results, Hardware, Wiki)' },
+  { keys: '1 – 7', action: 'Switch tab (Single Run, Batch Run, Tuning, Runs, Results, Hardware, Wiki)' },
   { keys: '?', action: 'Show this list' },
   { keys: 'Esc', action: 'Close dialogs' },
 ];
@@ -812,6 +815,22 @@ export function App() {
               setActiveTab('results');
             }}
             onOpenWiki={handleOpenWiki}
+          />
+        )}
+
+        {activeTab === 'tuning' && (
+          <TuningStudio
+            demonstrators={demonstrators}
+            selectedDemId={selectedDemId}
+            hasUnsavedChanges={hasUnsavedChanges}
+            jobs={jobs}
+            onSelectDemonstrator={handleSelectDemonstrator}
+            onParametersApplied={() => loadDemonstrators(selectedDemId)}
+            onOpenJob={(jid) => {
+              setActiveJobId(jid);
+              setActiveTab('execution');
+            }}
+            onRefreshJobs={refreshJobs}
           />
         )}
 

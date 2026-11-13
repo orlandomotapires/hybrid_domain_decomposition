@@ -63,6 +63,7 @@ def run_simulation(
 	simulation_config_override: dict[str, Any] | None = None,
 	results_dir_override: str | Path | None = None,
 	run_label: str | None = None,
+	history_source: str | None = None,
 ) -> Path:
 	"""Run one simulation and return its result directory.
 
@@ -160,6 +161,17 @@ def run_simulation(
 
 	partitioning_strategy = partitioning_parameters["partitioning_strategy"]
 	_write_partition_artifacts(result_run_dir, decomposition_artifacts)
+	decomposition_metrics = decomposition_artifacts.get("decomposition_metrics") or {}
+	if decomposition_metrics:
+		# Always written (small): partition quality + timing, read by the parameter tuner.
+		write_json(result_run_dir / "decomposition_metrics.json", decomposition_metrics)
+		log(
+			"VERBOSE",
+			"Partition quality: "
+			f"edge_cut={decomposition_metrics.get('edge_cut'):.6g} "
+			f"imbalance={decomposition_metrics.get('imbalance'):.4f} "
+			f"levels={decomposition_metrics.get('levels')}",
+		)
 
 	# Save results
 	if "coarsened_graph" in save_output:
@@ -196,6 +208,8 @@ def run_simulation(
 				perm_check_tol=0.0,
 			),
 		}
+		if decomposition_metrics:
+			metrics["matrix"]["decomposition_metrics"] = decomposition_metrics
 		write_results_table_text(result_run_dir / "run_metrics.txt", metrics)
 		write_json(result_run_dir / "run_metrics.json", metrics)
 		struct = metrics["matrix"].get("structural_metrics", {})
@@ -213,5 +227,19 @@ def run_simulation(
 
 	if "run_simulation_parameters" in save_output:
 		write_json(result_run_dir / "run_simulation_parameters.json", simulation_parameters)
+
+	# Feed the parameter-selection history; never fail a finished run because of it.
+	try:
+		from libs.tuning.history import record_run
+
+		record_run(
+			result_run_dir,
+			matrix_id=matrix_id,
+			parameters=simulation_parameters,
+			simulation=sim_dir.name if sim_dir is not None else None,
+			source=history_source or ("single" if sim_dir is not None else "batch"),
+		)
+	except Exception as exc:  # pragma: no cover - defensive
+		log("WARNING", f"Could not record run in tuning history: {exc}")
 
 	return result_run_dir

@@ -12,7 +12,7 @@
    - **Stage 3 — Coarse Partitioning:** Partitions the coarse graph $G_L$ into $k$ subdomains using classical METIS (`metis_partitioning`), recursive QUBO Quantum Annealing (`quantum_annealing`), or recursive Ising QAOA (`quantum_approximation_optimizer`).
    - **Stage 4 — Uncoarsening & Refinement:** Projects the partition back level-by-level to $G_0$, applying multi-way Kernighan–Lin boundary refinement (`cut` or `cut_balance`) at every level.
    - **Stage 5 — Matrix Permutation & Profiling:** Builds the row permutation vector $P$, computes $A' = P A P^\top$, and evaluates structural bandwidth and diagonal locality metrics.
-4. **[libs/runtime/runtime.py](libs/runtime/runtime.py)** writes the enabled artifacts (`save_output`) to `simulations/<name>/results/run_<timestamp>/`.
+4. **[libs/runtime/runtime.py](libs/runtime/runtime.py)** writes the enabled artifacts (`save_output`) to `simulations/<name>/results/run_<timestamp>/`. `decomposition_metrics.json` (edge cut, imbalance, coarse-graph size, levels, per-stage wall time) is always written and also embedded in `run_metrics.json`; the run is appended to the tuning history.
 
 ## Core Modules
 
@@ -26,3 +26,12 @@
 - **[libs/multilevel_scheme/coarsening/](libs/multilevel_scheme/coarsening/)** — Heavy-Edge Matching coarsening strategies.
 - **[libs/multilevel_scheme/partitioning/](libs/multilevel_scheme/partitioning/)** — Classical METIS, Quantum Annealing (`qa/`), and QAOA (`qaoa/`) solvers (see [qa/README.md](libs/multilevel_scheme/partitioning/qa/README.md)).
 - **[libs/multilevel_scheme/uncoarsening/](libs/multilevel_scheme/uncoarsening/)** — Multilevel projection and Kernighan–Lin boundary refinement.
+- **[libs/tuning/](libs/tuning/__init__.py)** — Parameter selection subsystem:
+  - `features.py` — matrix/graph features (cached in `matrices/<id>/features.json`);
+  - `feasibility.py` — backend capacity limits and a coarsening dry-run that rejects unreachable ranges;
+  - `objectives.py` — objective metrics (edge cut, imbalance, band quality, bandwidth, time) and weighted scores;
+  - `search_space.py` — declarative fixed/free search space (coarsening expressed as a coarse-graph target size);
+  - `auto_select.py` — Mode A: rules + guided dry-run;
+  - `tuner.py` — Mode B: Optuna ask/tell studies, warm starts, Pareto knee, suggest-next / report;
+  - `history.py` — global run history and nearest-matrix lookup;
+  - `cli.py` — `./run.sh --tune`.

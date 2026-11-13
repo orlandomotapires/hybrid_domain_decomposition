@@ -166,7 +166,7 @@ export interface CoarseningPreviewResponse {
 
 export interface SimulationJob {
   job_id: string;
-  job_type: 'single' | 'batch';
+  job_type: 'single' | 'batch' | 'tuning';
   title: string;
   demonstrator_dir?: string | null;
   /** Simulation id (e.g. "simulation_01"); null for batch jobs. */
@@ -186,6 +186,8 @@ export interface SimulationJob {
   stage_durations_sec?: Record<string, number>;
   result_dir?: string | null;
   batch_dir?: string | null;
+  /** Tuning study folder (tuning jobs only). */
+  study_dir?: string | null;
   pid?: number | null;
   exit_code?: number | null;
   error_message?: string | null;
@@ -201,6 +203,11 @@ export interface SimulationJob {
     batch_case?: string;
     batch_done?: number;
     batch_failed?: number;
+    tuning_total?: number;
+    tuning_done?: number;
+    tuning_ok?: number;
+    tuning_infeasible?: number;
+    tuning_error?: number;
   };
   log_count: number;
   logs?: LogEntry[];

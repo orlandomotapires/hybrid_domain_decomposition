@@ -92,7 +92,7 @@ function jobK(job: SimulationJob): number | null {
 
 /** "simulation_01 · QA Emulated" for single runs; batch jobs keep their backend title. */
 function jobDisplayTitle(job: SimulationJob): string {
-  if (job.job_type === 'batch') return job.title;
+  if (job.job_type === 'batch' || job.job_type === 'tuning') return job.title;
   const matrix = jobMatrix(job);
   const method = jobMethodLabel(job);
   if (!matrix) return job.title.replace(/^Simulation: /, '');
@@ -386,7 +386,7 @@ export const ExecutionConsole: React.FC<ExecutionConsoleProps> = ({
 
   const viewingParts: string[] = [];
   if (currentJob) {
-    if (currentJob.job_type === 'batch') {
+    if (currentJob.job_type === 'batch' || currentJob.job_type === 'tuning') {
       viewingParts.push(currentJob.title);
     } else {
       const m = jobMatrix(currentJob);
@@ -546,10 +546,12 @@ export const ExecutionConsole: React.FC<ExecutionConsoleProps> = ({
                     if (created) meta.push(cardTime(created));
                     if (job.job_type === 'batch' && job.status === 'running' && jt.batch_total) {
                       meta.push(`${jt.batch_done || 0}/${jt.batch_total}`);
+                    } else if (job.job_type === 'tuning' && job.status === 'running' && jt.tuning_total) {
+                      meta.push(`trial ${jt.tuning_done || 0}/${jt.tuning_total}`);
                     } else if (job.elapsed_sec && job.elapsed_sec > 0) {
                       meta.push(formatDuration(job.elapsed_sec));
                     }
-                    if (job.job_type !== 'batch' && k != null) meta.push(`k=${k}`);
+                    if (job.job_type === 'single' && k != null) meta.push(`k=${k}`);
                     const title = jobDisplayTitle(job);
                     return (
                       <div

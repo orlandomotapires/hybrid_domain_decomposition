@@ -14,6 +14,9 @@ from libs.multilevel_scheme.partitioning.qa import (
 )
 from libs.multilevel_scheme.uncoarsening.uncoarsening import uncoarsen_and_refine
 import numpy as np
+import time
+
+from libs.multilevel_scheme.partitioning.utils.metrics import balance_violation, cut_value
 
 
 def _clamp_partition_count(requested_k: int, available_nodes: int) -> int:
@@ -88,6 +91,16 @@ def decompose_matrix(matrix, general_parameters, coarsening_parameters, partitio
         )
 
     # Build the graph from the matrix
+    stage_durations_sec: dict[str, float] = {}
+    t_stage = time.perf_counter()
+    t_total = t_stage
+
+    def _close_stage(name: str) -> None:
+        nonlocal t_stage
+        now = time.perf_counter()
+        stage_durations_sec[name] = round(now - t_stage, 6)
+        t_stage = now
+
     log("INFO", "Converting matrix to graph")
     G = matrix_to_graph(matrix, dof_per_node=dof_per_node)
 
@@ -102,6 +115,8 @@ def decompose_matrix(matrix, general_parameters, coarsening_parameters, partitio
 
     log("INFO", f"Graph G with {G.number_of_nodes()} nodes and {G.number_of_edges()} edges created from the matrix")
 
+    _close_stage("graph_build")
+
     log("INFO", "Coarsening Heavy Edge Matching")
     graphs, maps = coarsen_chain(
         G,
@@ -115,6 +130,8 @@ def decompose_matrix(matrix, general_parameters, coarsening_parameters, partitio
         max_node_weight=max_node_weight
     )
     log("VERBOSE", f"Coarse graph has {graphs[-1].number_of_nodes()} nodes and {graphs[-1].number_of_edges()} edges with {len(graphs)} levels")
+
+    _close_stage("coarsening")
 
     Gc = graphs[-1]
     effective_k_target = _clamp_partition_count(k_target, Gc.number_of_nodes())
@@ -278,6 +295,8 @@ def decompose_matrix(matrix, general_parameters, coarsening_parameters, partitio
 
     log("VERBOSE", f"Partitioning on coarse graph produced {len(set(part_k_coarse.values()))} parts")
 
+    _close_stage("partitioning")
+
     log("INFO", "Uncoarsening Kernighan-Lin")
     part_k = uncoarsen_and_refine(
         graphs,
@@ -294,6 +313,8 @@ def decompose_matrix(matrix, general_parameters, coarsening_parameters, partitio
         seed=seed,
     )
 
+    _close_stage("uncoarsening")
+
     log("INFO", "Permuting matrix")
     permute_result = permute_matrix(
         matrix=matrix,
@@ -301,10 +322,69 @@ def decompose_matrix(matrix, general_parameters, coarsening_parameters, partitio
         dof_per_node=dof_per_node,
     )
 
+    _close_stage("permutation")
+    total_sec = round(time.perf_counter() - t_total, 6)
+
+    decomposition_metrics = compute_decomposition_metrics(
+        G,
+        Gc,
+        part_k,
+        part_k_coarse,
+        k=effective_k_target,
+        balance_tolerance=balance_tolerance,
+        weight_attr=weight,
+        levels=len(graphs),
+    )
+    decomposition_metrics["requested_k"] = int(k_target)
+    decomposition_metrics["timing"] = {"total_sec": total_sec, "stage_durations_sec": stage_durations_sec}
+
     return permute_result['matrix_permuted'], permute_result['permutation'], {
+        "decomposition_metrics": decomposition_metrics,
         "initial_graph": G,
         "coarse_graph": Gc,
         "coarsening_maps": list(maps),
         "coarse_partition": dict(part_k_coarse),
         "final_partition": dict(part_k),
+    }
+
+def compute_decomposition_metrics(G, Gc, part_k, part_k_coarse, *, k, balance_tolerance, weight_attr, levels) -> dict:
+    """Quality numbers for a finished partition, used by run_metrics.json and the parameter tuner.
+
+    ``imbalance`` is max part weight / ideal part weight - 1 (0 = perfectly balanced);
+    ``edge_cut_fraction`` is the cut weight divided by the total edge weight of the fine graph.
+    """
+    k = int(k)
+    total_edge_weight = sum(float(d.get(weight_attr, 1.0)) for _, _, d in G.edges(data=True))
+    edge_cut = cut_value(G, part_k, edge_weight_attr=weight_attr)
+    part_weights = np.zeros(max(k, 1), dtype=float)
+    part_sizes = np.zeros(max(k, 1), dtype=int)
+    for u in G.nodes():
+        p = int(part_k.get(u, 0))
+        if p < 0 or p >= len(part_weights):
+            p = 0
+        w = float(G.nodes[u].get("vweight", 1.0))
+        part_weights[p] += w if np.isfinite(w) and w > 0 else 0.0
+        part_sizes[p] += 1
+    total_w = float(part_weights.sum())
+    ideal = total_w / float(max(k, 1)) if total_w > 0 else 0.0
+    imbalance = float(part_weights.max() / ideal - 1.0) if ideal > 0 else 0.0
+    violation = balance_violation(G, part_k, k, balance_tolerance=balance_tolerance)
+    interface_nodes = sum(
+        1 for u in G.nodes() if any(part_k.get(v) != part_k.get(u) for v in G.neighbors(u))
+    )
+    return {
+        "levels": int(levels),
+        "fine_graph": {"nodes": int(G.number_of_nodes()), "edges": int(G.number_of_edges())},
+        "coarse_graph": {"nodes": int(Gc.number_of_nodes()), "edges": int(Gc.number_of_edges())},
+        "effective_k": k,
+        "edge_cut": float(edge_cut),
+        "edge_cut_fraction": float(edge_cut / total_edge_weight) if total_edge_weight > 0 else 0.0,
+        "edge_cut_coarse": float(cut_value(Gc, part_k_coarse, edge_weight_attr=weight_attr)),
+        "imbalance": imbalance,
+        "balance_violation": float(violation),
+        "balance_violation_fraction": float(violation / total_w) if total_w > 0 else 0.0,
+        "part_sizes": [int(x) for x in part_sizes],
+        "part_weights": [float(x) for x in part_weights],
+        "interface_nodes": int(interface_nodes),
+        "interface_fraction": float(interface_nodes / G.number_of_nodes()) if G.number_of_nodes() else 0.0,
     }
