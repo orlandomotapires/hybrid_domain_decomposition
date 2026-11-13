@@ -11,7 +11,7 @@ Automates multi-matrix, multi-scale, and multi-algorithm benchmarking sweeps acr
   - `algorithm_presets`: Partitioning backends (`metis`, `qa_emulated`, `qa_hardware`, `qaoa_emulated`, `qaoa_hardware`) and their `allowed_sizes`
   - `common_defaults`: Overrides applied to every case on top of `base_parameters` (`general_parameters`, `coarsening_parameters`, `partitioning_common`, `uncoarsening_parameters`)
   - `save_output` (optional): Artifacts each case writes (default: all)
-- **[run_batch.py](run_batch.py)** — Executes the Cartesian product of cases in memory and writes each case's results to `batch/runs/batch_<timestamp>/cases/<case_key>/`, plus the aggregated manifest and summary. Case keys are `<matrix>__<algorithm>__<scale>`.
+- **[run_batch.py](../src/libs/batch/run_batch.py)** (`libs.batch.run_batch`) — Executes the Cartesian product of cases in memory and writes each case's results to `batch/runs/batch_<timestamp>/cases/<case_key>/`, plus the aggregated manifest and summary. Case keys are `<matrix>__<algorithm>__<scale>`.
 - **`runs/`** — Output directories containing `batch_manifest.json`, `batch_summary.json`, `batch.log`, `cases/` (per-case results) and async per-case logs. The log ends with `Batch finished: …`; failed cases are reported as `FAILED:` lines, which the Studio shows as errors.
 
 ## Usage

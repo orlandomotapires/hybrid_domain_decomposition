@@ -10,13 +10,13 @@ import time
 from pathlib import Path
 from typing import Any
 
-from libs.multilevel_scheme.coarsening.coarsening import coarsen_graph
+from libs.graph_prep import build_pipeline_graph, default_max_node_weight
+from libs.multilevel_scheme.coarsening.coarsening import coarsen_chain
 from libs.runtime import workspace
 from libs.runtime.matrix_library import list_matrix_ids
 from libs.runtime.utils import (
     AVAILABLE_SAVE_OUTPUTS,
     load_mtx,
-    matrix_to_graph,
     resolve_parameters_file_path,
     resolve_simulation_matrix,
     validate_and_normalize_simulation_config,
@@ -452,107 +452,65 @@ def preview_coarsening(simulation_id: str, params_payload: dict[str, Any]) -> di
                 f"Matrix size N={A.shape[0]} is not divisible by dof_per_node={dof_per_node}"
             )
 
-        G_curr = matrix_to_graph(A, dof_per_node=dof_per_node)
-        for u in G_curr.nodes():
-            if "vweight" not in G_curr.nodes[u]:
-                G_curr.nodes[u]["vweight"] = 1.0
-
         cp = normalized["coarsening_parameters"]
-        pp = normalized["partitioning_parameters"]
-        seed = int(normalized["general_parameters"]["seed"])
-        inferior_limit = int(cp["coarsen_inferior_limit"])
-        superior_limit = cp.get("coarsen_superior_limit")
-        if superior_limit is not None:
-            superior_limit = int(superior_limit)
-        max_levels = int(cp["max_levels"])
-        coarsen_ratio = float(cp["coarsen_ratio"])
-        strategy = str(cp["strategy"])
         weight_attr = str(cp.get("weight", "weight"))
-        k_target = int(pp["common"]["k_target"])
-
-        total_vw = sum(float(G_curr.nodes[u].get("vweight", 1.0)) for u in G_curr.nodes())
+        inferior_limit = int(cp["coarsen_inferior_limit"])
+        superior_limit = None if cp.get("coarsen_superior_limit") is None else int(cp["coarsen_superior_limit"])
+        k_target = int(normalized["partitioning_parameters"]["common"]["k_target"])
+        # The same weighted graph and supernode cap the run uses, coarsened by the run's own algorithm.
+        G0 = build_pipeline_graph(A, dof_per_node, weight_attr)
         max_node_weight = cp.get("max_node_weight")
-        if max_node_weight is None:
-            max_node_weight = 1.5 * (total_vw / max(1, k_target))
-        else:
-            max_node_weight = float(max_node_weight)
+        max_node_weight = float(max_node_weight) if max_node_weight is not None else default_max_node_weight(G0, k_target)
 
-        def _level_info(g, lvl: int, prev_n: int | None, accepted: bool = True) -> dict[str, Any]:
+        def _level_info(g, lvl: int, prev_n: int | None, accepted: bool) -> dict[str, Any]:
             n = g.number_of_nodes()
-            e = g.number_of_edges()
             vws = [float(g.nodes[u].get("vweight", 1.0)) for u in g.nodes()] or [1.0]
-            in_range = (
-                n >= inferior_limit and (superior_limit is None or n <= superior_limit)
-            )
             return {
                 "level": lvl,
                 "nodes": n,
-                "edges": e,
+                "edges": g.number_of_edges(),
                 "reduction_ratio": round(n / prev_n, 4) if prev_n else 1.0,
                 "min_vweight": round(min(vws), 2),
                 "max_vweight": round(max(vws), 2),
-                "in_target_range": in_range,
+                "in_target_range": n >= inferior_limit and (superior_limit is None or n <= superior_limit),
                 "accepted": accepted,
             }
 
-        levels = [_level_info(G_curr, 0, None, True)]
-        stop_reason = None
+        levels = [_level_info(G0, 0, None, True)]
+        stops: list[str] = []
 
-        if superior_limit is not None and inferior_limit <= G_curr.number_of_nodes() <= superior_limit:
-            stop_reason = "Initial graph G_0 is already inside [inferior, superior] range."
-        else:
-            while G_curr.number_of_nodes() > inferior_limit and len(levels) < max_levels:
-                n_prev = G_curr.number_of_nodes()
-                lvl_idx = len(levels)
-                Gc, _ = coarsen_graph(
-                    G_curr,
-                    weight=weight_attr,
-                    seed=seed,
-                    strategy=strategy,
-                    max_node_weight=max_node_weight,
-                )
-                n_coarse = Gc.number_of_nodes()
+        def on_level(g, accepted: bool, reason: str | None) -> None:
+            levels.append(_level_info(g, len(levels), levels[-1]["nodes"] if levels else None, accepted))
+            if reason:
+                stops.append(f"Level {len(levels) - 1}: {reason}.")
 
-                if n_coarse < inferior_limit:
-                    levels.append(_level_info(Gc, lvl_idx, n_prev, accepted=False))
-                    stop_reason = (
-                        f"Level {lvl_idx} would undershoot inferior limit ({n_coarse} < {inferior_limit})."
-                    )
-                    break
-
-                if superior_limit is not None and n_coarse <= superior_limit:
-                    levels.append(_level_info(Gc, lvl_idx, n_prev, accepted=True))
-                    G_curr = Gc
-                    stop_reason = f"Reached target range [{inferior_limit}, {superior_limit}] at level {lvl_idx}."
-                    break
-
-                ratio = n_coarse / n_prev if n_prev > 0 else 1.0
-                if n_coarse >= n_prev:
-                    levels.append(_level_info(Gc, lvl_idx, n_prev, accepted=False))
-                    stop_reason = f"Level {lvl_idx} produced no further node reduction ({n_coarse} >= {n_prev})."
-                    break
-
-                if ratio > coarsen_ratio:
-                    levels.append(_level_info(Gc, lvl_idx, n_prev, accepted=False))
-                    stop_reason = (
-                        f"Level {lvl_idx} reduction ratio ({ratio:.3f}) exceeded coarsen_ratio ({coarsen_ratio:.3f})."
-                    )
-                    break
-
-                levels.append(_level_info(Gc, lvl_idx, n_prev, accepted=True))
-                G_curr = Gc
+        try:
+            coarsen_chain(
+                G0,
+                trial_seed=int(normalized["general_parameters"]["seed"]),
+                coarsen_inferior_limit=inferior_limit,
+                coarsen_superior_limit=superior_limit,
+                max_levels=int(cp["max_levels"]),
+                weight=weight_attr,
+                strategy=str(cp["strategy"]),
+                coarsen_ratio=float(cp["coarsen_ratio"]),
+                max_node_weight=max_node_weight,
+                on_level=on_level,
+            )
+        except ValueError:
+            pass  # unreachable range: reported below from the levels themselves
 
         accepted_levels = [lv for lv in levels if lv["accepted"]]
         final_nodes = accepted_levels[-1]["nodes"]
-        reachable = (
-            final_nodes >= inferior_limit
-            and (superior_limit is None or final_nodes <= superior_limit)
-        )
-        if not stop_reason:
-            if reachable:
-                stop_reason = f"Reached {final_nodes} coarse nodes."
-            else:
-                stop_reason = f"Stopped at max_levels={max_levels} with {final_nodes} coarse nodes (above superior_limit={superior_limit})."
+        reachable = final_nodes >= inferior_limit and (superior_limit is None or final_nodes <= superior_limit)
+        if len(levels) == 1 and reachable:
+            stop_reason = "Initial graph G_0 is already inside [inferior, superior] range."
+        elif reachable:
+            stop_reason = f"Reached {final_nodes} coarse nodes at level {len(accepted_levels) - 1}."
+        elif stops:
+            stop_reason = stops[-1]
+        else:
+            stop_reason = f"Stopped at max_levels={cp['max_levels']} with {final_nodes} coarse nodes (above superior_limit={superior_limit})."
 
         elapsed_ms = round((time.perf_counter() - t0) * 1000.0, 2)
         return {

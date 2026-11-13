@@ -1,6 +1,7 @@
 from libs.runtime.log import log
 from libs.runtime.utils import matrix_to_graph
 from libs.permutation import permute_matrix
+from libs.graph_prep import set_edge_weight_attr, set_node_vweight_diag
 from libs.multilevel_scheme.coarsening.coarsening import coarsen_chain
 from libs.multilevel_scheme.partitioning.partitioning import (
     partition_graph_metis,
@@ -24,22 +25,10 @@ def _clamp_partition_count(requested_k: int, available_nodes: int) -> int:
         raise ValueError("Cannot partition an empty coarse graph")
     return max(1, min(int(requested_k), int(available_nodes)))
 
-def _set_edge_weight_attr(G, attr_name: str):
-    if attr_name == 'weight':
-        return
-    for _, _, data in G.edges(data=True):
-        data[attr_name] = data.get('weight', 1.0)
+# Kept under their old names for callers of this module.
+_set_edge_weight_attr = set_edge_weight_attr
+_set_node_vweight_diag = set_node_vweight_diag
 
-def _set_node_vweight_diag(G, diag: np.ndarray, dof_per_node: int) -> bool:
-    """Node weight = sum of |diagonal| over the node's rows. Falls back to uniform weights
-    (rows per node) when any node's diagonal block is zero, which is common for non-FEM
-    matrices. Returns True when the diagonal was used."""
-    d = int(dof_per_node)
-    node_diag = np.add.reduceat(np.abs(np.asarray(diag, dtype=float).ravel()), np.arange(0, len(diag), d))
-    use_diag = bool(node_diag.size) and bool(np.all(node_diag > 0))
-    for i in G.nodes():
-        G.nodes[i]['vweight'] = float(node_diag[int(i)]) if use_diag else float(d)
-    return use_diag
 
 def decompose_matrix(matrix, general_parameters, coarsening_parameters, partitioning_parameters, uncoarsening_parameters):
     """Run the full pipeline on one square sparse matrix: matrix-to-graph, coarsen, partition,

@@ -3,7 +3,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
-import batch.run_batch as run_batch
+import libs.batch.run_batch as run_batch
 from libs.runtime import workspace
 
 

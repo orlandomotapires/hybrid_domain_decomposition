@@ -161,7 +161,8 @@ def coarsen_chain(
 	weight: str = "weight",
 	strategy: str = "sorted",
 	coarsen_ratio: float = 0.80,
-	max_node_weight: float | None = None
+	max_node_weight: float | None = None,
+	on_level=None,
 ):
 	"""
 	Build coarsening chain with METIS-like improvements.
@@ -179,6 +180,8 @@ def coarsen_chain(
 		coarsen_ratio: Stop if reduction ratio < this (METIS uses ~0.7-0.85)
 		max_node_weight: Maximum allowed supernode weight (None = no limit)
 			Common heuristic: 1.5 * (total_weight / target_parts)
+		on_level: Optional callback ``on_level(graph, accepted, reason)`` called for every
+			candidate level (accepted or rejected), for previews. ``reason`` explains a stop.
 	
 	Returns:
 		graphs: List of graphs from fine to coarse [G0, G1, ..., Gc]
@@ -212,11 +215,15 @@ def coarsen_chain(
 				f"the next level would undershoot the requested inferior limit "
 				f"({n_coarse} < {inferior_limit})"
 			)
+			if on_level:
+				on_level(Gc, False, stop_reason)
 			break
 
 		if superior_limit is not None and n_coarse <= superior_limit:
 			graphs.append(Gc)
 			maps.append(label)
+			if on_level:
+				on_level(Gc, True, None)
 			return graphs, maps
 		
 		# Stop if a new level does not shrink enough to justify another refinement stage.
@@ -225,6 +232,8 @@ def coarsen_chain(
 		if n_coarse >= n_prev:
 			# No reduction - stop coarsening
 			stop_reason = f"the next level would not reduce the graph size ({n_coarse} >= {n_prev})"
+			if on_level:
+				on_level(Gc, False, stop_reason)
 			break
 		
 		if reduction_ratio > coarsen_ratio:
@@ -234,10 +243,14 @@ def coarsen_chain(
 				f"the next level would reduce too little "
 				f"(ratio {reduction_ratio:.3f} > allowed {coarsen_ratio:.3f})"
 			)
+			if on_level:
+				on_level(Gc, False, stop_reason)
 			break
 		
 		graphs.append(Gc)
 		maps.append(label)
+		if on_level:
+			on_level(Gc, True, None)
 
 	if superior_limit is None:
 		return graphs, maps

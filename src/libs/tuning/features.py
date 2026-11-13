@@ -12,20 +12,11 @@ from scipy import sparse
 
 from libs.profiling.matrix_metrics import _sparsity_metrics
 from libs.runtime.matrix_library import load_matrix_meta
+from libs.graph_prep import build_pipeline_graph  # noqa: F401  (re-exported)
 from libs.runtime.utils import load_mtx, matrix_to_graph
 
 FEATURES_FILE = "features.json"
 FEATURES_VERSION = 1
-
-
-def build_pipeline_graph(matrix, dof_per_node: int, weight_attr: str = "weight") -> nx.Graph:
-    """The same weighted graph ``decompose_matrix`` builds (node weights from |diag|)."""
-    from libs.domain_decomposition import _set_edge_weight_attr, _set_node_vweight_diag
-
-    G = matrix_to_graph(matrix, dof_per_node=dof_per_node)
-    _set_node_vweight_diag(G, matrix.diagonal(), dof_per_node)
-    _set_edge_weight_attr(G, weight_attr)
-    return G
 
 
 def _matrix_features(A) -> dict[str, Any]:

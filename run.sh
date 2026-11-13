@@ -58,7 +58,8 @@ case "$1" in
 		;;
 	--run_batch)
 		shift
-		exec "$PYTHON_BIN" "$ROOT_DIR/batch/run_batch.py" "$@"
+		cd "$ROOT_DIR/src"
+		exec "$PYTHON_BIN" -m libs.batch.run_batch "$@"
 		;;
 	--tune)
 		shift

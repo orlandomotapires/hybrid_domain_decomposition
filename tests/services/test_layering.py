@@ -40,7 +40,8 @@ class LayeringTest(unittest.TestCase):
 
     def test_importing_the_services_does_not_load_the_quantum_stack(self) -> None:
         code = (
-            "import sys, hdd.services.simulations, hdd.services.matrices; "
+            "import sys, hdd.services.simulations, hdd.services.matrices, hdd.services.results, hdd.services.batch, "
+            "hdd.services.tuning, hdd.services.hardware; "
             "print(sorted(m for m in ('pennylane', 'dwave', 'neal', 'optuna') if m in sys.modules))"
         )
         out = subprocess.run([sys.executable, "-c", code], env={"PYTHONPATH": str(SRC), "PATH": ""}, capture_output=True, text=True, check=True)
