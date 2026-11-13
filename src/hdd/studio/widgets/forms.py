@@ -100,6 +100,7 @@ class FormGrid(QWidget):
         self._grid.setColumnMinimumWidth(0, LABEL_WIDTH)
         self._grid.setColumnStretch(3, 1)
         self._rows: list[tuple[QWidget, QLabel]] = []
+        self._parts: list[list[QWidget]] = []
 
     def add_row(self, label: str, field: QWidget, unit: str = "", tooltip: str = "") -> int:
         """Append a row and return its index (for ``set_error``)."""
@@ -117,10 +118,12 @@ class FormGrid(QWidget):
             field.setFixedWidth(TEXT_WIDTH)
         self._grid.addWidget(caption, grid_row, 0, Qt.AlignmentFlag.AlignVCenter)
         self._grid.addWidget(field, grid_row, 1, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        parts: list[QWidget] = [caption, field]
         if unit:
             unit_label = QLabel(unit)
             unit_label.setProperty("role", "unit")
             self._grid.addWidget(unit_label, grid_row, 2, Qt.AlignmentFlag.AlignVCenter)
+            parts.append(unit_label)
         error = QLabel()
         error.setProperty("role", "error")
         error.setWordWrap(True)
@@ -128,7 +131,18 @@ class FormGrid(QWidget):
         self._grid.addWidget(error, grid_row + 1, 1, 1, 3)
         self._grid.setRowMinimumHeight(grid_row, 30)
         self._rows.append((field, error))
+        self._parts.append(parts)
         return index
+
+    def set_row_visible(self, row: int, visible: bool) -> None:
+        for widget in self._parts[row]:
+            widget.setVisible(visible)
+        _field, error = self._rows[row]
+        error.setVisible(visible and bool(error.text()))
+        self._grid.setRowMinimumHeight(row * 2, 30 if visible else 0)
+
+    def row_count(self) -> int:
+        return len(self._rows)
 
     def set_error(self, row: int, message: str | None) -> None:
         """Show ``message`` under the field of ``row``; ``None`` clears it."""

@@ -6,6 +6,7 @@ from dataclasses import dataclass
 
 import numpy as np
 import pyqtgraph as pg
+from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import QWidget
 
@@ -193,8 +194,11 @@ class CurveSeries:
 class CurveView(ThemedPlot):
     """Lines over a shared x axis, with a vertical read-out under the cursor."""
 
-    def __init__(self, x_label: str, y_label: str, parent: QWidget | None = None) -> None:
+    def __init__(self, x_label: str, y_label: str, parent: QWidget | None = None, *, integer_x: bool = False, markers: bool = False) -> None:
         super().__init__(parent)
+        self._markers = markers
+        if integer_x:
+            self.getPlotItem().getAxis("bottom").setTickSpacing(1, 1)
         self._x = np.zeros(0)
         self._series: list[CurveSeries] = []
         self._y_range: tuple[float, float] | None = None
@@ -205,7 +209,14 @@ class CurveView(ThemedPlot):
         self._cursor = pg.InfiniteLine(angle=90, movable=False)
         self._readout = pg.TextItem(anchor=(0, 1))
         self._proxy = pg.SignalProxy(self.scene().sigMouseMoved, rateLimit=60, slot=self._on_mouse_moved)
+        self._references: list[tuple[str, float]] = []
         self.restyle()
+
+    def set_reference_lines(self, limits: tuple[int | None, int | None]) -> None:
+        """Horizontal lines marking a target range."""
+        lower, upper = limits
+        self._references = [(label, float(v)) for label, v in (("Lower limit", lower), ("Upper limit", upper)) if v is not None]
+        self.redraw()
 
     def set_curves(self, x: np.ndarray, series: list[CurveSeries], y_range: tuple[float, float] | None = None) -> None:
         self._x, self._series, self._y_range = np.asarray(x, dtype=float), series, y_range
@@ -233,8 +244,16 @@ class CurveView(ThemedPlot):
             else:
                 color = tokens.plot.series[slot]
                 slot += 1
-            line = item.plot(self._x, s.values, pen=pg.mkPen(color, width=2))
+            if self._markers:
+                line = item.plot(self._x, s.values, pen=pg.mkPen(color, width=2), symbol="o", symbolSize=8,
+                                 symbolBrush=pg.mkBrush(color), symbolPen=pg.mkPen(tokens.plot.surface, width=2))
+            else:
+                line = item.plot(self._x, s.values, pen=pg.mkPen(color, width=2))
             legend.addItem(line, s.label)
+        for label, value in self._references:
+            line = pg.InfiniteLine(pos=value, angle=0, movable=False, pen=pg.mkPen(tokens.plot.reference, width=1, style=Qt.PenStyle.DashLine),
+                                   label=f"{label} ({value:,.0f})", labelOpts={"position": 0.02, "color": tokens.plot.muted, "anchors": [(0, 1), (0, 1)]})
+            item.addItem(line)
         self._cursor.setPen(pg.mkPen(tokens.plot.axis, width=1))
         self._cursor.setVisible(False)
         self._readout.setColor(tokens.plot.ink)

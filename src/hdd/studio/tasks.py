@@ -2,7 +2,8 @@
 
 Callbacks always run on the GUI thread. A ``key`` makes a newer request supersede an
 older one with the same key: the stale result is dropped, so a slow load for a node
-the user already left never overwrites the page they are looking at.
+the user already left never overwrites the page they are looking at. An ``owner``
+widget that has been destroyed by the time the result arrives also drops it.
 """
 
 from __future__ import annotations
@@ -11,6 +12,7 @@ import itertools
 import traceback
 from typing import Any, Callable
 
+import shiboken6
 from PySide6.QtCore import QObject, QRunnable, QThreadPool, Signal, Slot
 
 
@@ -41,7 +43,7 @@ class TaskRunner(QObject):
         self._signals = _Signals(self)
         self._signals.done.connect(self._finish)
         self._tokens = itertools.count(1)
-        self._pending: dict[int, tuple[Callable, Callable | None, str | None]] = {}
+        self._pending: dict[int, tuple[Callable, Callable | None, str | None, QObject | None]] = {}
         self._latest: dict[str, int] = {}
 
     def run(
@@ -50,9 +52,10 @@ class TaskRunner(QObject):
         on_result: Callable[[Any], None],
         on_error: Callable[[Exception], None] | None = None,
         key: str | None = None,
+        owner: QObject | None = None,
     ) -> int:
         token = next(self._tokens)
-        self._pending[token] = (on_result, on_error, key)
+        self._pending[token] = (on_result, on_error, key, owner)
         if key is not None:
             self._latest[key] = token
         self._pool.start(_Task(token, fn, self._signals))
@@ -60,9 +63,11 @@ class TaskRunner(QObject):
 
     @Slot(int, object, object)
     def _finish(self, token: int, result: Any, error: Any) -> None:
-        on_result, on_error, key = self._pending.pop(token, (None, None, None))
+        on_result, on_error, key, owner = self._pending.pop(token, (None, None, None, None))
         if on_result is None:
             return
+        if owner is not None and not shiboken6.isValid(owner):
+            return  # the widget that asked is gone
         if key is not None and self._latest.get(key) != token:
             return  # superseded by a newer request
         if error is None:

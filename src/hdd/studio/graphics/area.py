@@ -40,18 +40,21 @@ class GraphicsArea(QWidget):
         super().__init__(parent)
         self._tasks = tasks
         self._result_dir: str | None = None
+        self._limits: tuple[int | None, int | None] = (None, None)
+        self._matrix_shown: str | None = None
 
         self.tabs = QTabBar()
         self.tabs.setExpanding(False)
         self.tabs.setDrawBase(False)
         self.sparsity = SparsityView()
         self.curves = CurveView("Half-bandwidth (% of n)", "Nonzeros inside the band (%)")
+        self.trajectory = CurveView("Level", "Nodes", integer_x=True, markers=True)
         self.message = QLabel()
         self.message.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.message.setProperty("role", "muted")
         self.message.setWordWrap(True)
         self.stack = QStackedWidget()
-        for widget in (self.sparsity, self.curves, self.message):
+        for widget in (self.sparsity, self.curves, self.trajectory, self.message):
             self.stack.addWidget(widget)
 
         self.plot_choice = QComboBox()
@@ -100,16 +103,17 @@ class GraphicsArea(QWidget):
 
     def _on_tab(self, index: int) -> None:
         name = self.tabs.tabText(index)
-        self.stack.setCurrentWidget(self.curves if name == "Locality curve" else self.sparsity)
+        self.stack.setCurrentWidget({"Locality curve": self.curves, "Coarsening": self.trajectory}.get(name, self.sparsity))
         self.plot_choice.setVisible(name == "Sparsity" and self._result_dir is not None)
 
     def current_view(self) -> str:
         widget = self.stack.currentWidget()
-        return "message" if widget is self.message else "curves" if widget is self.curves else "sparsity"
+        return {id(self.message): "message", id(self.curves): "curves", id(self.trajectory): "trajectory"}.get(id(widget), "sparsity")
 
     # ----------------------------------------------------------------- show
     def clear(self, text: str = "Select a matrix or a run to see its plots.") -> None:
         self._result_dir = None
+        self._matrix_shown = None
         self._set_tabs([])
         self.plot_choice.setVisible(False)
         self.fit_button.setVisible(False)
@@ -120,7 +124,29 @@ class GraphicsArea(QWidget):
         self.message.setText(text)
         self.stack.setCurrentWidget(self.message)
 
+    def show_coarsening(self, preview: dict | None) -> None:
+        """Nodes per level of a coarsening preview, with the target range as reference lines."""
+        if preview is None:
+            self.clear("Fix the parameter errors to preview the coarsening.")
+            return
+        levels = [lv for lv in preview["levels"] if lv["accepted"]]
+        x = np.array([lv["level"] for lv in levels], dtype=float)
+        series = [CurveSeries("Nodes", np.array([lv["nodes"] for lv in levels], dtype=float))]
+        self._result_dir = None
+        self._set_tabs(["Coarsening"])
+        self.plot_choice.setVisible(False)
+        self.fit_button.setVisible(True)
+        self.trajectory.set_curves(x, series)
+        self.trajectory.set_reference_lines(self._limits)
+        self.stack.setCurrentWidget(self.trajectory)
+
+    def set_coarsening_limits(self, lower: int | None, upper: int | None) -> None:
+        self._limits = (lower, upper)
+
     def show_matrix(self, matrix_id: str) -> None:
+        if self._matrix_shown == matrix_id and self.stack.currentWidget() is self.sparsity:
+            return
+        self._matrix_shown = matrix_id
         self._result_dir = None
         self._set_tabs(["Sparsity"])
         self.plot_choice.setVisible(False)
@@ -134,6 +160,7 @@ class GraphicsArea(QWidget):
         )
 
     def show_run(self, result_dir: str, detail: dict[str, Any]) -> None:
+        self._matrix_shown = None
         self._result_dir = result_dir
         tabs = []
         if detail.get("can_render_plots"):

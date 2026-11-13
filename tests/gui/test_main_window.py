@@ -48,8 +48,9 @@ def test_window_layout_and_menus(window):
     assert window.dockWidgetArea(window.project_dock) == Qt.DockWidgetArea.LeftDockWidgetArea
     assert window.dockWidgetArea(window.console_dock) == Qt.DockWidgetArea.BottomDockWidgetArea
     menus = [a.text().replace("&", "") for a in window.menuBar().actions()]
-    assert menus == ["File", "Simulation", "Batch", "View", "Help"]
+    assert menus == ["File", "Edit", "Simulation", "Batch", "View", "Help"]
     assert window.windowTitle().startswith("ws")
+    assert not window.isWindowModified()
 
 
 def test_tree_shows_the_workspace(window):

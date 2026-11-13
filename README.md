@@ -66,9 +66,10 @@ pip install -r requirements.txt
 
 A native desktop application (Qt 6) for Ubuntu 24.04 is replacing the web Studio. It opens a
 workspace, shows it as a project tree (matrices, simulations with their stages, presets, tuning
-studies, runs, batches), runs simulations with a live log, and plots sparsity patterns and
-locality curves. Parameter editing, batch and tuning screens are still being ported; until then
-use the web Studio for those.
+studies, runs, batches), edits simulation parameters with per-field validation, undo/redo and a
+live coarsening preview, manages presets (save, load, activate, compare), runs simulations with a
+live log, and plots sparsity patterns and locality curves. Editing batch configurations and
+running tuning studies are still being ported; until then use the web Studio for those.
 
 ```sh
 pip install -e ".[gui]"            # PySide6 and pyqtgraph

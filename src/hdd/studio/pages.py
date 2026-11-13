@@ -23,7 +23,7 @@ from .tree import Node
 from .widgets import InlineMessage, PropertyTable, Section
 from .widgets.tables import DataTable, fmt
 
-READ_ONLY_NOTE = "Read-only in this version of the desktop app. Editing parameters arrives in the next version."
+READ_ONLY_NOTE = "Read-only in this version of the desktop app. Edit the batch configuration in the web Studio for now."
 
 PARAMETER_LABELS = {
     "dof_per_node": ("Rows per graph node (dof)", ""),
