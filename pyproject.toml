@@ -24,10 +24,24 @@ dependencies = [
   "optuna>=5.0",
 ]
 
+[project.optional-dependencies]
+# Desktop application (HDD Studio Desktop). Floors are the versions it was built and tested with.
+gui = [
+  "PySide6-Essentials>=6.12",
+  "pyqtgraph>=0.14",
+]
+dev = [
+  "pytest>=9",
+  "pytest-qt>=4.5",
+]
+
 [project.scripts]
 hdd-run = "main:cli_main"
 hdd-tune = "libs.tuning.cli:main"
 hdd-qlm-inspect = "libs.multilevel_scheme.partitioning.qaoa.qlm_inspect:cli_main"
+
+[project.gui-scripts]
+hdd-studio = "hdd.studio.app:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
@@ -35,5 +49,8 @@ py-modules = ["main"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
-include = ["libs*"]
+include = ["libs*", "hdd*"]
 namespaces = true
+
+[tool.setuptools.package-data]
+"hdd.studio" = ["resources/**/*"]

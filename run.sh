@@ -19,6 +19,7 @@ show_usage() {
 	echo "Usage:" >&2
 	echo "  ./run.sh <simulation_dir>" >&2
 	echo "  ./run.sh --ui [--host HOST] [--port PORT] [--reload]" >&2
+	echo "  ./run.sh --desktop [--theme system|light|dark] [--gallery]" >&2
 	echo "  ./run.sh --run_batch [batch_args...]" >&2
 	echo "  ./run.sh --tune <simulation_dir> [--auto | tuning_args...]" >&2
 	echo "  ./run.sh --qlm_inspect [inspect_args...]" >&2
@@ -49,6 +50,11 @@ case "$1" in
 		npm --prefix "$ROOT_DIR/frontend" run build
 		cd "$ROOT_DIR"
 		exec "$PYTHON_BIN" -m backend.app "$@"
+		;;
+	--desktop)
+		shift
+		cd "$ROOT_DIR/src"
+		exec "$PYTHON_BIN" -m hdd.studio "$@"
 		;;
 	--run_batch)
 		shift
