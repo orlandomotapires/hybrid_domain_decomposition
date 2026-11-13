@@ -17,6 +17,10 @@ for p in (str(ROOT_DIR), str(SRC_DIR)):
     if p not in sys.path:
         sys.path.insert(0, p)
 
+from fastapi import Request
+from fastapi.responses import JSONResponse
+
+from hdd.services.errors import ServiceError
 from backend.routes.matrices import router as matrices_router
 from backend.routes.library import router as library_router
 from backend.routes.execution import router as execution_router
@@ -38,6 +42,12 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+@app.exception_handler(ServiceError)
+async def service_error_handler(_request: Request, exc: ServiceError) -> JSONResponse:
+    """Errors from the application layer keep the response shape FastAPI uses for HTTPException."""
+    return JSONResponse(status_code=exc.status, content={"detail": exc.message})
+
 
 app.include_router(matrices_router)
 app.include_router(library_router)
