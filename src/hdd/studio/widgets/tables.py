@@ -34,6 +34,7 @@ class DataTable(QTableWidget):
         numeric: set[int] | None = None,
         max_visible_rows: int | None = 14,
         stretch: int | None = 0,
+        multi_select: bool = False,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(0, len(headers), parent)
@@ -45,7 +46,7 @@ class DataTable(QTableWidget):
         self.setAlternatingRowColors(False)
         self.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection if multi_select else QAbstractItemView.SelectionMode.SingleSelection)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setWordWrap(False)
         header = self.horizontalHeader()
@@ -78,6 +79,10 @@ class DataTable(QTableWidget):
         )
         row_h = self.verticalHeader().defaultSectionSize()
         self.setFixedHeight(self.horizontalHeader().sizeHint().height() + max(visible, 1) * row_h + 2)
+
+    def selected_data(self) -> list[Any]:
+        rows = sorted({index.row() for index in self.selectionModel().selectedRows()})
+        return [self.item(row, 0).data(Qt.ItemDataRole.UserRole) for row in rows]
 
     def on_activate(self, callback: Callable[[Any], None]) -> None:
         """Call ``callback(row_data)`` when a row is double-clicked or Enter is pressed."""

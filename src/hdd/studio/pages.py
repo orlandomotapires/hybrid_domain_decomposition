@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from typing import Any, Callable
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QHBoxLayout, QLabel, QPlainTextEdit, QPushButton, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QComboBox, QHBoxLayout, QLabel, QPlainTextEdit, QPushButton, QVBoxLayout, QWidget
 
 from hdd.services import batch, hardware, matrices, results, simulations, tuning
 from hdd.services.catalog import method_label
@@ -73,6 +73,8 @@ class PageActions:
     open_path: Callable[[str], None]
     export_run: Callable[[str], None]
     select_key: Callable[[str], None]
+    compare_runs: Callable[[list[str]], None] = lambda dirs: None
+    show_batch: Callable[[str, str, str], None] = lambda batch, matrix, scale: None
 
 
 def _param_rows(block: dict[str, Any]) -> list[tuple[str, str, str]]:
@@ -162,7 +164,7 @@ LOADERS: dict[str, Callable[[Node], Any]] = {
     "batch": lambda node: batch.list_batch_runs()["batch_runs"],
     "batch_config": lambda node: {**batch.load_configuration(), "plan": batch.plan(batch.load_configuration()["configuration"], batch.duration_estimates())},
     "batch_runs": lambda node: batch.list_batch_runs()["batch_runs"],
-    "batch_run": lambda node: batch.get_batch_run(node.data["batch"]),
+    "batch_run": lambda node: {**batch.get_batch_run(node.data["batch"]), "analysis": results.batch_analysis(node.data["batch"])},
     "hardware": lambda node: hardware.environment_status(),
 }
 
@@ -408,19 +410,57 @@ def _kpi_rows(kpi: dict[str, Any]) -> list[tuple[str, str, str]]:
     ]
 
 
+MAX_COMPARED_RUNS = 5
+
+
 def _build_results(node: Node, data: list[dict], actions: PageActions) -> Page:
     page = Page()
-    table = DataTable(["Run", "Method", "k", "Bandwidth reduction (%)"], numeric={2, 3})
+    table = DataTable(["Run", "Method", "k", "Bandwidth reduction (%)"], numeric={2, 3}, multi_select=True)
     table.set_rows(
-        [[r["run_id"], method_label(r.get("partitioning_strategy"), r.get("simulated"), short=True), r.get("k_target"),
-          fmt((r.get("kpi_summary") or {}).get("bandwidth_reduction_pct"), 1)] for r in data],
-        [f"run:{r['result_dir']}" for r in data],
+        [[r["run_id"], method_label(r.get("partitioning_strategy"), r.get("simulated"), short=True) if r.get("partitioning_strategy") != "unknown" else "—",
+          r.get("k_target"), fmt((r.get("kpi_summary") or {}).get("bandwidth_reduction_pct"), 1)] for r in data],
+        [r["result_dir"] for r in data],
     )
-    table.on_activate(actions.select_key)
+    table.on_activate(lambda result_dir: actions.select_key(f"run:{result_dir}"))
     page.section("Runs", table)
     if not data:
         page.note("No runs yet. Select the simulation and press Run.")
+        return page
+    compare = _button("Compare selected", lambda: actions.compare_runs(table.selected_data()[:MAX_COMPARED_RUNS]), icon="compare")
+    hint = QLabel(f"Select up to {MAX_COMPARED_RUNS} runs (Ctrl+click) to overlay their locality curves.")
+    hint.setProperty("role", "muted")
+    hint.setWordWrap(True)
+
+    def update() -> None:
+        count = len(table.selected_data())
+        compare.setEnabled(count >= 1)
+        compare.setText(f"Compare {min(count, MAX_COMPARED_RUNS)} selected" if count > 1 else "Compare selected")
+
+    table.itemSelectionChanged.connect(update)
+    update()
+    page.add(hint)
+    page.add(_buttons(compare))
     return page
+
+
+def build_comparison_table(details: list[dict], labels: list[str]) -> DataTable:
+    """KPIs of several runs side by side."""
+    rows = []
+    metrics = [
+        ("Bandwidth, permuted", "bandwidth_permuted", 0),
+        ("Bandwidth reduction (%)", "bandwidth_reduction_pct", 1),
+        ("Average bandwidth, permuted", "avg_bandwidth_permuted", 1),
+        ("Within 1 % of the diagonal (%)", "frac_1_0pct_permuted", 1),
+    ]
+    for label, key, decimals in metrics:
+        row = [label]
+        for d in details:
+            value = (d.get("kpi_summary") or {}).get(key)
+            if key.startswith("frac_") and value is not None:
+                value *= 100
+            row.append(fmt(value, decimals))
+        rows.append(row)
+    return DataTable(["Metric"] + labels, rows, numeric=set(range(1, len(labels) + 1)), stretch=0)
 
 
 def _build_run(node: Node, data: dict, actions: PageActions) -> Page:
@@ -491,10 +531,41 @@ def _build_batch_run(node: Node, data: dict, actions: PageActions) -> Page:
         ("Started", str(manifest.get("batch_started_at") or "—"), ""),
         ("Finished", str(manifest.get("batch_finished_at") or "—"), ""),
         ("Cases", fmt(len(rows)), ""),
+        ("Completed", fmt(sum(1 for r in rows if r.get("status") == "completed")), ""),
     ]))
-    table = DataTable(["Case", "Status", "Bandwidth, permuted"], numeric={2})
-    table.set_rows([[r.get("case_key", "—"), r.get("status", "—"), r.get("bandwidth_permuted")] for r in rows])
-    page.section("Cases", table)
+
+    analysis = data.get("analysis") or {}
+    matrices = analysis.get("available_demonstrators") or []
+    if matrices:
+        matrix_box, scale_box = QComboBox(), QComboBox()
+        matrix_box.addItems(matrices)
+        scales = [s for s in ("small", "medium", "big") if any(r.get("coarsening_size") == s for r in rows)] or ["big"]
+        scale_box.addItems(scales)
+        from .widgets import FormGrid
+
+        form = FormGrid()
+        form.add_row("Matrix", matrix_box)
+        form.add_row("Coarsening scale", scale_box)
+        summary = DataTable(["Method", "Scale", "Bandwidth, permuted", "Within 1 % (%)"], numeric={2, 3}, stretch=0)
+
+        def refresh() -> None:
+            matrix = matrix_box.currentText()
+            completed = [r for r in rows if r.get("status") == "completed" and r.get("geometry") == matrix]
+            summary.set_rows([
+                [method_label(r.get("algorithm"), short=True), r.get("coarsening_size", "—"), r.get("bandwidth_permuted"),
+                 fmt(100 * r["frac_1_0pct_permuted"], 1) if r.get("frac_1_0pct_permuted") is not None else "—"]
+                for r in completed
+            ])
+            actions.show_batch(data["id"], matrix, scale_box.currentText())
+
+        matrix_box.currentIndexChanged.connect(lambda _i: refresh())
+        scale_box.currentIndexChanged.connect(lambda _i: refresh())
+        page.section("Analysis", form, summary)
+        refresh()
+
+    table = DataTable(["Case", "Status"], max_visible_rows=10)
+    table.set_rows([[r.get("case_key", "—"), r.get("status", "—")] for r in rows])
+    page.section("Cases", table, expanded=not matrices)
     page.add(_buttons(_button("Open folder", lambda: actions.open_path(f"batch/runs/{data['id']}"), icon="folder")))
     return page
 

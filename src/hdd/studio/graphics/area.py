@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
+import csv
+import shutil
+from pathlib import Path
 from typing import Any
 
 import numpy as np
 from PySide6.QtCore import QSize, Qt
-from PySide6.QtWidgets import QComboBox, QHBoxLayout, QLabel, QStackedWidget, QTabBar, QToolButton, QVBoxLayout, QWidget
+from PySide6.QtGui import QAction
+from PySide6.QtWidgets import QComboBox, QFileDialog, QHBoxLayout, QLabel, QMenu, QStackedWidget, QTabBar, QToolButton, QVBoxLayout, QWidget
 
-from hdd.services import results
+from hdd.services import catalog, results
 from libs.runtime.matrix_library import resolve_matrix
 from libs.runtime.utils import load_mtx
 
@@ -49,12 +53,13 @@ class GraphicsArea(QWidget):
         self.sparsity = SparsityView()
         self.curves = CurveView("Half-bandwidth (% of n)", "Nonzeros inside the band (%)")
         self.trajectory = CurveView("Level", "Nodes", integer_x=True, markers=True)
+        self.bands = CurveView("Half-bandwidth (% of n)", "Nonzeros inside the band (%)", markers=True)
         self.message = QLabel()
         self.message.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.message.setProperty("role", "muted")
         self.message.setWordWrap(True)
         self.stack = QStackedWidget()
-        for widget in (self.sparsity, self.curves, self.trajectory, self.message):
+        for widget in (self.sparsity, self.curves, self.trajectory, self.bands, self.message):
             self.stack.addWidget(widget)
 
         self.plot_choice = QComboBox()
@@ -68,6 +73,14 @@ class GraphicsArea(QWidget):
         self.fit_button.setIconSize(QSize(16, 16))
         Theme.instance().bind_icon(self.fit_button, "fit")
         self.fit_button.clicked.connect(lambda: self.stack.currentWidget().fit() if hasattr(self.stack.currentWidget(), "fit") else None)
+        self.export_button = QToolButton()
+        self.export_button.setToolTip("Export the plot")
+        self.export_button.setIconSize(QSize(16, 16))
+        self.export_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        Theme.instance().bind_icon(self.export_button, "image")
+        self.export_menu = QMenu(self)
+        self.export_menu.aboutToShow.connect(self._fill_export_menu)
+        self.export_button.setMenu(self.export_menu)
 
         strip = QWidget()
         strip.setObjectName("TabStrip")
@@ -79,6 +92,7 @@ class GraphicsArea(QWidget):
         row.addStretch(1)
         row.addWidget(self.plot_choice)
         row.addWidget(self.fit_button)
+        row.addWidget(self.export_button)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -103,12 +117,16 @@ class GraphicsArea(QWidget):
 
     def _on_tab(self, index: int) -> None:
         name = self.tabs.tabText(index)
-        self.stack.setCurrentWidget({"Locality curve": self.curves, "Coarsening": self.trajectory}.get(name, self.sparsity))
+        self.stack.setCurrentWidget(
+            {"Locality curve": self.curves, "Comparison": self.curves, "Coarsening": self.trajectory, "Band concentration": self.bands}.get(name, self.sparsity)
+        )
         self.plot_choice.setVisible(name == "Sparsity" and self._result_dir is not None)
 
     def current_view(self) -> str:
         widget = self.stack.currentWidget()
-        return {id(self.message): "message", id(self.curves): "curves", id(self.trajectory): "trajectory"}.get(id(widget), "sparsity")
+        return {id(self.message): "message", id(self.curves): "curves", id(self.trajectory): "trajectory", id(self.bands): "bands"}.get(
+            id(widget), "sparsity"
+        )
 
     # ----------------------------------------------------------------- show
     def clear(self, text: str = "Select a matrix or a run to see its plots.") -> None:
@@ -117,6 +135,7 @@ class GraphicsArea(QWidget):
         self._set_tabs([])
         self.plot_choice.setVisible(False)
         self.fit_button.setVisible(False)
+        self.export_button.setVisible(False)
         self.message.setText(text)
         self.stack.setCurrentWidget(self.message)
 
@@ -136,6 +155,7 @@ class GraphicsArea(QWidget):
         self._set_tabs(["Coarsening"])
         self.plot_choice.setVisible(False)
         self.fit_button.setVisible(True)
+        self.export_button.setVisible(True)
         self.trajectory.set_curves(x, series)
         self.trajectory.set_reference_lines(self._limits)
         self.stack.setCurrentWidget(self.trajectory)
@@ -151,6 +171,7 @@ class GraphicsArea(QWidget):
         self._set_tabs(["Sparsity"])
         self.plot_choice.setVisible(False)
         self.fit_button.setVisible(True)
+        self.export_button.setVisible(True)
         self._busy("Loading matrix…")
         self._tasks.run(
             lambda: load_matrix_pattern(matrix_id),
@@ -172,6 +193,7 @@ class GraphicsArea(QWidget):
             return
         self._set_tabs(tabs)
         self.fit_button.setVisible(True)
+        self.export_button.setVisible(True)
         curves = detail.get("curves") or []
         if curves:
             x = np.array([p["percent"] for p in curves])
@@ -204,3 +226,113 @@ class GraphicsArea(QWidget):
         self.sparsity.set_data(data)
         if self.tabs.count() and self.tabs.tabText(self.tabs.currentIndex()) == "Sparsity":
             self.stack.setCurrentWidget(self.sparsity)
+
+    # ------------------------------------------------------------- comparison
+    def show_comparison(self, runs: list[dict[str, Any]]) -> None:
+        """Locality curves of several runs: each run in its own colour, the original ordering in grey."""
+        runs = [r for r in runs if r.get("curves")]
+        if not runs:
+            self.clear("The selected runs have no metrics to compare.")
+            return
+        x = np.array([p["percent"] for p in runs[0]["curves"]])
+        series = [CurveSeries(r["label"], np.array([100 * p["permuted"] for p in r["curves"]][: len(x)])) for r in runs]
+        series.append(CurveSeries("Original", np.array([100 * p["original"] for p in runs[0]["curves"]][: len(x)]), reference=True))
+        top = max(float(s.values.max()) for s in series)
+        self._result_dir = None
+        self._matrix_shown = None
+        self._set_tabs(["Comparison"])
+        self.plot_choice.setVisible(False)
+        self.fit_button.setVisible(True)
+        self.export_button.setVisible(True)
+        self.curves.set_curves(x, series, y_range=(0, max(top, 1.0) * 1.05))
+        self.stack.setCurrentWidget(self.curves)
+
+    def show_band_concentration(self, curve: dict[str, Any] | None, title: str = "") -> None:
+        """One coarsening scale of a batch: share of nonzeros near the diagonal for each method."""
+        if not curve or not curve.get("points"):
+            self.clear("No completed cases for this matrix and scale.")
+            return
+        points = curve["points"]
+        x = np.array([p["percent"] for p in points], dtype=float)
+        tokens = Theme.instance().tokens
+        series = []
+        for method in curve["methods"]:
+            key = catalog.method_key(method)
+            color = tokens.plot.series[catalog.METHOD_SLOT[key]] if key in catalog.METHOD_SLOT else None
+            series.append(CurveSeries(catalog.method_label(method, short=True), np.array([100 * p.get(method, np.nan) for p in points]), color))
+        series.append(CurveSeries("Original", np.array([100 * p.get("Original", np.nan) for p in points]), reference=True))
+        top = np.nanmax([np.nanmax(s.values) for s in series])
+        self._result_dir = None
+        self._matrix_shown = None
+        self._set_tabs(["Band concentration"])
+        self.plot_choice.setVisible(False)
+        self.fit_button.setVisible(True)
+        self.export_button.setVisible(True)
+        self.bands.set_curves(x, series, y_range=(0, float(max(top, 1.0)) * 1.05))
+        self.bands.getPlotItem().setTitle(title, color=tokens.plot.ink, size=f"{tokens.type.base_pt:g}pt")
+        self.stack.setCurrentWidget(self.bands)
+
+    # ----------------------------------------------------------------- export
+    def _fill_export_menu(self) -> None:
+        self.export_menu.clear()
+        view = self.stack.currentWidget()
+        if view is self.message:
+            return
+        for text, suffix in (("Image (PNG)…", "png"), ("Image (SVG)…", "svg")):
+            action = QAction(text, self.export_menu)
+            action.triggered.connect(lambda _c=False, s=suffix: self._ask_and_export(s))
+            self.export_menu.addAction(action)
+        if view is not self.sparsity:
+            action = QAction("Data (CSV)…", self.export_menu)
+            action.triggered.connect(lambda: self._ask_and_export("csv"))
+            self.export_menu.addAction(action)
+        if view is self.sparsity and self._result_dir:
+            self.export_menu.addSeparator()
+            action = QAction("Publication figure (PNG, 160 dpi)…", self.export_menu)
+            action.triggered.connect(lambda: self._ask_and_export("figure"))
+            self.export_menu.addAction(action)
+
+    def _ask_and_export(self, kind: str) -> None:
+        suffix = "png" if kind == "figure" else kind
+        name = self.tabs.tabText(self.tabs.currentIndex()).lower().replace(" ", "_") or "plot"
+        path, _ = QFileDialog.getSaveFileName(self, "Export", str(Path.home() / f"{name}.{suffix}"), f"{suffix.upper()} (*.{suffix})")
+        if path:
+            self.export(kind, path)
+
+    def export(self, kind: str, path: str) -> Path:
+        """Write the current view: ``png``/``svg`` as shown, ``csv`` data of a curve view, ``figure`` the matplotlib rendering."""
+        import pyqtgraph.exporters as exporters
+
+        view = self.stack.currentWidget()
+        target = Path(path)
+        if kind == "figure":
+            source = results.render_plot_png(self._result_dir, self.plot_choice.currentData())
+            shutil.copyfile(source, target)
+        elif kind == "csv":
+            if not isinstance(view, CurveView):
+                raise ValueError("Only curves can be exported as CSV")
+            series = view.series()
+            with target.open("w", newline="", encoding="utf-8") as handle:
+                writer = csv.writer(handle)
+                writer.writerow([view.getPlotItem().getAxis("bottom").labelText] + [s.label for s in series])
+                for i, x in enumerate(view.x_values()):
+                    writer.writerow([x] + [s.values[i] for s in series])
+        elif kind == "svg":
+            # pyqtgraph's SVG exporter fails on scatter plots; Qt's SVG painter keeps the vectors.
+            from PySide6.QtCore import QRect, QSize
+            from PySide6.QtGui import QPainter
+            from PySide6.QtSvg import QSvgGenerator
+
+            generator = QSvgGenerator()
+            generator.setFileName(str(target))
+            generator.setSize(QSize(view.width(), view.height()))
+            generator.setViewBox(QRect(0, 0, view.width(), view.height()))
+            generator.setTitle(self.tabs.tabText(self.tabs.currentIndex()))
+            painter = QPainter(generator)
+            view.render(painter)
+            painter.end()
+        else:
+            exporter = exporters.ImageExporter(view.getPlotItem())
+            exporter.parameters()["width"] = max(1600, int(view.width() * 2))
+            exporter.export(str(target))
+        return target

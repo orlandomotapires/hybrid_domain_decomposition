@@ -59,6 +59,9 @@ class ThemedPlot(pg.PlotWidget):
     def fit(self) -> None:
         self.getPlotItem().autoRange()
 
+    #: Legend corner as a pyqtgraph offset: positive values count from the left/top edge.
+    legend_offset = (-12, 12)
+
     def legend(self) -> pg.LegendItem:
         tokens = Theme.instance().tokens
         item = self.getPlotItem()
@@ -68,7 +71,7 @@ class ThemedPlot(pg.PlotWidget):
         surface = QColor(tokens.plot.surface)
         surface.setAlpha(235)
         return item.addLegend(
-            offset=(-12, 12),
+            offset=self.legend_offset,
             labelTextColor=tokens.plot.ink,
             labelTextSize=f"{tokens.type.small_pt:g}pt",
             pen=pg.mkPen(tokens.plot.grid),
@@ -194,6 +197,8 @@ class CurveSeries:
 class CurveView(ThemedPlot):
     """Lines over a shared x axis, with a vertical read-out under the cursor."""
 
+    legend_offset = (12, 12)  # these curves rise to the right, so the legend sits top-left
+
     def __init__(self, x_label: str, y_label: str, parent: QWidget | None = None, *, integer_x: bool = False, markers: bool = False) -> None:
         super().__init__(parent)
         self._markers = markers
@@ -224,6 +229,9 @@ class CurveView(ThemedPlot):
 
     def series(self) -> list[CurveSeries]:
         return list(self._series)
+
+    def x_values(self) -> np.ndarray:
+        return self._x.copy()
 
     def redraw(self) -> None:
         tokens = Theme.instance().tokens

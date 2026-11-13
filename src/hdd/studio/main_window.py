@@ -483,7 +483,65 @@ class MainWindow(QMainWindow):
 
     def _page_actions(self) -> pages.PageActions:
         return pages.PageActions(
-            run_simulation=self.run_simulation, open_path=self.open_path, export_run=self.export_run, select_key=self.select_key
+            run_simulation=self.run_simulation,
+            open_path=self.open_path,
+            export_run=self.export_run,
+            select_key=self.select_key,
+            compare_runs=self.compare_runs,
+            show_batch=self.show_batch_analysis,
+        )
+
+    def compare_runs(self, result_dirs: list[str]) -> None:
+        """Overlay the locality curves of up to five runs and list their KPIs side by side."""
+        if not result_dirs:
+            return
+        if len(result_dirs) == 1:
+            self.select_key(f"run:{result_dirs[0]}")
+            return
+        node = self.project.current_node()
+
+        def load() -> list[dict]:
+            return [results.get_run_detail(d) for d in result_dirs]
+
+        def show(details: list[dict]) -> None:
+            labels = [self._run_label(d) for d in details]
+            self.graphics.show_comparison([{"label": label, "curves": d.get("curves")} for label, d in zip(labels, details)])
+            page = self.settings_panel.page()
+            if self.project.current_node() is node and isinstance(page, pages.Page):
+                old = getattr(page, "_comparison", None)
+                if old is not None:
+                    old.setParent(None)
+                section = pages.Section("Comparison")
+                section.add(pages.build_comparison_table(details, labels))
+                page.box.insertWidget(page.box.count() - 1, section)
+                page._comparison = section
+
+        self.ctx.tasks.run(load, show, lambda exc: QMessageBox.warning(self, "Compare runs", str(exc)), key="graphics")
+
+    @staticmethod
+    def _run_label(detail: dict) -> str:
+        """Short legend label of a run: method, k and time."""
+        from hdd.services.catalog import method_label
+
+        pp = (detail.get("run_parameters") or {}).get("partitioning_parameters") or {}
+        strategy = pp.get("partitioning_strategy")
+        stamp = Path(detail["result_dir"]).name.removeprefix("run_")
+        time = f"{stamp[9:11]}:{stamp[11:13]}:{stamp[13:15]}" if len(stamp) >= 15 else stamp
+        if not strategy:
+            return time
+        simulated = (pp.get("strategies") or {}).get(strategy, {}).get("simulated")
+        return f"{method_label(strategy, simulated, short=True)} k={(pp.get('common') or {}).get('k_target')} · {time}"
+
+    def show_batch_analysis(self, batch_id: str, matrix: str, scale: str) -> None:
+        def load() -> dict | None:
+            analysis = results.batch_analysis(batch_id, matrix)
+            return next((c for c in analysis["comparison_curves"] if c["coarsening_size"] == scale), None)
+
+        self.ctx.tasks.run(
+            load,
+            lambda curve: self.graphics.show_band_concentration(curve, f"{matrix} · {scale} coarsening"),
+            lambda exc: self.graphics.clear(f"Could not load the batch analysis: {exc}"),
+            key="graphics",
         )
 
     def _simulation_actions(self) -> sim_pages.SimulationActions:
