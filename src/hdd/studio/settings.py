@@ -31,6 +31,23 @@ class Settings:
     def set_theme_mode(self, mode: str) -> None:
         self._backend.setValue("ui/theme", mode)
 
+    # -------------------------------------------------------------- workspaces
+    def last_workspace(self) -> str | None:
+        value = self._backend.value("workspace/last")
+        return value if isinstance(value, str) and value else None
+
+    def recent_workspaces(self) -> list[str]:
+        value = self._backend.value("workspace/recent", [])
+        if isinstance(value, str):
+            value = [value]
+        return [v for v in (value or []) if isinstance(v, str)]
+
+    def remember_workspace(self, path: str) -> None:
+        recent = [path] + [p for p in self.recent_workspaces() if p != path]
+        self._backend.setValue("workspace/recent", recent[:8])
+        self._backend.setValue("workspace/last", path)
+        self._backend.sync()
+
     # ------------------------------------------------------------------ layout
     def window_geometry(self) -> QByteArray | None:
         return self._bytes("window/geometry")

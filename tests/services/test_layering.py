@@ -48,5 +48,16 @@ class LayeringTest(unittest.TestCase):
         self.assertEqual("[]", out.stdout.strip())
 
 
+class DesktopImportCostTest(unittest.TestCase):
+    def test_opening_the_desktop_app_does_not_load_heavy_or_web_stacks(self) -> None:
+        code = (
+            "import sys, hdd.studio.main_window; "
+            "print(sorted(m for m in ('pennylane', 'dwave', 'neal', 'optuna', 'matplotlib.pyplot', 'fastapi') if m in sys.modules))"
+        )
+        env = {"PYTHONPATH": str(SRC), "PATH": "", "QT_QPA_PLATFORM": "offscreen"}
+        out = subprocess.run([sys.executable, "-c", code], env=env, capture_output=True, text=True, check=True)
+        self.assertEqual("[]", out.stdout.strip())
+
+
 if __name__ == "__main__":
     unittest.main()

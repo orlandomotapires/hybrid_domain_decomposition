@@ -1,46 +1,43 @@
-"""Main window: menus, tool bar, dockable panels, graphics area and status bar.
-
-Phase 1 fills the panels with example data (``hdd.studio.prototype``); the
-window structure, the docking behaviour and every visual rule are the real ones.
-"""
+"""Main window: menus, tool bar, dockable panels, graphics area and status bar."""
 
 from __future__ import annotations
 
-from PySide6.QtCore import QSize, QSortFilterProxyModel, Qt, QTimer, Signal
-from PySide6.QtGui import QAction, QActionGroup, QCloseEvent, QKeySequence, QStandardItem, QStandardItemModel
+from pathlib import Path
+
+from PySide6.QtCore import QSize, Qt, QTimer, QUrl
+from PySide6.QtGui import QAction, QActionGroup, QCloseEvent, QDesktopServices, QKeySequence
 from PySide6.QtWidgets import (
-    QAbstractItemView,
     QDockWidget,
+    QFileDialog,
     QHBoxLayout,
-    QHeaderView,
+    QInputDialog,
     QLabel,
-    QLineEdit,
     QMainWindow,
+    QMessageBox,
     QProgressBar,
     QScrollArea,
-    QStackedWidget,
-    QTabBar,
-    QTableWidget,
-    QTableWidgetItem,
     QTabWidget,
     QToolBar,
     QToolButton,
-    QTreeView,
     QVBoxLayout,
     QWidget,
 )
 
-from . import APP_NAME
-from .prototype import pages, sample_data
-from .prototype.plots import LocalityPlot, SparsityPlot
+from hdd.services import batch, matrices, results
+from hdd.services.catalog import STAGE_LABELS
+from hdd.services.errors import ServiceError
+from libs.runtime import workspace
+
+from . import APP_NAME, pages
+from .context import AppContext
+from .graphics.area import GraphicsArea
+from .jobs_panel import JobConsole, JobsPanel
+from .project import ProjectSnapshot, load_snapshot
 from .settings import LAYOUT_VERSION, Settings
 from .theme import MODES, Theme
-from .widgets import ConsolePanel, segmented
-from .widgets.log_view import LogEntry
-
-KIND_ROLE = Qt.ItemDataRole.UserRole + 1
-ICON_ROLE = Qt.ItemDataRole.UserRole + 2
-ICON_TINT_ROLE = Qt.ItemDataRole.UserRole + 3
+from .tree import Node, ProjectPanel
+from .widgets import ConsolePanel
+from .widgets.tables import DataTable
 
 THEME_LABELS = {"system": "Follow system", "light": "Light", "dark": "Dark"}
 
@@ -96,125 +93,8 @@ class Dock(QDockWidget):
         return self._title_visible
 
 
-class ProjectPanel(QWidget):
-    """Project tree with a filter field."""
-
-    node_selected = Signal(str, str, list)  # kind, label, breadcrumb
-
-    def __init__(self, parent: QWidget | None = None) -> None:
-        super().__init__(parent)
-        theme = Theme.instance()
-        self.filter = QLineEdit()
-        self.filter.setPlaceholderText("Filter")
-        self.filter.setClearButtonEnabled(True)
-        self._filter_action = QAction(self.filter)
-        theme.bind_icon(self._filter_action, "search", "muted")
-        self.filter.addAction(self._filter_action, QLineEdit.ActionPosition.LeadingPosition)
-
-        self.model = QStandardItemModel(self)
-        self._populate(self.model.invisibleRootItem(), sample_data.project_tree())
-        self.proxy = QSortFilterProxyModel(self)
-        self.proxy.setSourceModel(self.model)
-        self.proxy.setRecursiveFilteringEnabled(True)
-        self.proxy.setFilterCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
-        self.filter.textChanged.connect(self._on_filter_changed)
-
-        self.tree = QTreeView()
-        self.tree.setModel(self.proxy)
-        self.tree.setHeaderHidden(True)
-        self.tree.setUniformRowHeights(True)
-        self.tree.setIndentation(16)
-        self.tree.setIconSize(QSize(16, 16))
-        self.tree.setAnimated(False)
-        self.tree.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        self.tree.selectionModel().currentChanged.connect(self._on_current_changed)
-        self._expand_defaults()
-
-        header = QWidget()
-        header.setObjectName("ToolRow")
-        header.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        header_layout = QHBoxLayout(header)
-        header_layout.setContentsMargins(6, 4, 6, 4)
-        header_layout.addWidget(self.filter)
-
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
-        layout.addWidget(header)
-        layout.addWidget(self.tree, 1)
-        theme.changed.connect(self._refresh_icons)
-
-    # --------------------------------------------------------------- populate
-    def _populate(self, parent: QStandardItem, nodes: list) -> None:
-        theme = Theme.instance()
-        for kind, label, icon, tint, children in nodes:
-            item = QStandardItem(theme.icon(icon, tint), label)
-            item.setData(kind, KIND_ROLE)
-            item.setData(icon, ICON_ROLE)
-            item.setData(tint, ICON_TINT_ROLE)
-            parent.appendRow(item)
-            self._populate(item, children)
-
-    def _refresh_icons(self) -> None:
-        theme = Theme.instance()
-        stack = [self.model.invisibleRootItem()]
-        while stack:
-            item = stack.pop()
-            for row in range(item.rowCount()):
-                child = item.child(row)
-                child.setIcon(theme.icon(child.data(ICON_ROLE), child.data(ICON_TINT_ROLE)))
-                stack.append(child)
-
-    def _expand_defaults(self) -> None:
-        """Open the top-level groups and the first simulation, as a returning user would find them."""
-        self.tree.expandToDepth(0)
-        first_simulation = self.find("simulation")
-        if first_simulation.isValid():
-            self.tree.expand(first_simulation)
-            for row in range(self.proxy.rowCount(first_simulation)):
-                child = self.proxy.index(row, 0, first_simulation)
-                if child.data(KIND_ROLE) == "results":
-                    self.tree.expand(child)
-
-    # ------------------------------------------------------------- navigation
-    def find(self, kind: str):
-        """Proxy index of the first node of ``kind`` (depth-first), or an invalid index."""
-        stack = [self.proxy.index(row, 0) for row in reversed(range(self.proxy.rowCount()))]
-        while stack:
-            index = stack.pop()
-            if index.data(KIND_ROLE) == kind:
-                return index
-            stack.extend(self.proxy.index(row, 0, index) for row in reversed(range(self.proxy.rowCount(index))))
-        return self.proxy.index(-1, -1)
-
-    def select(self, kind: str) -> bool:
-        index = self.find(kind)
-        if not index.isValid():
-            return False
-        self.tree.setCurrentIndex(index)
-        self.tree.scrollTo(index)
-        return True
-
-    def _on_filter_changed(self, text: str) -> None:
-        self.proxy.setFilterFixedString(text)
-        if text:
-            self.tree.expandAll()
-        else:
-            self._expand_defaults()
-
-    def _on_current_changed(self, current, _previous) -> None:
-        if not current.isValid():
-            return
-        breadcrumb = []
-        index = current
-        while index.isValid():
-            breadcrumb.insert(0, index.data(Qt.ItemDataRole.DisplayRole))
-            index = index.parent()
-        self.node_selected.emit(current.data(KIND_ROLE), breadcrumb[-1], breadcrumb)
-
-
 class SettingsPanel(QWidget):
-    """Editor for the node selected in the project tree."""
+    """Page for the node selected in the project tree."""
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -225,97 +105,44 @@ class SettingsPanel(QWidget):
         header = QWidget()
         header.setObjectName("PanelHeader")
         header.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        header_layout = QVBoxLayout(header)
-        header_layout.setContentsMargins(14, 8, 14, 9)
-        header_layout.setSpacing(1)
-        header_layout.addWidget(self.path)
-        header_layout.addWidget(self.title)
-
+        box = QVBoxLayout(header)
+        box.setContentsMargins(14, 8, 14, 9)
+        box.setSpacing(1)
+        box.addWidget(self.path)
+        box.addWidget(self.title)
         self.scroll = QScrollArea()
         self.scroll.setWidgetResizable(True)
         self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setMinimumWidth(470)
-
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
         layout.addWidget(header)
         layout.addWidget(self.scroll, 1)
-        self.kind = ""
+        self.node: Node | None = None
 
-    def show_node(self, kind: str, label: str, breadcrumb: list[str]) -> None:
-        self.kind = kind
+    def show_header(self, node: Node | None, breadcrumb: list[str]) -> None:
+        self.node = node
         self.path.setText("  ›  ".join(breadcrumb[:-1]) if len(breadcrumb) > 1 else "Project")
-        self.title.setText(label)
-        self.scroll.setWidget(pages.build_page(kind, label))
+        self.title.setText(breadcrumb[-1] if breadcrumb else "")
 
+    def show_text(self, text: str) -> None:
+        page = pages.Page()
+        page.note(text)
+        self.scroll.setWidget(page.finish())
 
-class GraphicsArea(QWidget):
-    """Central area: a tab strip with view controls and the plots."""
-
-    def __init__(self, parent: QWidget | None = None) -> None:
-        super().__init__(parent)
-        self.tabs = QTabBar()
-        self.tabs.setExpanding(False)
-        self.tabs.setDrawBase(False)
-        self.stack = QStackedWidget()
-
-        self.sparsity = SparsityPlot()
-        self.locality = LocalityPlot()
-        for title, widget in (("Sparsity", self.sparsity), ("Locality curve", self.locality)):
-            self.tabs.addTab(title)
-            self.stack.addWidget(widget)
-
-        self.ordering, self._ordering_group = segmented(["Original", "Permuted"], 1)
-        self._ordering_group.idClicked.connect(
-            lambda index: self.sparsity.set_ordering("original" if index == 0 else "permuted")
-        )
-        self.fit_button = self._tool("fit", "Fit to window")
-        self.fit_button.clicked.connect(lambda: self.stack.currentWidget().fit())
-        self.export_button = self._tool("image", "Export image…")
-
-        strip = QWidget()
-        strip.setObjectName("TabStrip")
-        strip.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        strip_layout = QHBoxLayout(strip)
-        strip_layout.setContentsMargins(4, 0, 6, 0)
-        strip_layout.setSpacing(6)
-        strip_layout.addWidget(self.tabs)
-        strip_layout.addStretch(1)
-        strip_layout.addWidget(self.ordering)
-        strip_layout.addWidget(self.fit_button)
-        strip_layout.addWidget(self.export_button)
-
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
-        layout.addWidget(strip)
-        layout.addWidget(self.stack, 1)
-        self.tabs.currentChanged.connect(self._on_tab_changed)
-        self._on_tab_changed(0)
-
-    def _tool(self, icon: str, tooltip: str) -> QToolButton:
-        button = QToolButton()
-        button.setToolTip(tooltip)
-        button.setIconSize(QSize(16, 16))
-        Theme.instance().bind_icon(button, icon)
-        return button
-
-    def _on_tab_changed(self, index: int) -> None:
-        self.stack.setCurrentIndex(index)
-        self.ordering.setVisible(self.stack.currentWidget() is self.sparsity)
-
-    def show_view(self, name: str) -> None:
-        self.tabs.setCurrentIndex(0 if name == "sparsity" else 1)
+    def show_widget(self, widget: QWidget) -> None:
+        self.scroll.setWidget(widget)
 
 
 class MainWindow(QMainWindow):
-    def __init__(self, theme: Theme, settings: Settings, parent: QWidget | None = None) -> None:
-        super().__init__(parent)
+    def __init__(self, theme: Theme, settings: Settings, root: Path) -> None:
+        super().__init__()
         self._theme = theme
         self._settings = settings
+        self.ctx = AppContext(root, self)
+        self.snapshot: ProjectSnapshot | None = None
         self.setObjectName("MainWindow")
-        self.setWindowTitle(f"{sample_data.WORKSPACE_LABEL} — {APP_NAME}")
         self.resize(1440, 900)
         self.setAnimated(False)
         self.setDockNestingEnabled(True)
@@ -323,47 +150,41 @@ class MainWindow(QMainWindow):
         self.setCorner(Qt.Corner.BottomLeftCorner, Qt.DockWidgetArea.BottomDockWidgetArea)
         self.setCorner(Qt.Corner.BottomRightCorner, Qt.DockWidgetArea.BottomDockWidgetArea)
 
-        self.graphics = GraphicsArea()
+        self.graphics = GraphicsArea(self.ctx.tasks)
         self.setCentralWidget(self.graphics)
         self._build_docks()
         self._build_actions()
         self._build_menus()
         self._build_toolbar()
         self._build_status_bar()
+        self._connect_context()
 
-        self.project.node_selected.connect(self._on_node_selected)
+        self.project.nodeSelected.connect(self._on_node_selected)
+        self.jobs.jobSelected.connect(self._follow_job)
+        self.jobs.showResult.connect(lambda rel: self.select_key(f"run:{rel}"))
         self._default_state = self.saveState(LAYOUT_VERSION)
         self._restore_layout()
-        self.project.select("coarsening")
         QTimer.singleShot(0, self._sync_dock_titles)
+        self._settings.remember_workspace(str(self.ctx.root))
+        self._update_title()
+        self.reload()
 
-    # ------------------------------------------------------------------- docks
+    # ------------------------------------------------------------------ docks
     def _build_docks(self) -> None:
         self.project = ProjectPanel()
         self.settings_panel = SettingsPanel()
-        self.console = ConsolePanel()
-        for time, level, message in sample_data.log_lines():
-            self.console.view.append_entry(LogEntry(time, level, message))
-        self.jobs = self._jobs_table()
-        self.problems = self._problems_table()
+        self.console_panel = ConsolePanel()
+        self.console = JobConsole(self.ctx.jobs, self.console_panel)
+        self.jobs = JobsPanel(self.ctx.jobs)
+        self.problems = DataTable(["Description", "Location"], max_visible_rows=None, stretch=0)
+        self.problems.setMaximumHeight(16777215)
 
         self.project_dock = self._dock("Project", "ProjectDock", self.project)
         self.settings_dock = self._dock("Settings", "SettingsDock", self.settings_panel)
-        self.console_dock = self._dock("Console", "ConsoleDock", self.console)
+        self.console_dock = self._dock("Console", "ConsoleDock", self.console_panel)
         self.jobs_dock = self._dock("Jobs", "JobsDock", self.jobs)
         self.problems_dock = self._dock("Problems", "ProblemsDock", self.problems)
         self.docks = [self.project_dock, self.settings_dock, self.console_dock, self.jobs_dock, self.problems_dock]
-        self._arrange_default()
-
-    def _dock(self, title: str, name: str, widget: QWidget) -> Dock:
-        dock = Dock(title, name, self)
-        dock.setWidget(widget)
-        dock.setAllowedAreas(Qt.DockWidgetArea.AllDockWidgetAreas)
-        for signal in (dock.dockLocationChanged, dock.topLevelChanged, dock.visibilityChanged):
-            signal.connect(lambda *_args: QTimer.singleShot(0, self._sync_dock_titles))
-        return dock
-
-    def _arrange_default(self) -> None:
         left, bottom = Qt.DockWidgetArea.LeftDockWidgetArea, Qt.DockWidgetArea.BottomDockWidgetArea
         self.addDockWidget(left, self.project_dock)
         self.splitDockWidget(self.project_dock, self.settings_dock, Qt.Orientation.Horizontal)
@@ -373,123 +194,49 @@ class MainWindow(QMainWindow):
         self.console_dock.raise_()
         self._apply_default_sizes()
 
+    def _dock(self, title: str, name: str, widget: QWidget) -> Dock:
+        dock = Dock(title, name, self)
+        dock.setWidget(widget)
+        dock.setAllowedAreas(Qt.DockWidgetArea.AllDockWidgetAreas)
+        for signal in (dock.dockLocationChanged, dock.topLevelChanged, dock.visibilityChanged):
+            signal.connect(lambda *_args: QTimer.singleShot(0, self._sync_dock_titles))
+        return dock
+
     def _apply_default_sizes(self) -> None:
-        self.resizeDocks([self.project_dock, self.settings_dock], [270, 480], Qt.Orientation.Horizontal)
+        self.resizeDocks([self.project_dock, self.settings_dock], [280, 500], Qt.Orientation.Horizontal)
         self.resizeDocks([self.console_dock], [230], Qt.Orientation.Vertical)
 
     def _sync_dock_titles(self) -> None:
-        """A dock inside a tab group is titled by its tab; hide the redundant title bar."""
         for dock in self.docks:
-            tabbed = bool(self.tabifiedDockWidgets(dock)) and not dock.isFloating()
-            dock.set_title_visible(not tabbed)
+            dock.set_title_visible(not (self.tabifiedDockWidgets(dock) and not dock.isFloating()))
 
-    def _jobs_table(self) -> QTableWidget:
-        table = self._table(sample_data.JOB_HEADERS, len(sample_data.JOBS))
-        for row, (job, kind, target, state, stage, progress, started, duration) in enumerate(sample_data.JOBS):
-            label, _icon, _tint = sample_data.JOB_STATE[state]
-            values = (job, kind, target, label, stage, f"{progress} %", started, duration)
-            for column, value in enumerate(values):
-                item = QTableWidgetItem(value)
-                if column >= 5:
-                    item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-                table.setItem(row, column, item)
-        header = table.horizontalHeader()
-        header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
-        header.setStretchLastSection(True)
-        for column, width in enumerate((90, 96, 210, 130, 170, 92, 84)):
-            table.setColumnWidth(column, width)
-        for column in (5, 6, 7):
-            table.horizontalHeaderItem(column).setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        self._theme.changed.connect(self._restyle_tables)
-        return table
-
-    def _problems_table(self) -> QTableWidget:
-        table = self._table(sample_data.PROBLEM_HEADERS, len(sample_data.PROBLEMS))
-        for row, (_severity, description, location) in enumerate(sample_data.PROBLEMS):
-            table.setItem(row, 0, QTableWidgetItem(description))
-            table.setItem(row, 1, QTableWidgetItem(location))
-        header = table.horizontalHeader()
-        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Interactive)
-        table.setColumnWidth(1, 320)
-        return table
-
-    def _table(self, headers: tuple[str, ...], rows: int) -> QTableWidget:
-        table = QTableWidget(rows, len(headers))
-        table.setHorizontalHeaderLabels(list(headers))
-        table.verticalHeader().setVisible(False)
-        table.verticalHeader().setDefaultSectionSize(self._theme.tokens.metrics.row_height)
-        table.setShowGrid(False)
-        table.setIconSize(QSize(16, 16))
-        table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
-        table.horizontalHeader().setHighlightSections(False)
-        table.horizontalHeader().setDefaultAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-        return table
-
-    def _restyle_tables(self) -> None:
-        """State icons and numeric fonts depend on the theme."""
-        numeric = self._theme.numeric_font()
-        for row, job in enumerate(sample_data.JOBS):
-            _label, icon, tint = sample_data.JOB_STATE[job[3]]
-            self.jobs.item(row, 3).setIcon(self._theme.icon(icon, tint))
-            for column in (5, 6, 7):
-                self.jobs.item(row, column).setFont(numeric)
-        for row, (severity, _description, _location) in enumerate(sample_data.PROBLEMS):
-            self.problems.item(row, 0).setIcon(self._theme.icon(severity, severity))
-
-    # ----------------------------------------------------------------- actions
-    def _action(self, text: str, icon: str | None = None, shortcut: str | QKeySequence.StandardKey | None = None, tint: str = "default") -> QAction:
+    # ---------------------------------------------------------------- actions
+    def _action(self, text: str, slot, icon: str | None = None, shortcut=None, tint: str = "default", tip: str | None = None) -> QAction:
         action = QAction(text, self)
         if icon:
             self._theme.bind_icon(action, icon, tint)
         if shortcut:
             action.setShortcut(QKeySequence(shortcut))
-        action.triggered.connect(lambda _checked=False, name=text: self._not_available(name))
+        name = text.replace("&", "").rstrip("…")
+        keys = action.shortcut().toString(QKeySequence.SequenceFormat.NativeText)
+        action.setToolTip(tip or (f"{name} ({keys})" if keys else name))
+        action.triggered.connect(lambda _checked=False: slot())
         return action
-
-    def _not_available(self, name: str) -> None:
-        clean = name.replace("&", "").rstrip("…")
-        self.statusBar().showMessage(f"“{clean}” is not available in this visual prototype yet.", 4000)
 
     def _build_actions(self) -> None:
         a = self._action
-        self.act_new_workspace = a("&New workspace…", "new", QKeySequence.StandardKey.New)
-        self.act_open_workspace = a("&Open workspace…", "open", QKeySequence.StandardKey.Open)
-        self.act_new_simulation = a("New &simulation…", "simulation")
-        self.act_import_matrix = a("&Import matrix…", "import")
-        self.act_save = a("&Save", "save", QKeySequence.StandardKey.Save)
-        self.act_export = a("&Export results…", "export")
-        self.act_quit = QAction("&Quit", self)
-        self.act_quit.setShortcut(QKeySequence(QKeySequence.StandardKey.Quit))
-        self.act_quit.triggered.connect(self.close)
-
-        self.act_undo = a("&Undo", "undo", QKeySequence.StandardKey.Undo)
-        self.act_redo = a("&Redo", "redo", QKeySequence.StandardKey.Redo)
-        self.act_redo.setEnabled(False)
-        self.act_preferences = a("&Preferences…", "settings")
-
-        self.act_validate = a("&Validate parameters", "validate", "F7")
-        self.act_preview = a("&Preview coarsening", "coarsening", "F6")
-        self.act_run = a("&Run", "run", "F5", tint="ok")
-        self.act_stop = a("&Stop", "stop", "Shift+F5", tint="error")
-        self.act_compare = a("&Compare runs…", "compare")
-
-        self.act_batch_config = a("&Configure batch…", "batch")
-        self.act_batch_run = a("&Run batch", "run")
-        self.act_auto_select = a("&Auto-select parameters", "tuning")
-        self.act_new_study = a("&New study…", "study")
-
-        self.act_reset_layout = QAction("&Reset layout", self)
-        self.act_reset_layout.triggered.connect(self.reset_layout)
-
-        self.act_docs = a("&Documentation", "docs", QKeySequence.StandardKey.HelpContents)
-        self.act_shortcuts = a("&Keyboard shortcuts")
-        self.act_gallery = QAction("&Widget gallery", self)
-        self.act_gallery.triggered.connect(self.show_gallery)
-        self.act_about = a(f"&About {APP_NAME}")
-
+        self.act_new_workspace = a("&New workspace…", self.new_workspace, "new", QKeySequence.StandardKey.New)
+        self.act_open_workspace = a("&Open workspace…", self.choose_workspace, "open", QKeySequence.StandardKey.Open)
+        self.act_reload = a("&Reload", self.reload, "refresh", "Ctrl+R", tip="Reload the workspace from disk (Ctrl+R)")
+        self.act_import_matrix = a("&Import matrix…", self.import_matrix, "import")
+        self.act_open_folder = a("Open workspace &folder", lambda: self.open_path("."), "folder")
+        self.act_quit = a("&Quit", self.close, None, QKeySequence.StandardKey.Quit)
+        self.act_run = a("&Run", self.run_selected, "run", "F5", tint="ok", tip="Run the selected simulation (F5)")
+        self.act_stop = a("&Stop", self.stop_job, "stop", "Shift+F5", tint="error", tip="Stop the job shown in the console (Shift+F5)")
+        self.act_run_batch = a("Run &batch…", self.run_batch, "batch")
+        self.act_reset_layout = a("&Reset layout", self.reset_layout)
+        self.act_gallery = a("&Widget gallery", self.show_gallery)
+        self.act_about = a(f"&About {APP_NAME}", self.about)
         self.theme_group = QActionGroup(self)
         self.theme_actions: dict[str, QAction] = {}
         for mode in MODES:
@@ -503,31 +250,17 @@ class MainWindow(QMainWindow):
         bar = self.menuBar()
         file_menu = bar.addMenu("&File")
         file_menu.addActions([self.act_new_workspace, self.act_open_workspace])
+        self.recent_menu = file_menu.addMenu("Open &recent")
+        self.recent_menu.aboutToShow.connect(self._fill_recent)
+        file_menu.addActions([self.act_reload, self.act_open_folder])
         file_menu.addSeparator()
-        file_menu.addActions([self.act_new_simulation, self.act_import_matrix])
-        file_menu.addSeparator()
-        file_menu.addActions([self.act_save, self.act_export])
+        file_menu.addAction(self.act_import_matrix)
         file_menu.addSeparator()
         file_menu.addAction(self.act_quit)
-
-        edit_menu = bar.addMenu("&Edit")
-        edit_menu.addActions([self.act_undo, self.act_redo])
-        edit_menu.addSeparator()
-        edit_menu.addAction(self.act_preferences)
-
-        simulation_menu = bar.addMenu("&Simulation")
-        simulation_menu.addActions([self.act_validate, self.act_preview])
-        simulation_menu.addSeparator()
-        simulation_menu.addActions([self.act_run, self.act_stop])
-        simulation_menu.addSeparator()
-        simulation_menu.addAction(self.act_compare)
-
+        sim_menu = bar.addMenu("&Simulation")
+        sim_menu.addActions([self.act_run, self.act_stop])
         batch_menu = bar.addMenu("&Batch")
-        batch_menu.addActions([self.act_batch_config, self.act_batch_run])
-
-        tuning_menu = bar.addMenu("&Tuning")
-        tuning_menu.addActions([self.act_auto_select, self.act_new_study])
-
+        batch_menu.addAction(self.act_run_batch)
         view_menu = bar.addMenu("&View")
         for dock in self.docks:
             view_menu.addAction(dock.toggleViewAction())
@@ -536,10 +269,7 @@ class MainWindow(QMainWindow):
         theme_menu.addActions(list(self.theme_actions.values()))
         view_menu.addSeparator()
         view_menu.addAction(self.act_reset_layout)
-
         help_menu = bar.addMenu("&Help")
-        help_menu.addActions([self.act_docs, self.act_shortcuts])
-        help_menu.addSeparator()
         help_menu.addAction(self.act_gallery)
         help_menu.addSeparator()
         help_menu.addAction(self.act_about)
@@ -552,20 +282,13 @@ class MainWindow(QMainWindow):
         size = self._theme.tokens.metrics.icon_toolbar
         bar.setIconSize(QSize(size, size))
         bar.setContextMenuPolicy(Qt.ContextMenuPolicy.PreventContextMenu)
-        bar.addActions([self.act_new_workspace, self.act_open_workspace, self.act_save])
+        bar.addActions([self.act_new_workspace, self.act_open_workspace, self.act_reload])
         bar.addSeparator()
-        bar.addActions([self.act_undo, self.act_redo])
+        bar.addActions([self.act_run, self.act_stop])
         bar.addSeparator()
-        bar.addActions([self.act_validate, self.act_run, self.act_stop])
-        bar.addSeparator()
-        bar.addAction(self.act_compare)
+        bar.addAction(self.act_import_matrix)
         for action in (self.act_run, self.act_stop):
             bar.widgetForAction(action).setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
-        for action in bar.actions():
-            if not action.isSeparator():
-                shortcut = action.shortcut().toString(QKeySequence.SequenceFormat.NativeText)
-                name = action.text().replace("&", "").rstrip("…")
-                action.setToolTip(f"{name} ({shortcut})" if shortcut else name)
         self.addToolBar(bar)
         self.toolbar = bar
 
@@ -573,42 +296,281 @@ class MainWindow(QMainWindow):
         bar = self.statusBar()
         bar.setSizeGripEnabled(False)
         bar.setContentsMargins(8, 0, 6, 0)
-        running = sample_data.JOBS[0]
-        self.status_job_icon = QLabel()
-        self.status_job_icon.setFixedSize(16, 16)
-        self.status_job = QLabel(f"{running[2]} · {running[4]}")
+        self.status_icon = QLabel()
+        self.status_icon.setFixedSize(16, 16)
+        self.status_job = QLabel()
         self.status_progress = QProgressBar()
         self.status_progress.setRange(0, 100)
-        self.status_progress.setValue(running[5])
         self.status_progress.setTextVisible(False)
         self.status_progress.setFixedWidth(120)
-        self.status_percent = QLabel(f"{running[5]} %")
-        self.status_workspace = QLabel(sample_data.WORKSPACE_LABEL)
-        self.status_qpu = QLabel("QPU: emulated")
-        bar.addWidget(self.status_job_icon)
-        bar.addWidget(self.status_job)
-        bar.addWidget(self.status_progress)
-        bar.addWidget(self.status_percent)
+        self.status_percent = QLabel()
+        self.status_running = QLabel()
+        self.status_workspace = QLabel()
+        for widget in (self.status_icon, self.status_job, self.status_progress, self.status_percent):
+            bar.addWidget(widget)
+        bar.addPermanentWidget(self.status_running)
         bar.addPermanentWidget(self.status_workspace)
-        bar.addPermanentWidget(self.status_qpu)
-        self._theme.changed.connect(self._restyle_status)
-        self._restyle_status()
-        self._restyle_tables()
+        self._theme.changed.connect(self._update_status)
+        self._update_status()
 
-    def _restyle_status(self) -> None:
-        self.status_job_icon.setPixmap(self._theme.pixmap("running", 16, "accent", self.devicePixelRatioF()))
+    # ---------------------------------------------------------------- context
+    def _connect_context(self) -> None:
+        self.ctx.bridge.jobChanged.connect(self._on_job_changed)
 
-    # ------------------------------------------------------------------ slots
-    def _on_node_selected(self, kind: str, label: str, breadcrumb: list) -> None:
-        self.settings_panel.show_node(kind, label, breadcrumb)
-        if kind == "run":
-            self.graphics.show_view("locality")
-        elif kind in ("matrix", "input"):
-            self.graphics.show_view("sparsity")
+    def _on_job_changed(self, event: str, job_id: str) -> None:
+        self.jobs.schedule_refresh()
+        if job_id == self.console.job_id:
+            self.console.pull()
+        if event == "finished":
+            job = self.ctx.jobs.get_job(job_id, log_offset=10**9) or {}
+            if job.get("status") == "completed":
+                self.statusBar().showMessage(f"{job.get('title')} finished.", 6000)
+            elif job.get("status") == "failed":
+                self.statusBar().showMessage(f"{job.get('title')} failed: {job.get('error_message') or 'see the console'}", 10000)
+            self.reload()
+        self._update_status()
+
+    def _follow_job(self, job_id: str) -> None:
+        self.console.follow(job_id)
+        self._update_status()
+
+    def _update_status(self) -> None:
+        job = self.ctx.jobs.get_job(self.console.job_id, log_offset=10**9) if self.console.job_id else None
+        running = job is not None and job["status"] == "running"
+        for widget in (self.status_icon, self.status_job, self.status_progress, self.status_percent):
+            widget.setVisible(job is not None)
+        if job is not None:
+            icon, tint = {"running": ("running", "accent"), "completed": ("ok", "ok"), "failed": ("error", "error")}.get(job["status"], ("cancelled", "muted"))
+            self.status_icon.setPixmap(self._theme.pixmap(icon, 16, tint, self.devicePixelRatioF()))
+            stage = STAGE_LABELS.get(job.get("current_stage") or "", "") if running else job["status"].capitalize()
+            target = job.get("demonstrator_id") or job["title"]
+            self.status_job.setText(f"{target} · {stage}")
+            self.status_progress.setValue(int(job.get("stage_progress") or 0))
+            self.status_progress.setVisible(running)
+            self.status_percent.setText(f"{job.get('stage_progress', 0)} %")
+            self.status_percent.setVisible(running)
+        count = len(self.ctx.jobs.running_jobs())
+        self.status_running.setText(f"{count} job running" if count == 1 else f"{count} jobs running")
+        self.status_workspace.setText(str(self.ctx.root))
+        self.act_stop.setEnabled(running)
+
+    # ---------------------------------------------------------------- project
+    def reload(self) -> None:
+        self.ctx.tasks.run(load_snapshot, self._on_snapshot, self._on_snapshot_error, key="snapshot")
+
+    def _on_snapshot(self, snap: ProjectSnapshot) -> None:
+        self.snapshot = snap
+        self.project.set_snapshot(snap)
+        self.problems.set_rows([[message, location] for _severity, message, location in snap.problems])
+        for row, (severity, _message, _location) in enumerate(snap.problems):
+            self.problems.item(row, 0).setIcon(self._theme.icon(severity, severity))
+        self.problems_dock.setWindowTitle(f"Problems ({len(snap.problems)})" if snap.problems else "Problems")
+        if self.project.current_node() is None:
+            self.project.select_kind("simulation") or self.project.select_kind("matrices")
+
+    def _on_snapshot_error(self, exc: Exception) -> None:
+        QMessageBox.critical(self, APP_NAME, f"The workspace could not be read:\n\n{exc}")
+
+    def select_key(self, key: str) -> None:
+        if not self.project.select_key(key):
+            self.reload()  # a new run may not be in the tree yet
 
     def select_node(self, kind: str) -> bool:
-        return self.project.select(kind)
+        return self.project.select_kind(kind)
 
+    def _breadcrumb(self) -> list[str]:
+        index = self.project.tree.currentIndex()
+        names = []
+        while index.isValid():
+            names.insert(0, index.data(Qt.ItemDataRole.DisplayRole))
+            index = index.parent()
+        return names
+
+    def _on_node_selected(self, node: Node | None) -> None:
+        self.act_run.setEnabled(bool(node and node.simulation_id))
+        if node is None:
+            self.settings_panel.show_header(None, [])
+            self.settings_panel.show_text("Select an item in the project tree.")
+            self.graphics.clear()
+            return
+        self.settings_panel.show_header(node, self._breadcrumb())
+        self.settings_panel.show_text("Loading…")
+        if node.kind == "matrix":
+            self.graphics.show_matrix(node.data["matrix"])
+        elif node.kind not in ("input", "run"):
+            self.graphics.clear()
+        self.ctx.tasks.run(
+            lambda: pages.load(node),
+            lambda data, n=node: self._show_page(n, data),
+            lambda exc, n=node: self._show_page_error(n, exc),
+            key="page",
+        )
+
+    def _page_actions(self) -> pages.PageActions:
+        return pages.PageActions(
+            run_simulation=self.run_simulation, open_path=self.open_path, export_run=self.export_run, select_key=self.select_key
+        )
+
+    def _show_page(self, node: Node, data) -> None:
+        if self.settings_panel.node is not node:
+            return
+        self.settings_panel.show_widget(pages.build(node, data, self._page_actions()))
+        if node.kind == "run":
+            self.graphics.show_run(node.data["result_dir"], data)
+        elif node.kind == "input":
+            matrix = (data.get("matrix") or {}).get("id")
+            if matrix and (data.get("matrix") or {}).get("ready", True):
+                self.graphics.show_matrix(matrix)
+            else:
+                self.graphics.clear("The input matrix is not available.")
+
+    def _show_page_error(self, node: Node, exc: Exception) -> None:
+        if self.settings_panel.node is node:
+            self.settings_panel.show_widget(pages.build_error(str(exc)))
+
+    # ------------------------------------------------------------------- jobs
+    def run_selected(self) -> None:
+        node = self.project.current_node()
+        if node and node.simulation_id:
+            self.run_simulation(node.simulation_id)
+
+    def run_simulation(self, simulation_id: str) -> None:
+        try:
+            job = self.ctx.run_simulation(simulation_id)
+        except (ServiceError, OSError) as exc:
+            QMessageBox.warning(self, APP_NAME, f"The simulation could not start:\n\n{exc}")
+            return
+        self._started(job)
+
+    def _started(self, job: dict) -> None:
+        self.jobs.refresh()
+        self.jobs.select(job["job_id"], emit=False)
+        self.console.follow(job["job_id"])
+        self.console_dock.raise_()
+        self.statusBar().showMessage(f"Started {job['title']}.", 4000)
+        self._update_status()
+
+    def stop_job(self) -> None:
+        if self.console.job_id:
+            self.ctx.jobs.cancel_job(self.console.job_id)
+            self.jobs.refresh()
+            self._update_status()
+
+    def run_batch(self) -> None:
+        try:
+            config = batch.load_configuration()
+            plan = batch.plan(config["configuration"], batch.duration_estimates())
+        except ServiceError as exc:
+            QMessageBox.warning(self, APP_NAME, f"The batch cannot run:\n\n{exc}")
+            return
+        totals = plan["totals"]
+        lines = [f"{config['case_count']} cases will run."]
+        if totals["estimated"]:
+            lines.append(f"Estimated duration: about {totals['seconds'] / 60:.0f} min.")
+        if totals["submissions"]:
+            lines.append(f"Remote QPU submissions: {totals['submissions']:,}.")
+        if totals["over_capacity"]:
+            lines.append(f"{totals['over_capacity']} cases exceed their backend's capacity and will fail.")
+        answer = QMessageBox.question(self, "Run batch", "\n".join(lines) + "\n\nStart the batch now?")
+        if answer == QMessageBox.StandardButton.Yes:
+            self._started(self.ctx.jobs.start_batch_study())
+
+    # ---------------------------------------------------------------- files
+    def open_path(self, relative: str) -> None:
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str((self.ctx.root / relative).resolve())))
+
+    def export_run(self, result_dir: str) -> None:
+        default = str(Path.home() / f"{Path(result_dir).name}_bundle.zip")
+        path, _ = QFileDialog.getSaveFileName(self, "Export run", default, "Zip archive (*.zip)")
+        if not path:
+            return
+        self.ctx.tasks.run(
+            lambda: results.export_run_bundle(result_dir, path),
+            lambda _r: self.statusBar().showMessage(f"Exported {path}", 6000),
+            lambda exc: QMessageBox.warning(self, APP_NAME, f"Export failed:\n\n{exc}"),
+        )
+
+    def import_matrix(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(self, "Import matrix", str(Path.home()), "Matrix Market (*.mtx)")
+        if not path:
+            return
+        name, ok = QInputDialog.getText(self, "Import matrix", "Name in the library:", text=Path(path).stem)
+        if not ok or not name.strip():
+            return
+        self.statusBar().showMessage(f"Importing {Path(path).name}…")
+        self.ctx.tasks.run(
+            lambda: matrices.import_matrix(name, path),
+            lambda info: (self.statusBar().showMessage(f"Imported {info['id']}.", 6000), self._reload_and_select(f"matrix:{info['id']}")),
+            lambda exc: QMessageBox.warning(self, APP_NAME, f"The matrix could not be imported:\n\n{exc}"),
+        )
+
+    def _reload_and_select(self, key: str) -> None:
+        self.ctx.tasks.run(load_snapshot, lambda snap: (self._on_snapshot(snap), self.project.select_key(key)), self._on_snapshot_error, key="snapshot")
+
+    # ------------------------------------------------------------- workspaces
+    def choose_workspace(self) -> None:
+        path = QFileDialog.getExistingDirectory(self, "Open workspace", str(self.ctx.root.parent))
+        if path:
+            self.open_workspace(Path(path))
+
+    def new_workspace(self) -> None:
+        path = QFileDialog.getExistingDirectory(self, "Choose an empty folder for the new workspace", str(Path.home()))
+        if not path:
+            return
+        folder = Path(path)
+        if any(folder.iterdir()) and not (folder / workspace.STATE_DIR_NAME).exists():
+            answer = QMessageBox.question(self, "New workspace", f"{folder} is not empty. Create the workspace folders inside it anyway?")
+            if answer != QMessageBox.StandardButton.Yes:
+                return
+        workspace.init(folder)
+        self.open_workspace(folder)
+
+    def open_workspace(self, root: Path) -> bool:
+        root = root.resolve()
+        if root == self.ctx.root:
+            self.reload()
+            return True
+        if not self._confirm_stop_jobs("Open another workspace"):
+            return False
+        self.ctx.jobs.cancel_all()
+        self.ctx.close()
+        self.ctx = AppContext(root, self)
+        self._connect_context()
+        self.graphics.set_tasks(self.ctx.tasks)
+        self.jobs.set_manager(self.ctx.jobs)
+        self.console = JobConsole(self.ctx.jobs, self.console_panel)
+        self.console_panel.view.clear_entries()
+        self.project._loaded = False
+        self._settings.remember_workspace(str(root))
+        self._update_title()
+        self._update_status()
+        self.reload()
+        return True
+
+    def _fill_recent(self) -> None:
+        self.recent_menu.clear()
+        for path in self._settings.recent_workspaces():
+            action = self.recent_menu.addAction(path)
+            action.setEnabled(Path(path).is_dir())
+            action.triggered.connect(lambda _c=False, p=path: self.open_workspace(Path(p)))
+        if self.recent_menu.isEmpty():
+            self.recent_menu.addAction("No recent workspaces").setEnabled(False)
+
+    def _update_title(self) -> None:
+        self.setWindowTitle(f"{self.ctx.root.name} — {APP_NAME}")
+
+    def _confirm_stop_jobs(self, what: str) -> bool:
+        running = self.ctx.jobs.running_jobs()
+        if not running:
+            return True
+        noun = "job is" if len(running) == 1 else "jobs are"
+        box = QMessageBox(QMessageBox.Icon.Warning, what, f"{len(running)} {noun} still running. They will be stopped.", parent=self)
+        stop = box.addButton("Stop jobs and continue", QMessageBox.ButtonRole.AcceptRole)
+        box.addButton(QMessageBox.StandardButton.Cancel)
+        box.exec()
+        return box.clickedButton() is stop
+
+    # ------------------------------------------------------------------- misc
     def set_theme(self, mode: str) -> None:
         self._theme.apply(mode)
         self._settings.set_theme_mode(mode)
@@ -620,7 +582,14 @@ class MainWindow(QMainWindow):
         self._gallery = Gallery(self._theme)
         self._gallery.show()
 
-    # ------------------------------------------------------------------ layout
+    def about(self) -> None:
+        QMessageBox.about(
+            self,
+            f"About {APP_NAME}",
+            f"<b>{APP_NAME}</b><br>Hybrid quantum-classical graph partitioning and sparse matrix permutation."
+            f"<br><br>Workspace: {self.ctx.root}",
+        )
+
     def reset_layout(self) -> None:
         self.restoreState(self._default_state, LAYOUT_VERSION)
         self._apply_default_sizes()
@@ -639,5 +608,10 @@ class MainWindow(QMainWindow):
         self._settings.save_window(self.saveGeometry(), self.saveState(LAYOUT_VERSION))
 
     def closeEvent(self, event: QCloseEvent) -> None:
+        if not self._confirm_stop_jobs("Quit"):
+            event.ignore()
+            return
+        self.ctx.jobs.cancel_all()
         self.save_layout()
+        self.ctx.close()
         super().closeEvent(event)

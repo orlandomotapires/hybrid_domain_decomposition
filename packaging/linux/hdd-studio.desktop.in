@@ -1,0 +1,14 @@
+[Desktop Entry]
+Type=Application
+Version=1.5
+Name=HDD Studio
+GenericName=Domain decomposition studio
+Comment=Hybrid quantum-classical graph partitioning and sparse matrix permutation
+Exec=@EXEC@
+TryExec=@TRYEXEC@
+Icon=hdd-studio
+Terminal=false
+Categories=Science;Engineering;Math;
+Keywords=matrix;sparse;partitioning;METIS;quantum;annealing;QAOA;simulation;
+StartupNotify=true
+StartupWMClass=hdd-studio

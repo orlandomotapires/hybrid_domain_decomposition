@@ -62,6 +62,27 @@ pip install -r requirements.txt
 
 ---
 
+## HDD Studio Desktop (`--desktop`)
+
+A native desktop application (Qt 6) for Ubuntu 24.04 is replacing the web Studio. It opens a
+workspace, shows it as a project tree (matrices, simulations with their stages, presets, tuning
+studies, runs, batches), runs simulations with a live log, and plots sparsity patterns and
+locality curves. Parameter editing, batch and tuning screens are still being ported; until then
+use the web Studio for those.
+
+```sh
+pip install -e ".[gui]"            # PySide6 and pyqtgraph
+./run.sh --desktop                 # opens the last workspace (default: this repository)
+./run.sh --desktop --workspace ~/hdd-projects/blade
+packaging/linux/install-launcher.sh          # add HDD Studio to the application menu
+packaging/linux/install-launcher.sh --remove # remove it
+```
+
+Jobs started from the desktop app keep a record and a log in `<workspace>/.hdd/jobs/`, so they
+are listed again after a restart. Closing the app stops running jobs (it asks first).
+
+---
+
 ## Hybrid Domain Decomposition Studio (`--ui`)
 
 ```sh
@@ -144,4 +165,11 @@ Studies are saved in `simulations/<sim>/tuning/study_<timestamp>/` (`study_confi
 
 ```sh
 PYTHONPATH=src:. python -m unittest discover -s tests -v
+```
+
+Desktop interface tests (headless):
+
+```sh
+pip install -e ".[gui,dev]"
+QT_QPA_PLATFORM=offscreen PYTHONPATH=src:. python -m pytest tests/gui
 ```

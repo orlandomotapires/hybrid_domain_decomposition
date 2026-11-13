@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <!-- HDD Studio: a sparse matrix permuted into diagonal blocks. -->
+  <rect x="8" y="8" width="240" height="240" rx="28" fill="#2F6592"/>
+  <rect x="40" y="40" width="176" height="176" rx="4" fill="#24527A"/>
+  <g fill="#FFFFFF">
+    <rect x="48" y="48" width="56" height="56" rx="3"/>
+    <rect x="104" y="104" width="48" height="48" rx="3" opacity="0.88"/>
+    <rect x="152" y="152" width="56" height="56" rx="3" opacity="0.76"/>
+  </g>
+  <g fill="#9EC5F4">
+    <rect x="116" y="56" width="10" height="10" rx="2"/>
+    <rect x="164" y="72" width="10" height="10" rx="2"/>
+    <rect x="60" y="120" width="10" height="10" rx="2"/>
+    <rect x="164" y="116" width="10" height="10" rx="2"/>
+    <rect x="76" y="168" width="10" height="10" rx="2"/>
+    <rect x="120" y="180" width="10" height="10" rx="2"/>
+  </g>
+</svg>

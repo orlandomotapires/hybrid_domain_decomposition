@@ -53,7 +53,7 @@ case "$1" in
 		;;
 	--desktop)
 		shift
-		cd "$ROOT_DIR/src"
+		export PYTHONPATH="$ROOT_DIR/src${PYTHONPATH:+:$PYTHONPATH}"
 		exec "$PYTHON_BIN" -m hdd.studio "$@"
 		;;
 	--run_batch)

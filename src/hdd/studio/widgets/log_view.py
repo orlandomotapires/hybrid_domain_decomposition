@@ -13,6 +13,7 @@ from ..theme import Theme
 
 LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR")
 _RANK = {level: rank for rank, level in enumerate(LEVELS)}
+_RANK["VERBOSE"] = _RANK["DEBUG"]  # the pipeline's detail level
 
 
 @dataclass(frozen=True)
@@ -30,6 +31,7 @@ class LogView(QPlainTextEdit):
         self.setReadOnly(True)
         self.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
         self.setUndoRedoEnabled(False)
+        self.setPlaceholderText("No job selected. Run a simulation, or pick a job in the Jobs tab to see its log.")
         self._entries: deque[LogEntry] = deque(maxlen=max_entries)
         self._min_rank = 0
         self._needle = ""
@@ -81,6 +83,7 @@ class LogView(QPlainTextEdit):
         for key, value in (
             ("time", colors.text_muted),
             ("DEBUG", colors.text_muted),
+            ("VERBOSE", colors.text_muted),
             ("INFO", colors.text),
             ("WARNING", colors.warn),
             ("ERROR", colors.error),
@@ -99,7 +102,8 @@ class LogView(QPlainTextEdit):
         level_format = formats.get(entry.level, formats["INFO"])
         cursor.insertText(f"{entry.timestamp}  ", formats["time"])
         cursor.insertText(f"{entry.level:<7}  ", level_format)
-        cursor.insertText(entry.message, level_format if entry.level in ("WARNING", "ERROR") else formats["INFO"])
+        message_format = level_format if entry.level in ("WARNING", "ERROR", "DEBUG", "VERBOSE") else formats["INFO"]
+        cursor.insertText(entry.message, message_format)
 
     def _render(self) -> None:
         self.setFont(Theme.instance().mono_font())

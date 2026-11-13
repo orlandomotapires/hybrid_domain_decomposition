@@ -29,8 +29,9 @@ class PropertyTable(QTableWidget):
         header = self.horizontalHeader()
         header.setHighlightSections(False)
         header.setDefaultAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        self.setTextElideMode(Qt.TextElideMode.ElideMiddle)  # long values are paths
         header.setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)
         self.setColumnWidth(2, 84)
         self._row_height = Theme.instance().tokens.metrics.row_height
