@@ -11,8 +11,8 @@ from typing import Any
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel
 
+from libs.runtime import workspace
 from libs.runtime.matrix_library import (
-    MATRIX_LIBRARY_DIR,
     list_matrix_ids,
     matrix_dir,
     sanitize_matrix_id,
@@ -27,8 +27,6 @@ from backend.services.matrix_service import (
 
 router = APIRouter(prefix="/api/matrix-library", tags=["matrix-library"])
 
-ROOT_DIR = Path(__file__).resolve().parents[2]
-BATCH_CONFIG_PATH = ROOT_DIR / "batch" / "batch_configuration.json"
 
 
 class GenerateDemoMatrixRequest(BaseModel):
@@ -45,7 +43,7 @@ def _new_matrix_id(raw_name: str) -> str:
         matrix_id = sanitize_matrix_id(raw_name)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    if (MATRIX_LIBRARY_DIR / matrix_id).exists():
+    if (workspace.matrices_dir() / matrix_id).exists():
         raise HTTPException(status_code=409, detail=f"Matrix {matrix_id!r} already exists")
     return matrix_id
 
@@ -53,17 +51,17 @@ def _new_matrix_id(raw_name: str) -> str:
 def _unique_matrix_id(base: str) -> str:
     base = sanitize_matrix_id(base)
     candidate, n = base, 2
-    while (MATRIX_LIBRARY_DIR / candidate).exists():
+    while (workspace.matrices_dir() / candidate).exists():
         candidate = f"{base}_{n}"
         n += 1
     return candidate
 
 
 def _batch_matrices() -> set[str]:
-    if not BATCH_CONFIG_PATH.exists():
+    if not workspace.batch_config_path().exists():
         return set()
     try:
-        cfg = json.loads(BATCH_CONFIG_PATH.read_text(encoding="utf-8"))
+        cfg = json.loads(workspace.batch_config_path().read_text(encoding="utf-8"))
     except Exception:
         return set()
     return {str(m.get("key")) for m in cfg.get("matrices", []) if isinstance(m, dict)}

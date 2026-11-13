@@ -9,6 +9,7 @@ import matplotlib
 matplotlib.use("Agg")
 
 from libs.domain_decomposition import decompose_matrix
+from libs.runtime import workspace
 from libs.runtime.log import log, set_log_file
 from libs.profiling.matrix_metrics import collect_metrics
 from libs.runtime.utils import (
@@ -74,7 +75,7 @@ def run_simulation(
 	"""
 
 	# Defining paths
-	project_root = Path(__file__).resolve().parents[3]
+	project_root = workspace.root()
 	sim_dir = project_root / demonstrator_dir if demonstrator_dir else None
 	data_dir = sim_dir / "data" if sim_dir is not None else project_root
 

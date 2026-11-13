@@ -9,6 +9,7 @@ import zipfile
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import FileResponse, StreamingResponse
 
+from libs.runtime import workspace
 from backend.services.plot_service import (
     AVAILABLE_CASE_PLOTS,
     extract_curve_series,
@@ -18,9 +19,6 @@ from backend.services.plot_service import (
 
 router = APIRouter(prefix="/api/results", tags=["results"])
 
-ROOT_DIR = Path(__file__).resolve().parents[2]
-DEMONSTRATORS_ROOT = ROOT_DIR / "simulations"
-BATCH_RUNS_DIR = ROOT_DIR / "batch" / "runs"
 
 
 def _safe_resolve_inside_repo(rel_path: str) -> Path:
@@ -31,9 +29,9 @@ def _safe_resolve_inside_repo(rel_path: str) -> Path:
     legacy = re.match(r"^matrices/matrix_(\d+)/(results/.*)$", normalized)
     if legacy:
         normalized = f"simulations/simulation_{legacy.group(1)}/{legacy.group(2)}"
-    resolved = (ROOT_DIR / normalized).resolve()
+    resolved = (workspace.root() / normalized).resolve()
     try:
-        resolved.relative_to(ROOT_DIR.resolve())
+        resolved.relative_to(workspace.root())
     except ValueError as exc:
         raise HTTPException(status_code=400, detail="Path must stay within repository root") from exc
     return resolved
@@ -41,7 +39,7 @@ def _safe_resolve_inside_repo(rel_path: str) -> Path:
 
 @router.get("/demonstrators/{dem_id}/runs")
 def list_demonstrator_runs(dem_id: str) -> dict[str, Any]:
-    dem_dir = DEMONSTRATORS_ROOT / dem_id
+    dem_dir = workspace.simulations_dir() / dem_id
     if not dem_dir.exists():
         raise HTTPException(status_code=404, detail=f"Simulation {dem_id!r} not found")
 
@@ -180,7 +178,7 @@ def get_batch_analysis(
     batch_id: str,
     demonstrator: str = Query("matrix_01"),
 ) -> dict[str, Any]:
-    bdir = BATCH_RUNS_DIR / batch_id
+    bdir = workspace.batch_runs_dir() / batch_id
     summary_path = bdir / "batch_summary.json"
     if not summary_path.exists():
         raise HTTPException(status_code=404, detail=f"Batch summary not found for {batch_id!r}")

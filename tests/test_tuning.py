@@ -156,8 +156,7 @@ class EndToEndTuningTest(unittest.TestCase):
         (lib / "matrix.json").write_text(json.dumps({"name": "grid", "file": "grid.mtx"}))
         self.root = root
         self.patches = [
-            patch("libs.runtime.matrix_library.MATRIX_LIBRARY_DIR", root / "matrices"),
-            patch.dict(os.environ, {"HDD_HISTORY_PATH": str(root / "history.jsonl")}),
+            patch.dict(os.environ, {"HDD_WORKSPACE": str(root), "HDD_HISTORY_PATH": str(root / "history.jsonl")}),
         ]
         for p in self.patches:
             p.start()

@@ -17,13 +17,12 @@ from typing import Any
 
 import numpy as np
 
-from libs.runtime.matrix_library import PROJECT_ROOT
+from libs.runtime import workspace
 from libs.tuning.objectives import objective_values, read_run_metrics, weighted_score
 
 
 def history_path() -> Path:
-    override = os.environ.get("HDD_HISTORY_PATH")
-    return Path(override) if override else PROJECT_ROOT / "tuning" / "history.jsonl"
+    return workspace.history_path()
 
 
 def record_run(
@@ -40,7 +39,7 @@ def record_run(
     if not metrics.get("decomposition"):
         return
     try:
-        run_rel = str(Path(run_dir).resolve().relative_to(PROJECT_ROOT))
+        run_rel = str(Path(run_dir).resolve().relative_to(workspace.root()))
     except ValueError:
         run_rel = str(run_dir)
     entry = {

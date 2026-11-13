@@ -20,15 +20,14 @@ from libs.runtime.utils import (
     validate_and_normalize_simulation_parameters,
     write_json,
 )
+from libs.runtime import workspace
 from libs.runtime.matrix_library import list_matrix_ids
 from backend.services.matrix_service import simulation_matrix_info
 
 router = APIRouter(prefix="/api/demonstrators", tags=["matrices"])
 
-ROOT_DIR = Path(__file__).resolve().parents[2]
 # "Demonstrators" are simulations: simulations/<id>/data/{simulation_config.json, *.json presets}.
 # The route prefix keeps its historical name; the UI calls them simulations.
-DEMONSTRATORS_ROOT = ROOT_DIR / "simulations"
 
 
 class CreateDemonstratorRequest(BaseModel):
@@ -54,7 +53,7 @@ def _sanitize_dem_name(name: str) -> str:
 
 
 def _next_simulation_id() -> str:
-    used = {d.name for d in DEMONSTRATORS_ROOT.iterdir()} if DEMONSTRATORS_ROOT.exists() else set()
+    used = {d.name for d in workspace.simulations_dir().iterdir()} if workspace.simulations_dir().exists() else set()
     n = 1
     while f"simulation_{n:02d}" in used:
         n += 1
@@ -157,8 +156,8 @@ def _inspect_demonstrator(dem_dir: Path) -> dict[str, Any]:
 @router.get("")
 def list_demonstrators() -> dict[str, Any]:
     items: list[dict[str, Any]] = []
-    if DEMONSTRATORS_ROOT.exists():
-        for d in sorted(DEMONSTRATORS_ROOT.iterdir()):
+    if workspace.simulations_dir().exists():
+        for d in sorted(workspace.simulations_dir().iterdir()):
             if d.is_dir() and (d / "data" / "simulation_config.json").exists():
                 try:
                     items.append(_inspect_demonstrator(d))
@@ -175,7 +174,7 @@ def list_demonstrators() -> dict[str, Any]:
 
 @router.get("/{dem_id}")
 def get_demonstrator(dem_id: str) -> dict[str, Any]:
-    dem_dir = DEMONSTRATORS_ROOT / _sanitize_dem_name(dem_id)
+    dem_dir = workspace.simulations_dir() / _sanitize_dem_name(dem_id)
     if not dem_dir.exists():
         raise HTTPException(status_code=404, detail=f"Simulation {dem_id!r} not found")
     try:
@@ -187,7 +186,7 @@ def get_demonstrator(dem_id: str) -> dict[str, Any]:
 @router.post("")
 def create_demonstrator(req: CreateDemonstratorRequest) -> dict[str, Any]:
     dem_id = _sanitize_dem_name(req.name) if req.name and req.name.strip() else _next_simulation_id()
-    target_dir = DEMONSTRATORS_ROOT / dem_id
+    target_dir = workspace.simulations_dir() / dem_id
     if target_dir.exists():
         raise HTTPException(status_code=409, detail=f"Simulation {dem_id!r} already exists")
 
@@ -195,7 +194,7 @@ def create_demonstrator(req: CreateDemonstratorRequest) -> dict[str, Any]:
     target_data_dir.mkdir(parents=True, exist_ok=True)
 
     if req.clone_from:
-        src_data_dir = DEMONSTRATORS_ROOT / _sanitize_dem_name(req.clone_from) / "data"
+        src_data_dir = workspace.simulations_dir() / _sanitize_dem_name(req.clone_from) / "data"
         if src_data_dir.exists():
             for json_file in src_data_dir.glob("*.json"):
                 shutil.copy2(json_file, target_data_dir / json_file.name)
@@ -265,7 +264,7 @@ def create_demonstrator(req: CreateDemonstratorRequest) -> dict[str, Any]:
 
 @router.put("/{dem_id}/config")
 def update_simulation_config(dem_id: str, config_payload: dict[str, Any]) -> dict[str, Any]:
-    dem_dir = DEMONSTRATORS_ROOT / _sanitize_dem_name(dem_id)
+    dem_dir = workspace.simulations_dir() / _sanitize_dem_name(dem_id)
     if not dem_dir.exists():
         raise HTTPException(status_code=404, detail=f"Simulation {dem_id!r} not found")
     data_dir = dem_dir / "data"
@@ -280,7 +279,7 @@ def update_simulation_config(dem_id: str, config_payload: dict[str, Any]) -> dic
 
 @router.put("/{dem_id}/parameters")
 def update_simulation_parameters(dem_id: str, params_payload: dict[str, Any]) -> dict[str, Any]:
-    dem_dir = DEMONSTRATORS_ROOT / _sanitize_dem_name(dem_id)
+    dem_dir = workspace.simulations_dir() / _sanitize_dem_name(dem_id)
     if not dem_dir.exists():
         raise HTTPException(status_code=404, detail=f"Simulation {dem_id!r} not found")
     data_dir = dem_dir / "data"
@@ -317,7 +316,7 @@ def update_simulation_parameters(dem_id: str, params_payload: dict[str, Any]) ->
 
 @router.get("/{dem_id}/presets/{preset_file}")
 def get_parameter_preset(dem_id: str, preset_file: str) -> dict[str, Any]:
-    dem_dir = DEMONSTRATORS_ROOT / _sanitize_dem_name(dem_id)
+    dem_dir = workspace.simulations_dir() / _sanitize_dem_name(dem_id)
     data_dir = dem_dir / "data"
     try:
         preset_path = resolve_parameters_file_path(data_dir, preset_file)
@@ -334,7 +333,7 @@ def get_parameter_preset(dem_id: str, preset_file: str) -> dict[str, Any]:
 
 @router.post("/{dem_id}/presets")
 def save_parameter_preset(dem_id: str, req: SavePresetRequest) -> dict[str, Any]:
-    dem_dir = DEMONSTRATORS_ROOT / _sanitize_dem_name(dem_id)
+    dem_dir = workspace.simulations_dir() / _sanitize_dem_name(dem_id)
     if not dem_dir.exists():
         raise HTTPException(status_code=404, detail=f"Simulation {dem_id!r} not found")
     data_dir = dem_dir / "data"
@@ -388,8 +387,8 @@ class RenameDemonstratorRequest(BaseModel):
 def rename_demonstrator(dem_id: str, req: RenameDemonstratorRequest) -> dict[str, Any]:
     src_id = _sanitize_dem_name(dem_id)
     dst_id = _sanitize_dem_name(req.new_name)
-    src_dir = DEMONSTRATORS_ROOT / src_id
-    dst_dir = DEMONSTRATORS_ROOT / dst_id
+    src_dir = workspace.simulations_dir() / src_id
+    dst_dir = workspace.simulations_dir() / dst_id
 
     if not src_dir.exists():
         raise HTTPException(status_code=404, detail=f"Simulation {src_id!r} not found")
@@ -403,12 +402,12 @@ def rename_demonstrator(dem_id: str, req: RenameDemonstratorRequest) -> dict[str
 @router.delete("/{dem_id}")
 def delete_demonstrator(dem_id: str) -> dict[str, Any]:
     target_id = _sanitize_dem_name(dem_id)
-    target_dir = DEMONSTRATORS_ROOT / target_id
+    target_dir = workspace.simulations_dir() / target_id
     if not target_dir.exists():
         raise HTTPException(status_code=404, detail=f"Simulation {target_id!r} not found")
 
     existing_dirs = [
-        d for d in DEMONSTRATORS_ROOT.iterdir()
+        d for d in workspace.simulations_dir().iterdir()
         if d.is_dir() and (d / "data" / "simulation_config.json").exists()
     ]
     if len(existing_dirs) <= 1:
@@ -424,7 +423,7 @@ def delete_demonstrator(dem_id: str) -> dict[str, Any]:
 
 @router.delete("/{dem_id}/presets/{preset_file}")
 def delete_parameter_preset(dem_id: str, preset_file: str) -> dict[str, Any]:
-    dem_dir = DEMONSTRATORS_ROOT / _sanitize_dem_name(dem_id)
+    dem_dir = workspace.simulations_dir() / _sanitize_dem_name(dem_id)
     if not dem_dir.exists():
         raise HTTPException(status_code=404, detail=f"Simulation {dem_id!r} not found")
     data_dir = dem_dir / "data"
@@ -451,7 +450,7 @@ def delete_parameter_preset(dem_id: str, preset_file: str) -> dict[str, Any]:
 
 @router.post("/{dem_id}/preview-coarsening")
 def preview_coarsening_trajectory(dem_id: str, params_payload: dict[str, Any]) -> dict[str, Any]:
-    dem_dir = DEMONSTRATORS_ROOT / _sanitize_dem_name(dem_id)
+    dem_dir = workspace.simulations_dir() / _sanitize_dem_name(dem_id)
     if not dem_dir.exists():
         raise HTTPException(status_code=404, detail=f"Simulation {dem_id!r} not found")
     data_dir = dem_dir / "data"

@@ -89,6 +89,20 @@ The five core tabs sit in the main bar under the title; **Hardware** and **Wiki*
 
 ---
 
+## Workspaces
+
+Project data (`matrices/`, `simulations/`, `batch/`, `tuning/`) lives in a *workspace*. By default the
+workspace is this repository, so nothing changes for existing use. To keep data elsewhere, point
+`HDD_WORKSPACE` at another folder; the Studio, the command line and every job they start will read
+and write only there:
+
+```bash
+HDD_WORKSPACE=~/hdd-projects/blade ./run.sh --ui
+HDD_WORKSPACE=~/hdd-projects/blade ./run.sh simulations/simulation_01
+```
+
+Simulation paths given on the command line are relative to the workspace.
+
 ## Command-Line Usage
 
 ### 1. Run a Single Simulation

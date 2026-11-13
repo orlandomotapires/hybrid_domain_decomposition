@@ -25,7 +25,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from libs.runtime.matrix_library import PROJECT_ROOT, resolve_matrix
+from libs.runtime import workspace
+from libs.runtime.matrix_library import resolve_matrix
 from libs.runtime.utils import load_mtx, validate_and_normalize_simulation_parameters
 from libs.tuning import history as history_mod
 from libs.tuning.feasibility import check_feasibility
@@ -133,7 +134,7 @@ def create_study_dir(config: dict[str, Any], parent: Path | None = None) -> Path
     """Write a normalized config into a new study folder and return it."""
     if parent is None:
         sim = config.get("simulation")
-        parent = (PROJECT_ROOT / "simulations" / sim / "tuning") if sim else (PROJECT_ROOT / "tuning" / "studies")
+        parent = (workspace.simulations_dir() / sim / "tuning") if sim else (workspace.tuning_dir() / "studies")
     parent.mkdir(parents=True, exist_ok=True)
     name = datetime.now().strftime("study_%Y%m%d_%H%M%S")
     study_dir = parent / name

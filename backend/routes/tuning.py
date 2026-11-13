@@ -11,7 +11,8 @@ from typing import Any
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from backend.routes.matrices import DEMONSTRATORS_ROOT, _sanitize_dem_name, update_simulation_parameters
+from libs.runtime import workspace
+from backend.routes.matrices import _sanitize_dem_name, update_simulation_parameters
 from backend.services.job_manager import job_manager
 from libs.runtime.utils import resolve_parameters_file_path, validate_and_normalize_simulation_config
 from libs.tuning import tuner
@@ -63,7 +64,7 @@ class ReportRequest(BaseModel):
 # --------------------------------------------------------------------------- helpers
 
 def _sim_dir(simulation: str) -> Path:
-    sim_dir = DEMONSTRATORS_ROOT / _sanitize_dem_name(simulation)
+    sim_dir = workspace.simulations_dir() / _sanitize_dem_name(simulation)
     if not sim_dir.exists():
         raise HTTPException(status_code=404, detail=f"Simulation {simulation!r} not found")
     return sim_dir
@@ -93,7 +94,7 @@ def _read(path: Path, default: Any = None) -> Any:
 
 
 def _running_job_for(study_dir: Path) -> dict[str, Any] | None:
-    rel = str(study_dir.resolve().relative_to(DEMONSTRATORS_ROOT.parent))
+    rel = str(study_dir.resolve().relative_to(workspace.root()))
     for job in job_manager.list_jobs():
         if job.get("job_type") == "tuning" and job.get("study_dir") == rel and job.get("status") == "running":
             return job
@@ -200,7 +201,7 @@ def auto_select(req: AutoSelectRequest) -> dict[str, Any]:
 
 @router.get("/studies")
 def list_studies(simulation: str | None = None) -> list[dict[str, Any]]:
-    sims = [_sim_dir(simulation)] if simulation else sorted(d for d in DEMONSTRATORS_ROOT.iterdir() if d.is_dir())
+    sims = [_sim_dir(simulation)] if simulation else sorted(d for d in workspace.simulations_dir().iterdir() if d.is_dir())
     out = []
     for sim in sims:
         tdir = sim / "tuning"

@@ -15,6 +15,7 @@ if str(SRC_DIR) not in sys.path:
 if str(NOTEBOOKS_DIR) not in sys.path:
     sys.path.insert(0, str(NOTEBOOKS_DIR))
 
+from libs.runtime import workspace  # noqa: E402
 import notebook_functions as nf
 
 
@@ -110,7 +111,7 @@ def extract_kpi_summary(run_metrics: dict[str, Any]) -> dict[str, Any]:
 
 def load_case_from_result_dir(result_dir_rel: str) -> dict[str, Any]:
     """Load run artifacts from a result directory for plot rendering."""
-    if not (ROOT_DIR / result_dir_rel).resolve().exists():
+    if not (workspace.root() / result_dir_rel).resolve().exists():
         raise FileNotFoundError(f"Result directory not found: {result_dir_rel}")
     case = nf.load_case_from_summary({"result_dir": result_dir_rel})
     case["row"] = {"result_dir": result_dir_rel}
@@ -128,7 +129,7 @@ def render_or_get_cached_plot(
     if spec_info is None:
         raise ValueError(f"Unsupported plot name: {plot_name}")
 
-    result_dir = (ROOT_DIR / result_dir_rel).resolve()
+    result_dir = (workspace.root() / result_dir_rel).resolve()
     plots_dir = result_dir / "plots"
     plots_dir.mkdir(parents=True, exist_ok=True)
     out_file = plots_dir / f"{plot_name}.png"

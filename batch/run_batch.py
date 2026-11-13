@@ -16,15 +16,12 @@ import traceback
 from typing import Any
 
 
-ROOT_DIR = Path(__file__).resolve().parent.parent
-SRC_DIR = ROOT_DIR / "src"
-BATCH_DIR = ROOT_DIR / "batch"
-BATCH_RUNS_DIR = BATCH_DIR / "runs"
-BATCH_CONFIGURATION_PATH = BATCH_DIR / "batch_configuration.json"
+SRC_DIR = Path(__file__).resolve().parent.parent / "src"
 
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
+from libs.runtime import workspace
 from libs.runtime.matrix_library import resolve_matrix
 from libs.runtime.runtime import run_simulation
 from libs.runtime.utils import (
@@ -85,7 +82,7 @@ def _load_matrices(configuration: dict[str, Any]) -> tuple[Geometry, ...]:
 
 
 def _load_batch_configuration() -> dict[str, Any]:
-    configuration = _load_json(BATCH_CONFIGURATION_PATH)
+    configuration = _load_json(workspace.batch_config_path())
 
     return {
         "async_remote_case_keys": tuple(str(key) for key in configuration.get("async_remote_case_keys", [])),
@@ -191,12 +188,12 @@ def _build_case_parameters(case: BatchCase, base_parameters: dict[str, Any]) -> 
 
 def _write_batch_configuration_snapshot(batch_dir: Path) -> Path:
     snapshot_path = batch_dir / "batch_configuration.json"
-    write_json(snapshot_path, _load_json(BATCH_CONFIGURATION_PATH))
+    write_json(snapshot_path, _load_json(workspace.batch_config_path()))
     return snapshot_path
 
 
 def _batch_output_dir() -> Path:
-    output_dir = BATCH_RUNS_DIR / datetime.now().strftime("batch_%Y%m%d_%H%M%S")
+    output_dir = workspace.batch_runs_dir() / datetime.now().strftime("batch_%Y%m%d_%H%M%S")
     output_dir.mkdir(parents=True, exist_ok=False)
     return output_dir
     
@@ -205,7 +202,7 @@ def _batch_output_dir() -> Path:
 def _resolve_batch_dir() -> Path:
     env_batch_dir = os.environ.get("HDD_BATCH_DIR")
     if env_batch_dir:
-        batch_dir = ROOT_DIR / env_batch_dir
+        batch_dir = workspace.root() / env_batch_dir
         batch_dir.mkdir(parents=True, exist_ok=True)
         return batch_dir
     return _batch_output_dir()
@@ -216,12 +213,12 @@ def _launch_nohup(case_count: int) -> int:
     log_path = batch_dir / "batch.log"
     child_args = [arg for arg in sys.argv[1:] if arg != "--nohup"]
     child_env = dict(os.environ)
-    child_env["HDD_BATCH_DIR"] = str(batch_dir.relative_to(ROOT_DIR))
+    child_env["HDD_BATCH_DIR"] = str(batch_dir.relative_to(workspace.root()))
 
     with log_path.open("a", encoding="utf-8") as log_handle:
         process = subprocess.Popen(
             [sys.executable, str(Path(__file__).resolve()), *child_args],
-            cwd=str(ROOT_DIR),
+            cwd=str(workspace.root()),
             stdin=subprocess.DEVNULL,
             stdout=log_handle,
             stderr=subprocess.STDOUT,
@@ -231,8 +228,8 @@ def _launch_nohup(case_count: int) -> int:
 
     print(f"Started batch in background with PID {process.pid}")
     print(f"Prepared {case_count} batch cases.")
-    print(f"Batch directory: {batch_dir.relative_to(ROOT_DIR)}")
-    print(f"Batch log: {(batch_dir / 'batch.log').relative_to(ROOT_DIR)}")
+    print(f"Batch directory: {batch_dir.relative_to(workspace.root())}")
+    print(f"Batch log: {(batch_dir / 'batch.log').relative_to(workspace.root())}")
     return 0
 
 
@@ -248,7 +245,7 @@ def _case_run_kwargs(case: BatchCase, batch_dir: Path) -> dict[str, Any]:
     """Arguments for run_simulation: in-memory config, results under batch/runs/<batch>/cases/<case_key>/."""
     return {
         "simulation_config_override": _case_simulation_config(case),
-        "results_dir_override": str((batch_dir / "cases" / case.case_key).relative_to(ROOT_DIR)),
+        "results_dir_override": str((batch_dir / "cases" / case.case_key).relative_to(workspace.root())),
         "run_label": case.case_key,
     }
 
@@ -271,7 +268,7 @@ def _run_one_case_worker(run_kwargs: dict[str, Any], simulation_parameters: dict
                     output_json,
                     {
                         "status": "completed",
-                        "result_dir": str(result_dir.relative_to(ROOT_DIR)),
+                        "result_dir": str(result_dir.relative_to(workspace.root())),
                     },
                 )
             except Exception as exc:
@@ -351,8 +348,8 @@ def _launch_async_case(
 
     entry["started_at"] = datetime.now().isoformat()
     entry["status"] = "running_async"
-    entry["async_log_file"] = str(async_log_path.relative_to(ROOT_DIR))
-    entry["worker_output_json"] = str(async_output_path.relative_to(ROOT_DIR))
+    entry["async_log_file"] = str(async_log_path.relative_to(workspace.root()))
+    entry["worker_output_json"] = str(async_output_path.relative_to(workspace.root()))
     entry["pid"] = int(process.pid or 0)
     _write_manifest(manifest_path, manifest)
     print(f"[{record['index']:02d}/{record['case_count']}] Launched async {case.case_key} with PID {process.pid}")
@@ -396,7 +393,7 @@ def _finalize_async_case(
         entry["status"] = "failed"
         entry["error"] = {
             "type": "RuntimeError",
-            "message": f"Async worker exited with code {process.exitcode} without producing {output_path.relative_to(ROOT_DIR)}",
+            "message": f"Async worker exited with code {process.exitcode} without producing {output_path.relative_to(workspace.root())}",
             "traceback": None,
         }
         print(f"  FAILED: {entry['error']['message']}")
@@ -493,7 +490,7 @@ def _build_batch_summary(manifest: dict[str, Any]) -> list[dict[str, Any]]:
 
         result_dir = entry.get("result_dir")
         if isinstance(result_dir, str) and result_dir:
-            metrics_path = ROOT_DIR / result_dir / "run_metrics.json"
+            metrics_path = workspace.root() / result_dir / "run_metrics.json"
             if metrics_path.exists():
                 run_metrics = _load_json(metrics_path)
                 row.update(_extract_summary_metrics(run_metrics))
@@ -515,7 +512,7 @@ def _write_batch_summary(batch_dir: Path, manifest: dict[str, Any]) -> Path:
 def _finalize_batch(batch_dir: Path, manifest_path: Path, manifest: dict[str, Any]) -> None:
     manifest["batch_finished_at"] = datetime.now().isoformat()
     summary_json = _write_batch_summary(batch_dir, manifest)
-    manifest["summary_json"] = str(summary_json.relative_to(ROOT_DIR))
+    manifest["summary_json"] = str(summary_json.relative_to(workspace.root()))
     _write_manifest(manifest_path, manifest)
 
 
@@ -552,9 +549,9 @@ def main(argv: list[str] | None = None) -> int:
     batch_configuration_snapshot = _write_batch_configuration_snapshot(batch_dir)
     manifest: dict[str, Any] = {
         "batch_started_at": datetime.now().isoformat(),
-        "batch_directory": str(batch_dir.relative_to(ROOT_DIR)),
-        "batch_configuration": str(batch_configuration_snapshot.relative_to(ROOT_DIR)),
-        "log_file": str((batch_dir / "batch.log").relative_to(ROOT_DIR)),
+        "batch_directory": str(batch_dir.relative_to(workspace.root())),
+        "batch_configuration": str(batch_configuration_snapshot.relative_to(workspace.root())),
+        "log_file": str((batch_dir / "batch.log").relative_to(workspace.root())),
         "cases": [],
     }
     active_async: dict[str, Any] | None = None
@@ -633,7 +630,7 @@ def main(argv: list[str] | None = None) -> int:
 
         entry["finished_at"] = datetime.now().isoformat()
         entry["status"] = "completed"
-        entry["result_dir"] = str(result_dir.relative_to(ROOT_DIR))
+        entry["result_dir"] = str(result_dir.relative_to(workspace.root()))
         _write_manifest(manifest_path, manifest)
         print(f"  Result: {entry['result_dir']}")
 
@@ -659,8 +656,8 @@ def main(argv: list[str] | None = None) -> int:
             break
 
     _finalize_batch(batch_dir, manifest_path, manifest)
-    print(f"Batch manifest: {manifest_path.relative_to(ROOT_DIR)}")
-    print(f"Batch summary: {(batch_dir / 'batch_summary.json').relative_to(ROOT_DIR)}")
+    print(f"Batch manifest: {manifest_path.relative_to(workspace.root())}")
+    print(f"Batch summary: {(batch_dir / 'batch_summary.json').relative_to(workspace.root())}")
     case_entries = manifest.get("cases", [])
     failed_keys = [str(entry.get("case_key")) for entry in case_entries if entry.get("status") == "failed"]
     if failed_keys:

@@ -9,15 +9,12 @@ from typing import Any
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
+from libs.runtime import workspace
 from libs.runtime.utils import write_json
 from backend.services.job_manager import job_manager
 
 router = APIRouter(prefix="/api/batch", tags=["batch"])
 
-ROOT_DIR = Path(__file__).resolve().parents[2]
-BATCH_DIR = ROOT_DIR / "batch"
-BATCH_CONFIG_PATH = BATCH_DIR / "batch_configuration.json"
-BATCH_RUNS_DIR = BATCH_DIR / "runs"
 
 
 class StartBatchRequest(BaseModel):
@@ -58,9 +55,9 @@ def _compute_dry_run_cases(config: dict[str, Any]) -> list[dict[str, Any]]:
 
 @router.get("/config")
 def get_batch_configuration() -> dict[str, Any]:
-    if not BATCH_CONFIG_PATH.exists():
+    if not workspace.batch_config_path().exists():
         raise HTTPException(status_code=404, detail="batch_configuration.json not found")
-    config = json.loads(BATCH_CONFIG_PATH.read_text(encoding="utf-8"))
+    config = json.loads(workspace.batch_config_path().read_text(encoding="utf-8"))
     cases = _compute_dry_run_cases(config)
     return {
         "configuration": config,
@@ -76,7 +73,7 @@ def update_batch_configuration(config_payload: dict[str, Any]) -> dict[str, Any]
     if missing:
         raise HTTPException(status_code=400, detail=f"Missing required batch configuration keys: {', '.join(sorted(missing))}")
 
-    write_json(BATCH_CONFIG_PATH, config_payload)
+    write_json(workspace.batch_config_path(), config_payload)
     cases = _compute_dry_run_cases(config_payload)
     return {
         "configuration": config_payload,
@@ -143,12 +140,13 @@ def _durations_from_log(log_path: Path) -> dict[str, float]:
     return durations
 
 
-def collect_case_durations(runs_dir: Path = BATCH_RUNS_DIR) -> list[dict[str, Any]]:
+def collect_case_durations(runs_dir: Path | None = None) -> list[dict[str, Any]]:
     """Durations (seconds) of every *completed* case across past batches.
 
     Prefers manifest `started_at`/`finished_at`; falls back to batch.log timestamps.
     """
     samples: list[dict[str, Any]] = []
+    runs_dir = runs_dir or workspace.batch_runs_dir()
     if not runs_dir.exists():
         return samples
     for bdir in sorted(p for p in runs_dir.iterdir() if p.is_dir()):
@@ -203,7 +201,7 @@ def collect_case_durations(runs_dir: Path = BATCH_RUNS_DIR) -> list[dict[str, An
     return samples
 
 
-def compute_duration_estimates(runs_dir: Path = BATCH_RUNS_DIR) -> dict[str, Any]:
+def compute_duration_estimates(runs_dir: Path | None = None) -> dict[str, Any]:
     """Median duration per (algorithm, scale) and per (matrix, algorithm, scale) from past batches."""
     samples = collect_case_durations(runs_dir)
     by_alg_scale: dict[str, list[float]] = {}
@@ -238,8 +236,8 @@ def get_batch_estimates() -> dict[str, Any]:
 @router.get("/runs")
 def list_batch_runs() -> dict[str, Any]:
     runs: list[dict[str, Any]] = []
-    if BATCH_RUNS_DIR.exists():
-        for bdir in sorted(BATCH_RUNS_DIR.iterdir(), key=lambda p: p.name, reverse=True):
+    if workspace.batch_runs_dir().exists():
+        for bdir in sorted(workspace.batch_runs_dir().iterdir(), key=lambda p: p.name, reverse=True):
             if not bdir.is_dir():
                 continue
             manifest_path = bdir / "batch_manifest.json"
@@ -282,7 +280,7 @@ def list_batch_runs() -> dict[str, Any]:
 
 @router.get("/runs/{batch_id}")
 def get_batch_run_detail(batch_id: str) -> dict[str, Any]:
-    bdir = BATCH_RUNS_DIR / batch_id
+    bdir = workspace.batch_runs_dir() / batch_id
     if not bdir.exists() or not bdir.is_dir():
         raise HTTPException(status_code=404, detail=f"Batch run {batch_id!r} not found")
 

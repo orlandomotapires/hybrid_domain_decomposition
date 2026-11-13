@@ -15,14 +15,14 @@ import json
 import sys
 from pathlib import Path
 
-from libs.runtime.matrix_library import PROJECT_ROOT
+from libs.runtime import workspace
 from libs.runtime.utils import resolve_parameters_file_path, validate_and_normalize_simulation_config
 
 
 def _load_simulation(sim_arg: str) -> tuple[str, dict, dict]:
     sim_dir = Path(sim_arg)
     if not sim_dir.is_absolute():
-        sim_dir = (Path.cwd() / sim_dir) if (Path.cwd() / sim_dir).exists() else PROJECT_ROOT / sim_dir
+        sim_dir = (Path.cwd() / sim_dir) if (Path.cwd() / sim_dir).exists() else workspace.root() / sim_dir
     data_dir = sim_dir / "data"
     cfg = validate_and_normalize_simulation_config(json.loads((data_dir / "simulation_config.json").read_text(encoding="utf-8")))
     params_path = resolve_parameters_file_path(data_dir, cfg.get("parameters_file_path"))

@@ -16,8 +16,14 @@ import uuid
 from typing import Any
 
 
+# Code location (launch scripts, import path). Project data is located through ``workspace``.
 ROOT_DIR = Path(__file__).resolve().parents[2]
 SRC_DIR = ROOT_DIR / "src"
+
+if str(SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(SRC_DIR))
+
+from libs.runtime import workspace  # noqa: E402
 
 PIPELINE_STAGES = [
     {"id": "initialization", "label": "Graph Construction", "index": 0},
@@ -113,7 +119,7 @@ def _run_meta_from_params(params: dict[str, Any] | None) -> dict[str, Any]:
 def _load_params_file(demonstrator_dir: str, parameters_file: str | None) -> dict[str, Any] | None:
     """Best-effort load of the parameters file a live run will use (when no in-memory override)."""
     try:
-        data_dir = ROOT_DIR / demonstrator_dir / "data"
+        data_dir = workspace.root() / demonstrator_dir / "data"
         name = parameters_file
         if not name:
             cfg = json.loads((data_dir / "simulation_config.json").read_text(encoding="utf-8"))
@@ -208,7 +214,7 @@ class JobManager:
         self._load_historical_runs()
 
     def _load_historical_runs(self) -> None:
-        dem_root = ROOT_DIR / "simulations"
+        dem_root = workspace.root() / "simulations"
         if not dem_root.exists():
             return
         for dem_dir in sorted(dem_root.iterdir()):
@@ -342,9 +348,9 @@ class JobManager:
             del self._jobs[job_id]
 
         if delete_files and job.result_dir:
-            target = (ROOT_DIR / job.result_dir).resolve()
+            target = (workspace.root() / job.result_dir).resolve()
             try:
-                target.relative_to((ROOT_DIR / "simulations").resolve())
+                target.relative_to((workspace.root() / "simulations").resolve())
                 if target.exists() and target.is_dir() and target.name.startswith("run_"):
                     shutil.rmtree(target)
             except Exception:
@@ -450,7 +456,7 @@ class JobManager:
     ) -> dict[str, Any]:
         job_id = f"batch_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:6]}"
         batch_dir_rel = f"batch/runs/batch_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-        batch_dir = ROOT_DIR / batch_dir_rel
+        batch_dir = workspace.root() / batch_dir_rel
         batch_dir.mkdir(parents=True, exist_ok=True)
 
         now_t = time.time()
@@ -500,7 +506,7 @@ class JobManager:
     def start_tuning_study(self, *, study_dir: Path, title: str, demonstrator_id: str | None = None) -> dict[str, Any]:
         """Run ``libs.tuning.cli --resume <study_dir>`` as a background job."""
         try:
-            study_dir_rel = str(study_dir.resolve().relative_to(ROOT_DIR))
+            study_dir_rel = str(study_dir.resolve().relative_to(workspace.root()))
         except ValueError:
             study_dir_rel = str(study_dir)
         job_id = f"tuning_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:6]}"
@@ -670,7 +676,7 @@ class JobManager:
                 if m_res:
                     raw_path = Path(m_res.group(1).strip())
                     try:
-                        job.result_dir = str(raw_path.resolve().relative_to(ROOT_DIR))
+                        job.result_dir = str(raw_path.resolve().relative_to(workspace.root()))
                     except ValueError:
                         job.result_dir = str(raw_path)
 

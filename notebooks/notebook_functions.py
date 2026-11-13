@@ -9,6 +9,7 @@ import matplotlib.pyplot as plt
 from matplotlib.colors import hsv_to_rgb, to_hex
 
 from libs.runtime.utils import load_mtx, _as_csr_matrix, graph_to_sparse_matrix, matrix_to_graph
+from libs.runtime import workspace
 from libs.permutation import _create_permutation_from_partition, _permute_sparse_matrix
 
 BATCH_RUNS_REPO = "batch/runs"
@@ -316,7 +317,7 @@ def _curve_points_from_metrics(structural_metrics: dict[str, dict]) -> tuple[np.
 
 def load_case_from_summary(row: dict) -> dict:
     """Load one run's artifacts: the original and permuted matrix, permutation, partitions, metrics."""
-    result_dir = REPO_ROOT / row["result_dir"]
+    result_dir = workspace.root() / row["result_dir"]
     run_params = json.loads((result_dir / "run_simulation_parameters.json").read_text())
     permutation = np.loadtxt(result_dir / "permutation.txt", dtype=np.int64)
     coarsened_graph_matrix = load_mtx(result_dir / "coarsened_graph.mtx", label="coarsened graph")
@@ -326,7 +327,7 @@ def load_case_from_summary(row: dict) -> dict:
 
     # Every run records which library matrix it used (batch cases have no simulation folder).
     inputs = json.loads((result_dir / "run_inputs.json").read_text())
-    matrix_original = load_mtx(REPO_ROOT / inputs["matrix_path"], label="original matrix")
+    matrix_original = load_mtx(workspace.root() / inputs["matrix_path"], label="original matrix")
     matrix_permuted = load_mtx(result_dir / "matrix_permuted.mtx", label="permuted matrix")
 
     return {
@@ -534,7 +535,7 @@ def render_curve_comparison(
         plt.close(fig)
 
 def get_completed_rows(batch_run_name: str) -> list[dict]:
-    BATCH_DIR = REPO_ROOT / BATCH_RUNS_REPO / batch_run_name
+    BATCH_DIR = workspace.root() / BATCH_RUNS_REPO / batch_run_name
     BATCH_SUMMARY_PATH = BATCH_DIR / "batch_summary.json"
     batch_summary = json.loads(BATCH_SUMMARY_PATH.read_text())
     batch_rows = batch_summary.get("rows", [])

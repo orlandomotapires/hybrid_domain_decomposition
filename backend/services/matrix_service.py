@@ -7,7 +7,8 @@ import numpy as np
 import scipy.sparse as sp
 from scipy.io import mmwrite
 
-from libs.runtime.matrix_library import SIMULATIONS_DIR, load_matrix_meta
+from libs.runtime import workspace
+from libs.runtime.matrix_library import load_matrix_meta
 
 
 def inspect_mtx_file(path: Path) -> dict[str, Any]:
@@ -129,9 +130,9 @@ def inspect_matrix(matrix_id: str) -> dict[str, Any]:
 
 def simulations_using_matrix(matrix_id: str) -> list[str]:
     users: list[str] = []
-    if not SIMULATIONS_DIR.exists():
+    if not workspace.simulations_dir().exists():
         return users
-    for sim in sorted(SIMULATIONS_DIR.iterdir()):
+    for sim in sorted(workspace.simulations_dir().iterdir()):
         cfg_path = sim / "data" / "simulation_config.json"
         if not cfg_path.exists():
             continue
