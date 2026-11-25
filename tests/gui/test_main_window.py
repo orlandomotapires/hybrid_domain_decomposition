@@ -107,13 +107,34 @@ def test_closing_with_a_running_job_asks_first(qtbot, window, monkeypatch):
     sleeper.write_text("import time\ntime.sleep(60)\n")
     monkeypatch.setattr(window.ctx.jobs, "_command", lambda kind, args: [sys.executable, "-u", str(sleeper)])
     window.run_simulation("sim_a")
-    monkeypatch.setattr(window, "_confirm_stop_jobs", lambda what: False)
+    monkeypatch.setattr(window, "_confirm_stop_jobs", lambda what: None)
     window.close()
     assert window.isVisible()
-    monkeypatch.setattr(window, "_confirm_stop_jobs", lambda what: True)
+    monkeypatch.setattr(window, "_confirm_stop_jobs", lambda what: "stop")
     window.close()
     assert not window.isVisible()
     assert window.ctx.jobs.running_jobs() == []
+
+
+def test_jobs_can_keep_running_after_the_window_closes(qtbot, theme, settings, root, monkeypatch):
+    import sys
+
+    from hdd.services.jobs import JobManager
+
+    win = MainWindow(theme, settings, root)
+    qtbot.waitUntil(lambda: win.snapshot is not None, timeout=10000)
+    sleeper = Path(root) / "sleep.py"
+    sleeper.write_text("import time\nprint('[10:00:00 INFO] working', flush=True)\ntime.sleep(60)\n")
+    monkeypatch.setattr(win.ctx.jobs, "_command", lambda kind, args: [sys.executable, "-u", str(sleeper)])
+    win.run_simulation("sim_a")
+    job_id = win.console.job_id
+    monkeypatch.setattr(win, "_confirm_stop_jobs", lambda what: "keep")
+    win.close()
+    reopened = JobManager(root)
+    try:
+        assert reopened.get_job(job_id)["status"] == "running"
+    finally:
+        reopened.cancel_all()
 
 
 def test_import_matrix_and_switch_workspace(qtbot, window, tmp_path, monkeypatch):

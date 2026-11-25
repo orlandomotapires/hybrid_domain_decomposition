@@ -5,7 +5,9 @@
     python -m libs.runtime.job_entry tune <study_dir>
 
 The workspace comes from ``HDD_WORKSPACE``. Output goes to stdout, which the job
-manager parses; the exit code tells success (0) from failure.
+manager reads; progress is reported as structured events (``libs.runtime.events``),
+and the last event, ``exit``, records the exit code in the log itself so that a job
+that finishes while the Studio is closed is still known to have succeeded or failed.
 """
 
 from __future__ import annotations
@@ -14,6 +16,8 @@ import argparse
 import json
 import sys
 import traceback
+
+from libs.runtime import events
 
 
 def _single(simulation_dir: str, payload: dict) -> int:
@@ -28,6 +32,7 @@ def _single(simulation_dir: str, payload: dict) -> int:
         )
         log("INFO", "Simulation Completed Successfully")
         log("VERBOSE", f"Results saved in {out_dir}")
+        events.emit("result", result_dir=str(out_dir))
         return 0
     except Exception as exc:
         log("ERROR", f"Simulation failed: {exc}")
@@ -49,7 +54,20 @@ def main(argv: list[str] | None = None) -> int:
     tune = sub.add_parser("tune", help="run (or resume) a tuning study")
     tune.add_argument("study_dir")
     args = parser.parse_args(argv)
+    code = 1
+    try:
+        code = _run(args)
+    except SystemExit as exc:
+        code = exc.code if isinstance(exc.code, int) else (0 if exc.code is None else 1)
+    except BaseException:
+        traceback.print_exc()
+        code = 1
+    finally:
+        events.emit("exit", code=code)
+    return code
 
+
+def _run(args: argparse.Namespace) -> int:
     if args.kind == "single":
         return _single(args.simulation_dir, json.loads(args.payload))
     if args.kind == "batch":

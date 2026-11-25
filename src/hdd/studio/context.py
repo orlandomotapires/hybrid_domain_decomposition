@@ -68,5 +68,7 @@ class AppContext(QObject):
         return self.jobs.start_single_simulation(f"simulations/{simulations.sanitize_simulation_id(simulation_id)}")
 
     def close(self) -> None:
+        """Release the workspace. Running jobs keep running and are picked up when it opens again."""
         self.bridge.close()
+        self.jobs.close()
         self.tasks.wait(5000)

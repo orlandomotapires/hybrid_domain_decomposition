@@ -5,6 +5,8 @@ from typing import Any, Callable
 import networkx as nx
 import numpy as np
 
+from libs.runtime import events
+
 from .metrics import balance_violation, cut_value
 
 
@@ -83,7 +85,12 @@ def recursive_kway_via_bipartition(
             return float(sum(float(Gc.nodes[n].get('vweight', 1.0)) for n in nodes))
         return float(len(nodes))
 
+    starts = max(1, int(num_starts))
+    total_splits = starts * (int(k) - 1)
+    done_splits = 0
+
     def run_once(run_seed: int | None) -> dict[Any, int]:
+        nonlocal done_splits
         rng = np.random.default_rng(run_seed)
         blocks: list[set[Any]] = [set(nodes_all)]
         split_idx = 0
@@ -104,6 +111,8 @@ def recursive_kway_via_bipartition(
             split_idx += 1
 
             x = bipartition(G, target_weight, split_seed, simulated=simulated)
+            done_splits += 1
+            events.progress(done_splits / total_splits)
 
             part_a = {n for n, bit in x.items() if int(bit) == 0}
             part_b = set(G.nodes()) - part_a
@@ -129,7 +138,6 @@ def recursive_kway_via_bipartition(
 
         return part
 
-    starts = max(1, int(num_starts))
     best_score = None
     best_part = None
 

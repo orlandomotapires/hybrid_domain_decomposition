@@ -25,7 +25,6 @@ from PySide6.QtWidgets import (
 )
 
 from hdd.services import batch, matrices, results, simulations, tuning
-from hdd.services.catalog import STAGE_LABELS
 from hdd.services.errors import ServiceError
 from libs.runtime import workspace
 
@@ -36,7 +35,7 @@ from .dialogs import CompareDialog, NewSimulationDialog, NewStudyDialog
 from .documents import SimulationDocument
 from .graphics.area import GraphicsArea
 from .help import HelpPanel
-from .jobs_panel import JobConsole, JobsPanel
+from .jobs_panel import JobConsole, JobsPanel, job_stage
 from .project import ProjectSnapshot, load_snapshot
 from .settings import LAYOUT_VERSION, Settings
 from .theme import MODES, Theme
@@ -413,7 +412,7 @@ class MainWindow(QMainWindow):
         if job is not None:
             icon, tint = {"running": ("running", "accent"), "completed": ("ok", "ok"), "failed": ("error", "error")}.get(job["status"], ("cancelled", "muted"))
             self.status_icon.setPixmap(self._theme.pixmap(icon, 16, tint, self.devicePixelRatioF()))
-            stage = STAGE_LABELS.get(job.get("current_stage") or "", "") if running else job["status"].capitalize()
+            stage = job_stage(job) if running else job["status"].capitalize()
             target = job.get("demonstrator_id") or job["title"]
             self.status_job.setText(f"{target} · {stage}")
             self.status_progress.setValue(int(job.get("stage_progress") or 0))
@@ -1205,7 +1204,10 @@ class MainWindow(QMainWindow):
         if root == self.ctx.root:
             self.reload()
             return True
-        if not self._confirm_unsaved("Open another workspace") or not self._confirm_stop_jobs("Open another workspace"):
+        if not self._confirm_unsaved("Open another workspace"):
+            return False
+        choice = self._confirm_stop_jobs("Open another workspace")
+        if choice is None:
             return False
         for sim_id in list(self.docs):
             self._drop_document(sim_id)
@@ -1213,7 +1215,8 @@ class MainWindow(QMainWindow):
             self.undo_group.removeStack(self.batch_doc.undo)
             self.batch_doc.deleteLater()
             self.batch_doc = None
-        self.ctx.jobs.cancel_all()
+        if choice == "stop":
+            self.ctx.jobs.cancel_all()
         self.ctx.close()
         self.ctx = AppContext(root, self)
         self._connect_context()
@@ -1262,16 +1265,20 @@ class MainWindow(QMainWindow):
             return True
         return False
 
-    def _confirm_stop_jobs(self, what: str) -> bool:
+    def _confirm_stop_jobs(self, what: str) -> str | None:
+        """Ask what to do with running jobs: ``"keep"`` them running, ``"stop"`` them, or ``None`` to cancel."""
         running = self.ctx.jobs.running_jobs()
         if not running:
-            return True
+            return "keep"
         noun = "job is" if len(running) == 1 else "jobs are"
-        box = QMessageBox(QMessageBox.Icon.Warning, what, f"{len(running)} {noun} still running. They will be stopped.", parent=self)
-        stop = box.addButton("Stop jobs and continue", QMessageBox.ButtonRole.AcceptRole)
+        box = QMessageBox(QMessageBox.Icon.Question, what, f"{len(running)} {noun} still running.", parent=self)
+        box.setInformativeText("They can keep running in the background. Opening this workspace again shows their progress and results.")
+        keep = box.addButton("Keep running", QMessageBox.ButtonRole.AcceptRole)
+        stop = box.addButton("Stop jobs", QMessageBox.ButtonRole.DestructiveRole)
         box.addButton(QMessageBox.StandardButton.Cancel)
+        box.setDefaultButton(keep)
         box.exec()
-        return box.clickedButton() is stop
+        return {id(keep): "keep", id(stop): "stop"}.get(id(box.clickedButton()))
 
     # ------------------------------------------------------------------- misc
     def set_theme(self, mode: str) -> None:
@@ -1311,10 +1318,12 @@ class MainWindow(QMainWindow):
         self._settings.save_window(self.saveGeometry(), self.saveState(LAYOUT_VERSION))
 
     def closeEvent(self, event: QCloseEvent) -> None:
-        if not self._confirm_unsaved("Quit") or not self._confirm_stop_jobs("Quit"):
+        choice = self._confirm_stop_jobs("Quit") if self._confirm_unsaved("Quit") else None
+        if choice is None:
             event.ignore()
             return
-        self.ctx.jobs.cancel_all()
+        if choice == "stop":
+            self.ctx.jobs.cancel_all()
         self.save_layout()
         self.ctx.close()
         super().closeEvent(event)

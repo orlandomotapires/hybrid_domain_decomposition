@@ -24,6 +24,7 @@ def job_command(kind: str, args: list[str], python: str | None = None) -> list[s
 def job_environment(workspace_root: Path) -> dict[str, str]:
     env = dict(os.environ)
     env["PYTHONUNBUFFERED"] = "1"
+    env["HDD_EVENTS"] = "1"  # libs.runtime.events: report progress as structured events
     env["HDD_WORKSPACE"] = str(workspace_root)
     env["PYTHONPATH"] = os.pathsep.join(p for p in (str(package_root()), env.get("PYTHONPATH")) if p)
     return env

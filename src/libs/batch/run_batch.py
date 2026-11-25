@@ -18,7 +18,7 @@ import traceback
 from typing import Any
 
 
-from libs.runtime import workspace
+from libs.runtime import events, workspace
 from libs.runtime.matrix_library import resolve_matrix
 from libs.runtime.runtime import run_simulation
 from libs.runtime.utils import (
@@ -380,6 +380,7 @@ def _launch_async_case(
     entry["pid"] = int(process.pid or 0)
     _write_manifest(manifest_path, manifest)
     print(f"[{record['index']:02d}/{record['case_count']}] Launched async {case.case_key} with PID {process.pid}")
+    events.emit("batch_case", index=record["index"], total=record["case_count"], case=case.case_key)
     print(f"  Async log: {entry['async_log_file']}")
     return {
         "entry": entry,
@@ -411,11 +412,13 @@ def _finalize_async_case(
             entry["result_dir"] = payload.get("result_dir")
             entry["error"] = None
             print(f"  Result: {entry['result_dir']}")
+            events.emit("batch_done", case=entry.get("case_key"), status="completed")
         else:
             entry["status"] = "failed"
             entry["error"] = payload.get("error")
             message = entry["error"].get("message") if isinstance(entry.get("error"), dict) else f"worker exited with code {process.exitcode}"
             print(f"  FAILED: {message}")
+            events.emit("batch_done", case=entry.get("case_key"), status="failed")
     else:
         entry["status"] = "failed"
         entry["error"] = {
@@ -424,6 +427,7 @@ def _finalize_async_case(
             "traceback": None,
         }
         print(f"  FAILED: {entry['error']['message']}")
+        events.emit("batch_done", case=entry.get("case_key"), status="failed")
 
     _write_manifest(manifest_path, manifest)
     return True
@@ -571,6 +575,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.dry_run:
         return 0
 
+    events.emit("batch", total=len(cases))
     batch_dir = _resolve_batch_dir()
     manifest_path = batch_dir / "batch_manifest.json"
     batch_configuration_snapshot = _write_batch_configuration_snapshot(batch_dir)
@@ -607,6 +612,8 @@ def main(argv: list[str] | None = None) -> int:
             _write_manifest(manifest_path, manifest)
             print(f"[{index:02d}/{len(cases)}] Running {case.case_key}")
             print(f"  FAILED: {type(exc).__name__}: {exc}")
+            events.emit("batch_case", index=index, total=len(cases), case=case.case_key)
+            events.emit("batch_done", case=case.case_key, status="failed")
             if args.stop_on_error:
                 stop_requested = True
             continue
@@ -635,6 +642,7 @@ def main(argv: list[str] | None = None) -> int:
             continue
 
         print(f"[{index:02d}/{len(cases)}] Running {case.case_key}")
+        events.emit("batch_case", index=index, total=len(cases), case=case.case_key)
         entry["started_at"] = datetime.now().isoformat()
         entry["status"] = "running"
         _write_manifest(manifest_path, manifest)
@@ -651,6 +659,7 @@ def main(argv: list[str] | None = None) -> int:
             }
             _write_manifest(manifest_path, manifest)
             print(f"  FAILED: {type(exc).__name__}: {exc}")
+            events.emit("batch_done", case=case.case_key, status="failed")
             if args.stop_on_error:
                 stop_requested = True
             continue
@@ -660,6 +669,7 @@ def main(argv: list[str] | None = None) -> int:
         entry["result_dir"] = str(result_dir.relative_to(workspace.root()))
         _write_manifest(manifest_path, manifest)
         print(f"  Result: {entry['result_dir']}")
+        events.emit("batch_done", case=case.case_key, status="completed")
 
     if stop_requested and active_async is not None:
         print("Waiting for the active async remote QLM case to finish before stopping the batch")

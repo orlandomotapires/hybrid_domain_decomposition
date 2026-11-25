@@ -1,3 +1,4 @@
+from libs.runtime import events
 from libs.runtime.log import log
 from libs.runtime.utils import matrix_to_graph
 from libs.permutation import permute_matrix
@@ -90,6 +91,7 @@ def decompose_matrix(matrix, general_parameters, coarsening_parameters, partitio
         stage_durations_sec[name] = round(now - t_stage, 6)
         t_stage = now
 
+    events.stage("initialization")
     log("INFO", "Converting matrix to graph")
     G = matrix_to_graph(matrix, dof_per_node=dof_per_node)
 
@@ -106,6 +108,7 @@ def decompose_matrix(matrix, general_parameters, coarsening_parameters, partitio
 
     _close_stage("graph_build")
 
+    events.stage("coarsening")
     log("INFO", "Coarsening Heavy Edge Matching")
     graphs, maps = coarsen_chain(
         G,
@@ -142,6 +145,7 @@ def decompose_matrix(matrix, general_parameters, coarsening_parameters, partitio
             f"Coarsening stopped at {Gc.number_of_nodes()} nodes, above coarsen_superior_limit={coarsen_superior_limit}",
         )
 
+    events.stage("partitioning")
     part_k_coarse = 0
     if partitioning_strategy == 'metis_partitioning':
         log("INFO", "Multilevel Partitioning Scheme using METIS")
@@ -286,6 +290,7 @@ def decompose_matrix(matrix, general_parameters, coarsening_parameters, partitio
 
     _close_stage("partitioning")
 
+    events.stage("uncoarsening")
     log("INFO", "Uncoarsening Kernighan-Lin")
     part_k = uncoarsen_and_refine(
         graphs,
@@ -304,6 +309,7 @@ def decompose_matrix(matrix, general_parameters, coarsening_parameters, partitio
 
     _close_stage("uncoarsening")
 
+    events.stage("permutation")
     log("INFO", "Permuting matrix")
     permute_result = permute_matrix(
         matrix=matrix,

@@ -10,7 +10,7 @@ A study lives in a folder (``simulations/<sim>/tuning/study_<ts>/``)::
     trials/trial_000/...  normal run folders produced by ``run_simulation``
     STOP                  created by the Studio to stop after the current trial
 
-Progress is printed as ``[tuning] trial i/N ...`` lines that the Studio job manager parses.
+Progress is printed as ``[tuning] trial i/N ...`` lines and reported to the Studio as ``trial`` events.
 """
 
 from __future__ import annotations
@@ -24,6 +24,8 @@ import traceback
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+
+from libs.runtime import events
 
 from libs.runtime import workspace
 from libs.runtime.matrix_library import resolve_matrix
@@ -459,6 +461,7 @@ def run_study(study_dir: str | Path) -> dict[str, Any]:
     started = time.monotonic()
     summary = summarize(study_dir, config, state="running")
     best_score, stale, consecutive_errors = math.inf, 0, 0
+    events.emit("tuning", total=total)
     print(f"[tuning] study {study_dir.name}: {total} trials, sampler={config['sampler']}, "
           f"objectives={','.join(config['objectives'])} ({config['aggregation']})", flush=True)
 
@@ -499,6 +502,7 @@ def run_study(study_dir: str | Path) -> dict[str, Any]:
         value_txt = "-" if row["values"] is None else " ".join(f"{k}={v:.4g}" for k, v in row["values"].items())
         best_txt = summary.get("best_trial", "-")
         print(f"[tuning] trial {done}/{total} status={row['status']} {value_txt} best_trial={best_txt}", flush=True)
+        events.emit("trial", done=done, total=total, status=row["status"])
         if row["status"] != "ok" and row["reasons"]:
             print(f"[tuning]   reason: {row['reasons'][0]}", flush=True)
 

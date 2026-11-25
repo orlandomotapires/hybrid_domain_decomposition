@@ -12,34 +12,59 @@ from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
 from hdd.services.jobs import JobManager
-from hdd.services.jobs.manager import INTERRUPTED_MESSAGE, MAX_LOG_ENTRIES
+from hdd.services.jobs.manager import INTERRUPTED_MESSAGE, MAX_LOG_ENTRIES, _pid_alive
 from libs.runtime import workspace
 from tests.test_workspace import make_workspace
 
+def event(kind: str, **data) -> str:
+    """An event line as libs.runtime.events writes it."""
+    return "@@hdd-event " + json.dumps({"event": kind, **data})
+
+
 SCRIPTS = {
-    # A single run that walks through the pipeline stages and announces its result folder.
-    "single_ok": """
-        import sys, time
-        for line in ["[10:00:00 INFO] Converting matrix to graph",
+    # A single run that walks through the pipeline stages, announces its result folder and exits cleanly.
+    "single_ok": f"""
+        for line in [{event("stage", stage="initialization", index=0, of=5)!r},
+                     "[10:00:00 INFO] Converting matrix to graph",
                      "[10:00:00 INFO] Graph G with 600 nodes and 1150 edges created from the matrix",
+                     {event("stage", stage="coarsening", index=1, of=5)!r},
                      "[10:00:00 INFO] Coarsening Heavy Edge Matching",
                      "[10:00:00 VERBOSE] Coarse graph has 86 nodes and 213 edges with 4 levels",
+                     {event("stage", stage="partitioning", index=2, of=5)!r},
                      "[10:00:00 INFO] Multilevel Partitioning Scheme using METIS",
+                     {event("progress", fraction=0.5)!r},
                      "[10:00:00 VERBOSE] Partitioning on coarse graph produced 4 parts",
+                     {event("stage", stage="uncoarsening", index=3, of=5)!r},
                      "[10:00:00 INFO] Uncoarsening Kernighan-Lin",
+                     {event("stage", stage="permutation", index=4, of=5)!r},
                      "[10:00:00 INFO] Permuting matrix",
-                     "[10:00:00 VERBOSE] Results saved in simulations/sim_a/results/run_fake"]:
+                     "[10:00:00 VERBOSE] Results saved in simulations/sim_a/results/run_fake",
+                     {event("result", result_dir="simulations/sim_a/results/run_fake")!r},
+                     {event("exit", code=0)!r}]:
             print(line, flush=True)
     """,
-    "single_fail": """
+    "single_fail": f"""
+        print({event("stage", stage="initialization", index=0, of=5)!r}, flush=True)
         print("[10:00:00 INFO] Converting matrix to graph", flush=True)
         print("[10:00:00 ERROR] Simulation failed: boom", flush=True)
+        print({event("exit", code=1)!r}, flush=True)
         raise SystemExit(1)
     """,
-    "sleep": """
+    "sleep": f"""
         import time
+        print({event("stage", stage="coarsening", index=1, of=5)!r}, flush=True)
         print("[10:00:00 INFO] Coarsening Heavy Edge Matching", flush=True)
         time.sleep(60)
+    """,
+    # Runs until a flag file appears, then reports success: lets a test close the manager in between.
+    "wait_for_flag": f"""
+        import os, time
+        print({event("stage", stage="coarsening", index=1, of=5)!r}, flush=True)
+        print("[10:00:00 INFO] waiting", flush=True)
+        while not os.path.exists(os.environ["FLAG"]):
+            time.sleep(0.02)
+        print("[10:00:01 INFO] done", flush=True)
+        print({event("exit", code=0)!r}, flush=True)
     """,
     "ignore_term": """
         import signal, time
@@ -47,17 +72,21 @@ SCRIPTS = {
         print("[10:00:00 INFO] ignoring SIGTERM", flush=True)
         time.sleep(60)
     """,
-    "batch": """
-        print("Prepared 2 batch cases.", flush=True)
-        print("[1/2] Running m__metis__big", flush=True)
-        print("  Result: simulations/x", flush=True)
-        print("[2/2] Running m__metis__small", flush=True)
-        print("  FAILED: ValueError: nope", flush=True)
+    "batch": f"""
+        for line in [{event("batch", total=2)!r}, "Prepared 2 batch cases.",
+                     {event("batch_case", index=1, total=2, case="m__metis__big")!r}, "[1/2] Running m__metis__big",
+                     "  Result: simulations/x", {event("batch_done", case="m__metis__big", status="completed")!r},
+                     {event("batch_case", index=2, total=2, case="m__metis__small")!r}, "[2/2] Running m__metis__small",
+                     "  FAILED: ValueError: nope", {event("batch_done", case="m__metis__small", status="failed")!r},
+                     {event("exit", code=0)!r}]:
+            print(line, flush=True)
     """,
-    "tune": """
-        print("[tuning] study study_x: 2 trials", flush=True)
-        print("[tuning] trial 1/2 status=ok edge_cut=1", flush=True)
-        print("[tuning] trial 2/2 status=infeasible", flush=True)
+    "tune": f"""
+        for line in [{event("tuning", total=2)!r}, "[tuning] study study_x: 2 trials",
+                     "[tuning] trial 1/2 status=ok edge_cut=1", {event("trial", done=1, total=2, status="ok")!r},
+                     "[tuning] trial 2/2 status=infeasible", {event("trial", done=2, total=2, status="infeasible")!r},
+                     {event("exit", code=0)!r}]:
+            print(line, flush=True)
     """,
     "flood": """
         for i in range(%d):
@@ -149,7 +178,8 @@ class JobManagerTest(unittest.TestCase):
         kinds = [event for event, jid in self.events if jid == job_id]
         self.assertEqual("added", kinds[0])
         self.assertEqual("finished", kinds[-1])
-        self.assertEqual(9, kinds.count("changed"))
+        self.assertGreaterEqual(kinds.count("changed"), 1)
+        self.assertNotIn("added", kinds[1:])
 
     def test_a_failing_listener_does_not_break_the_job(self) -> None:
         self.manager.subscribe(lambda *_: 1 / 0)
@@ -199,6 +229,26 @@ class JobManagerTest(unittest.TestCase):
         done = self.manager.get_job(job["job_id"])
         self.assertEqual({"tuning_total": 2, "tuning_done": 2, "tuning_ok": 1, "tuning_infeasible": 1}, done["telemetry"])
         self.assertEqual("simulations/sim_a/tuning/study_x", done["study_dir"])
+        self.assertEqual(100, done["stage_progress"])
+
+    def test_events_drive_progress_and_stay_out_of_the_log(self) -> None:
+        self.fake.next["single"] = "single_ok"
+        job_id = self.manager.start_single_simulation("simulations/sim_a")["job_id"]
+        wait_for(self.finished(job_id))
+        job = self.manager.get_job(job_id)
+        self.assertFalse(any("@@hdd-event" in e["message"] for e in job["logs"]))
+        self.assertEqual(0, job["exit_code"])
+        self.assertEqual({"initialization", "coarsening", "partitioning", "uncoarsening", "permutation"}, set(job["stage_durations_sec"]))
+
+    def test_a_process_that_dies_without_reporting_fails(self) -> None:
+        self.fake.next["single"] = "sleep"
+        job = self.manager.start_single_simulation("simulations/sim_a")
+        wait_for(lambda: self.manager.get_job(job["job_id"])["log_count"] >= 1)
+        os.kill(job["pid"], 9)
+        wait_for(self.finished(job["job_id"]))
+        done = self.manager.get_job(job["job_id"])
+        self.assertEqual(("failed", -9), (done["status"], done["exit_code"]))
+        self.assertEqual("Stopped by signal 9.", done["error_message"])
 
     def test_logs_are_bounded_but_offsets_stay_valid(self) -> None:
         self.fake.next["single"] = "flood"
@@ -214,23 +264,70 @@ class JobManagerTest(unittest.TestCase):
         batch_id = self.manager.start_batch_study()["job_id"]
         wait_for(self.finished(done_id))
         wait_for(self.finished(batch_id))
-        self.fake.next["single"] = "sleep"
-        running_id = self.manager.start_single_simulation("simulations/sim_a")["job_id"]
-        wait_for(lambda: self.manager.get_job(running_id)["log_count"] >= 1)
 
         reopened = JobManager(self.root, command_factory=self.fake)
         ids = {j["job_id"] for j in reopened.list_jobs()}
-        self.assertTrue({done_id, batch_id, running_id} <= ids)
+        self.assertTrue({done_id, batch_id} <= ids)
         restored = reopened.get_job(done_id)
         self.assertEqual("completed", restored["status"])
         self.assertEqual(9, restored["log_count"])
         self.assertEqual(86, restored["telemetry"]["coarse_nodes"])
-        interrupted = reopened.get_job(running_id)
+        self.assertTrue(reopened.delete_job(done_id))
+        self.assertFalse((self.root / ".hdd" / "jobs" / f"{done_id}.json").exists())
+
+    def test_a_running_job_is_followed_again_after_a_restart(self) -> None:
+        flag = Path(self.tmp.name) / "flag"
+        self.fake.next["single"] = "wait_for_flag"
+        with patch.dict(os.environ, {"FLAG": str(flag)}):
+            job_id = self.manager.start_single_simulation("simulations/sim_a")["job_id"]
+        wait_for(lambda: self.manager.get_job(job_id)["log_count"] >= 1)
+        self.manager.close()  # the Studio closes; the job keeps running
+
+        reopened = JobManager(self.root, command_factory=self.fake)
+        self.assertEqual("running", reopened.get_job(job_id)["status"])
+        self.assertEqual("coarsening", reopened.get_job(job_id)["current_stage"])
+        flag.write_text("go")
+        wait_for(lambda: reopened.get_job(job_id)["status"] != "running")
+        job = reopened.get_job(job_id)
+        self.assertEqual(("completed", 0), (job["status"], job["exit_code"]))
+        self.assertEqual(["waiting", "done"], [e["message"] for e in job["logs"]])
+
+    def test_a_job_that_finished_while_closed_is_settled_from_its_log(self) -> None:
+        flag = Path(self.tmp.name) / "flag"
+        self.fake.next["single"] = "wait_for_flag"
+        with patch.dict(os.environ, {"FLAG": str(flag)}):
+            job = self.manager.start_single_simulation("simulations/sim_a")
+        wait_for(lambda: self.manager.get_job(job["job_id"])["log_count"] >= 1)
+        self.manager.close()
+        flag.write_text("go")
+        wait_for(lambda: not _pid_alive(job["pid"]))
+
+        reopened = JobManager(self.root, command_factory=self.fake)
+        self.assertEqual(("completed", 0), (reopened.get_job(job["job_id"])["status"], reopened.get_job(job["job_id"])["exit_code"]))
+
+    def test_a_job_killed_while_closed_is_marked_interrupted(self) -> None:
+        self.fake.next["single"] = "sleep"
+        job = self.manager.start_single_simulation("simulations/sim_a")
+        wait_for(lambda: self.manager.get_job(job["job_id"])["log_count"] >= 1)
+        self.manager.close()
+        os.kill(job["pid"], 9)
+        wait_for(lambda: not _pid_alive(job["pid"]))
+
+        reopened = JobManager(self.root, command_factory=self.fake)
+        interrupted = reopened.get_job(job["job_id"])
         self.assertEqual("failed", interrupted["status"])
         self.assertEqual(INTERRUPTED_MESSAGE, interrupted["error_message"])
         self.assertEqual(INTERRUPTED_MESSAGE, interrupted["logs"][-1]["message"])
-        self.assertTrue(reopened.delete_job(done_id))
-        self.assertFalse((self.root / ".hdd" / "jobs" / f"{done_id}.json").exists())
+
+    def test_a_job_followed_again_can_be_cancelled(self) -> None:
+        self.fake.next["single"] = "sleep"
+        job = self.manager.start_single_simulation("simulations/sim_a")
+        wait_for(lambda: self.manager.get_job(job["job_id"])["log_count"] >= 1)
+        self.manager.close()
+        reopened = JobManager(self.root, command_factory=self.fake, kill_grace_sec=0.5)
+        self.assertEqual("cancelled", reopened.cancel_job(job["job_id"])["status"])
+        wait_for(lambda: reopened.get_job(job["job_id"])["pid"] is None)
+        self.assertEqual("cancelled", reopened.get_job(job["job_id"])["status"])
 
     def test_running_jobs_cannot_be_deleted(self) -> None:
         self.fake.next["single"] = "sleep"

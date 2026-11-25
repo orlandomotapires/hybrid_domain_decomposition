@@ -1,8 +1,15 @@
-"""The job manager: starts jobs as child processes, follows their output and keeps their records.
+"""The job manager: starts jobs as detached processes, follows their logs and keeps their records.
 
-Thread model: one reader thread per running job parses its output under the job's
-lock. Listeners registered with :meth:`JobManager.subscribe` are called with
-``(event, job_id)`` from those threads, outside every lock; they should only
+A job writes its output straight to its log file, in its own session, so it keeps
+running when the Studio closes. The manager follows that file: one follower thread
+per running job reads new lines and applies them under the job's lock. Progress
+comes from structured events (``libs.runtime.events``); ordinary lines become the
+visible log. When the Studio opens again, jobs whose process is still alive are
+followed again, and jobs that ended meanwhile are settled from the ``exit`` event
+in their log.
+
+Listeners registered with :meth:`JobManager.subscribe` are called with
+``(event, job_id)`` from follower threads, outside every lock; they should only
 note the change and let their own thread pull the state with :meth:`get_job`.
 """
 
@@ -21,6 +28,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
 
+from libs.runtime import events as job_events
 from libs.runtime import workspace
 
 from . import commands, parsing
@@ -31,7 +39,9 @@ Listener = Callable[[str, str], None]
 CommandFactory = Callable[[str, list[str]], list[str]]
 EVENTS = ("added", "changed", "finished", "removed")
 MAX_LOG_ENTRIES = 50_000
-INTERRUPTED_MESSAGE = "Interrupted: the Studio was closed while this job was running."
+INTERRUPTED_MESSAGE = "The job ended while the Studio was closed and did not report a result."
+NO_RESULT_MESSAGE = "The job ended without reporting a result (it may have been killed)."
+POLL_SEC = 0.1
 # Fields written to a job record (everything else is runtime state).
 _RECORD_EXCLUDE = {"logs", "parameters_override"}
 
@@ -92,7 +102,9 @@ class SimulationJob:
     batch_dir: str | None = None
     study_dir: str | None = None
     pid: int | None = None
+    pid_start: int | None = None  # start time of the process, to tell it from a later process with the same pid
     exit_code: int | None = None
+    exit_reported: int | None = None  # code from the job's own ``exit`` event
     error_message: str | None = None
     logs: list[dict[str, Any]] = field(default_factory=list)
     telemetry: dict[str, Any] = field(default_factory=dict)
@@ -194,6 +206,7 @@ class JobManager:
         self._lock = threading.Lock()
         self._listeners: list[Listener] = []
         self._listeners_lock = threading.Lock()
+        self._closed = threading.Event()
         self._load_records()
         if load_history:
             self._load_historical_runs()
@@ -238,21 +251,28 @@ class JobManager:
     def _load_records(self) -> None:
         for record in self.store.load_all():
             job = SimulationJob.from_record(record)
-            if job.status == "running":
-                # The process belonged to a previous session and its output pipe is gone.
-                job.status = "failed"
-                job.error_message = INTERRUPTED_MESSAGE
-                job.pid = None
-                job.finished_epoch = job.finished_epoch or time.time()
-                job.finished_at = job.finished_at or datetime.now().isoformat()
-                if job.log_path:
-                    try:
-                        with (self.root / job.log_path).open("a", encoding="utf-8") as handle:
-                            handle.write(f"[{datetime.now():%H:%M:%S} WARNING] {INTERRUPTED_MESSAGE}\n")
-                    except OSError:
-                        pass
-                self._save(job)
             self._jobs[job.job_id] = job
+            if job.status != "running":
+                continue
+            # The job was running when the Studio last closed: rebuild its state from its log.
+            job.logs, job.logs_dropped, job.telemetry, job._logs_loaded = [], 0, {}, True
+            job.exit_reported = None
+            if job.log_path and _pid_alive(job.pid, job.pid_start):
+                self._start_follower(job, self._replay(job))
+            else:
+                self._follow(job, 0, settle=True)
+
+    def _replay(self, job: SimulationJob) -> int:
+        """Apply the complete lines already in the job's log; return the offset to follow from."""
+        path = self.root / job.log_path
+        try:
+            data = path.read_bytes()
+        except OSError:
+            return 0
+        end = data.rfind(b"\n") + 1
+        for raw in data[:end].split(b"\n"):
+            self._apply_raw(job, raw)
+        return end
 
     def _ensure_logs(self, job: SimulationJob) -> None:
         """Read a reloaded job's log file the first time someone asks for its logs."""
@@ -265,7 +285,7 @@ class JobManager:
                 return
             stamp = datetime.fromtimestamp(job.started_epoch).strftime("%H:%M:%S")
             for raw in path.read_text(encoding="utf-8", errors="replace").splitlines():
-                if raw.strip():
+                if raw.strip() and job_events.parse(raw) is None:
                     job.append_log(_parse_log_line(raw, default_hms=stamp))
 
     def _load_historical_runs(self) -> None:
@@ -466,28 +486,25 @@ class JobManager:
         log_file.parent.mkdir(parents=True, exist_ok=True)
         env = commands.job_environment(self.root)
         env.update(extra_env or {})
-        handle = log_file.open("a", encoding="utf-8")
-        try:
+        position = log_file.stat().st_size if log_file.exists() else 0
+        with log_file.open("ab") as handle:
+            # The child owns its output: nothing breaks when the Studio closes.
             proc = subprocess.Popen(
                 argv,
                 cwd=str(self.root),
-                stdout=subprocess.PIPE,
+                stdout=handle,
                 stderr=subprocess.STDOUT,
                 stdin=subprocess.DEVNULL,
-                text=True,
-                bufsize=1,
                 start_new_session=True,
                 env=env,
             )
-        except OSError:
-            handle.close()
-            raise
         job._process = proc
         job.pid = proc.pid
+        job.pid_start = _process_start(proc.pid)
         with self._lock:
             self._jobs[job.job_id] = job
         self._save(job)
-        threading.Thread(target=self._consume_process_output, args=(job, handle), daemon=True, name=f"job-{job.job_id}").start()
+        self._start_follower(job, position)
         self._notify("added", job.job_id)
         return job.to_dict(include_logs=True)
 
@@ -498,11 +515,14 @@ class JobManager:
         if job is None:
             return None
         proc = job._process
-        if proc is not None and proc.poll() is None:
-            _signal_group(proc, signal.SIGTERM)
-            timer = threading.Timer(self._kill_grace_sec, lambda: proc.poll() is None and _signal_group(proc, signal.SIGKILL))
-            timer.daemon = True
-            timer.start()
+        if proc is not None:
+            if proc.poll() is None:
+                _signal_group(proc.pid, signal.SIGTERM)
+                self._after_grace(lambda: proc.poll() is None and _signal_group(proc.pid, signal.SIGKILL))
+        elif _pid_alive(job.pid, job.pid_start):  # followed again after a restart: not our child
+            pid, start = job.pid, job.pid_start
+            _signal_group(pid, signal.SIGTERM)
+            self._after_grace(lambda: _pid_alive(pid, start) and _signal_group(pid, signal.SIGKILL))
         changed = False
         with job._lock:
             if job.status == "running":
@@ -518,83 +538,204 @@ class JobManager:
             self._notify("finished", job_id)
         return job.to_dict(include_logs=True)
 
+    def _after_grace(self, fn: Callable[[], Any]) -> None:
+        timer = threading.Timer(self._kill_grace_sec, fn)
+        timer.daemon = True
+        timer.start()
+
     def cancel_all(self) -> list[str]:
-        """Cancel every running job (used when the application closes)."""
+        """Cancel every running job."""
         ids = self.running_jobs()
         for job_id in ids:
             self.cancel_job(job_id)
         return ids
 
-    # ---------------------------------------------------------------- reader
-    def _consume_process_output(self, job: SimulationJob, log_handle) -> None:
-        proc = job._process
+    def close(self) -> None:
+        """Stop following the jobs. Their processes keep running; the next manager picks them up."""
+        self._closed.set()
+
+    # -------------------------------------------------------------- follower
+    def _start_follower(self, job: SimulationJob, position: int) -> None:
+        threading.Thread(target=self._follow, args=(job, position), daemon=True, name=f"job-{job.job_id}").start()
+
+    def _follow(self, job: SimulationJob, position: int, settle: bool = False) -> None:
+        """Apply the job's log from ``position`` on until its process ends (or the manager closes).
+
+        ``settle`` reads a job whose process is already gone, to rebuild its final state.
+        """
+        path = self.root / job.log_path if job.log_path else None
+        buffer = b""
+        handle = path.open("rb") if path is not None and path.exists() else None
         try:
-            for raw_line in proc.stdout:
-                line = raw_line.rstrip("\r\n")
-                if not line:
+            if handle is not None:
+                handle.seek(position)
+            while True:
+                chunk = handle.read(65536) if handle is not None else b""
+                if chunk:
+                    buffer += chunk
+                    *lines, buffer = buffer.split(b"\n")
+                    for raw in lines:
+                        self._apply_raw(job, raw)
+                    if lines and not settle:
+                        self._notify("changed", job.job_id)
                     continue
-                try:
-                    log_handle.write(line + "\n")
-                    log_handle.flush()
-                except (OSError, ValueError):
-                    pass
-                self._apply_line(job, line)
-                self._notify("changed", job.job_id)
-            exit_code = proc.wait()
+                ended, code = (True, None) if settle else self._process_ended(job)
+                if ended:
+                    if handle is not None:
+                        buffer += handle.read()
+                    for raw in buffer.split(b"\n"):
+                        self._apply_raw(job, raw)
+                    when = path.stat().st_mtime if settle and path is not None and path.exists() else None
+                    self._finish(job, code, when=when, interrupted=settle)
+                    return
+                if self._closed.is_set():
+                    return
+                time.sleep(POLL_SEC)
         finally:
-            try:
-                log_handle.close()
-            except OSError:
-                pass
+            if handle is not None:
+                handle.close()
+
+    @staticmethod
+    def _process_ended(job: SimulationJob) -> tuple[bool, int | None]:
+        proc = job._process
+        if proc is not None:
+            code = proc.poll()
+            return code is not None, code
+        return not _pid_alive(job.pid, job.pid_start), None
+
+    def _finish(self, job: SimulationJob, code: int | None, *, when: float | None = None, interrupted: bool = False) -> None:
+        note = None
         with job._lock:
-            now = time.time()
+            now = when or time.time()
             job.close_stage(now)
-            job.exit_code = exit_code
+            if code is None:
+                code = job.exit_reported
+            job.exit_code = code
             job.pid = None
             job.finished_epoch = now
-            job.finished_at = datetime.now().isoformat()
+            job.finished_at = datetime.fromtimestamp(now).isoformat()
             if job.status != "cancelled":
-                job.status = "completed" if exit_code == 0 else "failed"
-                if exit_code == 0:
-                    job.stage_progress = 100
+                if code is None:
+                    job.status = "failed"
+                    job.error_message = INTERRUPTED_MESSAGE if interrupted else NO_RESULT_MESSAGE
+                    note = job.error_message
+                    job.append_log({"timestamp": datetime.fromtimestamp(now).strftime("%H:%M:%S"), "level": "WARNING", "message": note})
+                else:
+                    job.status = "completed" if code == 0 else "failed"
+                    if code == 0:
+                        job.stage_progress = 100
+                    elif job.error_message is None:
+                        job.error_message = f"Stopped by signal {-code}." if code < 0 else f"Exited with code {code}."
+        if note and job.log_path:
+            try:
+                with (self.root / job.log_path).open("a", encoding="utf-8") as handle:
+                    handle.write(f"[{datetime.now():%H:%M:%S} WARNING] {note}\n")
+            except OSError:
+                pass
         self._save(job)
         self._notify("finished", job.job_id)
 
-    @staticmethod
-    def _apply_line(job: SimulationJob, line: str) -> None:
-        entry = _parse_log_line(line)
-        message = entry["message"]
+    def _apply_raw(self, job: SimulationJob, raw: bytes) -> None:
+        line = raw.decode("utf-8", errors="replace").rstrip("\r")
+        if line.strip():
+            self._apply_line(job, line)
+
+    def _apply_line(self, job: SimulationJob, line: str) -> None:
+        event = job_events.parse(line)
         with job._lock:
-            now = time.time()
+            if event is not None:
+                self._apply_event(job, event)
+                return
+            entry = _parse_log_line(line)
             job.append_log(entry)
-            if job.job_type != "tuning":
-                stage = parsing.detect_stage(message)
-                if stage:
-                    if stage != job.current_stage:
-                        job.close_stage(now)
-                        job.current_stage = stage
-                        job.stage_started_epoch = now
-                    job.stage_progress = min(95, int((parsing.STAGE_INDEX.get(stage, 0) + 1) * 18))
-            parsing.update_telemetry(job.telemetry, message)
-            if job.job_type == "batch":
-                parsing.update_batch_progress(job.telemetry, message)
-            elif job.job_type == "tuning":
-                progress = parsing.update_tuning_progress(job.telemetry, message)
-                if progress is not None:
-                    job.stage_progress = progress
-            result_dir = parsing.result_dir_from(message)
-            if result_dir:
-                job.result_dir = result_dir
+            parsing.update_telemetry(job.telemetry, entry["message"])
             # Tuning trials may fail individually; only the exit code decides the job status.
             if entry["level"] == "ERROR" and job.error_message is None and job.job_type != "tuning":
-                job.error_message = message
+                job.error_message = entry["message"]
+
+    def _apply_event(self, job: SimulationJob, event: dict[str, Any]) -> None:
+        """Update the job from one progress event (under the job's lock)."""
+        kind, t = event["event"], job.telemetry
+        if kind == "exit":
+            job.exit_reported = int(event.get("code", 1))
+        elif kind == "result" and event.get("result_dir"):
+            job.result_dir = self._rel(self.root / event["result_dir"])
+        elif job.job_type == "single" and kind in ("stage", "progress"):
+            # Batch cases and tuning trials run the pipeline too; their own counters measure progress.
+            if kind == "stage" and event.get("stage") in parsing.STAGE_INDEX:
+                if event["stage"] != job.current_stage:
+                    now = time.time()
+                    job.close_stage(now)
+                    job.current_stage = event["stage"]
+                    job.stage_started_epoch = now
+                fraction = 0.0
+            elif kind == "progress":
+                fraction = float(event.get("fraction") or 0.0)
+            else:
+                return
+            count = len(parsing.PIPELINE_STAGES)
+            job.stage_progress = max(1, min(99, int(100 * (parsing.STAGE_INDEX.get(job.current_stage, 0) + fraction) / count)))
+        elif kind == "batch":
+            t["batch_total"] = int(event.get("total", 0))
+            t.setdefault("batch_done", 0)
+            t.setdefault("batch_failed", 0)
+        elif kind == "batch_case":
+            t["batch_index"], t["batch_total"], t["batch_case"] = int(event["index"]), int(event["total"]), event.get("case")
+        elif kind == "batch_done":
+            t["batch_done"] = int(t.get("batch_done", 0)) + 1
+            if event.get("status") == "failed":
+                t["batch_failed"] = int(t.get("batch_failed", 0)) + 1
+            job.stage_progress = min(99, int(100 * t["batch_done"] / max(int(t.get("batch_total", 0)), 1)))
+        elif kind == "tuning":
+            t["tuning_total"] = int(event.get("total", 0))
+            t.setdefault("tuning_done", 0)
+        elif kind == "trial":
+            done, total = int(event["done"]), int(event["total"])
+            t["tuning_done"], t["tuning_total"] = done, total
+            key = f"tuning_{event.get('status', 'ok')}"
+            t[key] = int(t.get(key, 0)) + 1
+            job.stage_progress = min(99, int(100 * done / max(total, 1)))
 
 
-def _signal_group(proc: subprocess.Popen, sig: int) -> None:
+def _process_start(pid: int | None) -> int | None:
+    """Start time of a process in clock ticks since boot (Linux), or None when unknown."""
+    if not pid:
+        return None
     try:
-        os.killpg(os.getpgid(proc.pid), sig)
+        stat = Path(f"/proc/{pid}/stat").read_text()
+        return int(stat[stat.rindex(")") + 2:].split()[19])
+    except (OSError, ValueError, IndexError):
+        return None
+
+
+def _pid_alive(pid: int | None, start: int | None = None) -> bool:
+    """Whether ``pid`` is still the process that was started (not a zombie, not a reused pid)."""
+    if not pid:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return False
+    try:
+        stat = Path(f"/proc/{pid}/stat").read_text()
+        fields_after = stat[stat.rindex(")") + 2:].split()
+        if fields_after[0] == "Z":
+            return False
+        if start is not None and int(fields_after[19]) != start:
+            return False
+    except (OSError, ValueError, IndexError):
+        pass
+    return True
+
+
+def _signal_group(pid: int, sig: int) -> None:
+    """Signal the job's process group (it leads its own session), else the process alone."""
+    try:
+        os.killpg(pid, sig)
     except Exception:
         try:
-            proc.send_signal(sig)
+            os.kill(pid, sig)
         except Exception:
             pass
