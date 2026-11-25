@@ -109,11 +109,12 @@ class NewStudyDialog(QDialog):
 
         super().__init__(parent)
         self.setWindowTitle("New tuning study")
-        self.resize(720, 760)
+        self.resize(780, 780)
         self._meta, self._defaults = meta, defaults
         strategy = defaults["parameters"]["partitioning_parameters"]["partitioning_strategy"]
         prefix = SPACE_GROUP_FOR_STRATEGY.get(strategy)
         labels = {p["key"]: p["label"] for p in meta["parameters"]}
+        from hdd.services.catalog import choice_label
 
         self.objectives: dict[str, QCheckBox] = {}
         objectives = Section("Objectives")
@@ -156,13 +157,15 @@ class NewStudyDialog(QDialog):
         self.table.verticalHeader().setVisible(False)
         self.table.setShowGrid(False)
         header = self.table.horizontalHeader()
-        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        for column in (1, 2, 3):
-            header.setSectionResizeMode(column, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
+        self.table.setTextElideMode(Qt.TextElideMode.ElideRight)
         self._keys = list(self.space)
         for row, key in enumerate(self._keys):
             entry = self.space[key]
-            name = QTableWidgetItem(labels.get(key.split(".")[-1], key))
+            name = QTableWidgetItem(labels.get(key) or labels.get(key.split(".")[-1], key))
             name.setFlags(name.flags() & ~Qt.ItemFlag.ItemIsEditable)
             name.setToolTip(key)
             self.table.setItem(row, 0, name)
@@ -171,7 +174,8 @@ class NewStudyDialog(QDialog):
             free.setCheckState(Qt.CheckState.Checked if entry.get("free") else Qt.CheckState.Unchecked)
             self.table.setItem(row, 1, free)
             if "choices" in entry:
-                choices = QTableWidgetItem(", ".join(map(str, entry["choices"])))
+                choices = QTableWidgetItem("; ".join(choice_label(c) for c in entry["choices"]))
+                choices.setToolTip(choices.text())
                 choices.setFlags(choices.flags() & ~Qt.ItemFlag.ItemIsEditable)
                 self.table.setItem(row, 2, choices)
                 self.table.setSpan(row, 2, 1, 2)

@@ -45,9 +45,14 @@ class Node:
 _RUN_ICON = {"completed": ("ok", "ok"), "failed": ("error", "error"), "incomplete": ("result", "default")}
 
 
+def run_time(run_id: str) -> str:
+    """``run_20261125_000647_474443`` as ``2026-11-25 00:06:47``."""
+    stamp = run_id.removeprefix("run_")
+    return f"{stamp[0:4]}-{stamp[4:6]}-{stamp[6:8]} {stamp[9:11]}:{stamp[11:13]}:{stamp[13:15]}" if len(stamp) >= 15 else run_id
+
+
 def run_label(run: dict[str, Any]) -> str:
-    stamp = run["run_id"].removeprefix("run_")
-    pretty = f"{stamp[0:4]}-{stamp[4:6]}-{stamp[6:8]} {stamp[9:11]}:{stamp[11:13]}:{stamp[13:15]}" if len(stamp) >= 15 else run["run_id"]
+    pretty = run_time(run["run_id"])
     if run.get("status") == "failed":
         return f"{pretty} · failed"
     strategy = run.get("partitioning_strategy")

@@ -31,6 +31,7 @@ from typing import Any, Callable
 from libs.runtime import events as job_events
 from libs.runtime import workspace
 
+from .. import catalog
 from . import commands, parsing
 from .parsing import _parse_log_line
 from .store import JobStore
@@ -315,7 +316,7 @@ class JobManager:
                         run_meta = _run_meta_from_params(p)
                         strat = p.get("partitioning_parameters", {}).get("partitioning_strategy", "")
                         if strat:
-                            strategy_str = f" ({strat})"
+                            strategy_str = f" ({catalog.method_label(strat, run_meta['simulated'], short=True)})"
                         k_t = p.get("partitioning_parameters", {}).get("common", {}).get("k_target")
                         if k_t is not None:
                             telemetry["coarse_parts"] = int(k_t)
@@ -442,7 +443,8 @@ class JobManager:
         name = demonstrator_dir.strip("/").split("/")[-1]
         params = parameters_override if parameters_override is not None else _load_params_file(self.root, demonstrator_dir, parameters_file_override)
         meta = _run_meta_from_params(params)
-        strategy = f" ({meta['partitioning_strategy']})" if parameters_override and meta["partitioning_strategy"] else ""
+        strategy = (f" ({catalog.method_label(meta['partitioning_strategy'], meta['simulated'], short=True)})"
+                    if parameters_override and meta["partitioning_strategy"] else "")
         job = SimulationJob(
             job_id=job_id,
             job_type="single",

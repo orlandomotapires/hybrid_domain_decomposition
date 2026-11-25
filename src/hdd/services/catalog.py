@@ -233,6 +233,15 @@ def diff(left: Params, right: Params, *, active_strategies_only: bool = True) ->
     return rows
 
 
+def choice_label(value: Any) -> str:
+    """Display label of a choice value (a method, matching strategy, refinement objective...)."""
+    for spec in ALL_SPECS:
+        for choice, label in spec.choices:
+            if choice == value and not isinstance(value, bool):
+                return label
+    return str(value)
+
+
 def label_for_key(key: str) -> str:
     spec = next((s for s in ALL_SPECS if s.key == key), None)
     if spec is None:

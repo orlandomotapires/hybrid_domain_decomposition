@@ -9,6 +9,7 @@ Simulation parameters are edited in ``sim_pages`` and the batch configuration in
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import lru_cache
 from typing import Any, Callable
 
 from PySide6.QtCore import Qt
@@ -19,7 +20,7 @@ from hdd.services.catalog import method_label
 from hdd.services.matrix_files import inspect_matrix
 
 from .theme import Theme
-from .tree import Node
+from .tree import Node, run_time
 from .widgets import InlineMessage, PropertyTable, Section
 from .widgets.tables import DataTable, fmt
 
@@ -140,8 +141,8 @@ LOADERS: dict[str, Callable[..., Any]] = {
     "outputs": _simulation,
     "presets": _simulation,
     "preset": lambda node: simulations.load_preset(node.simulation_id, node.data["preset"]),
-    "tuning": lambda node, jobs=None: tuning.list_studies(node.simulation_id, jobs),
-    "study": lambda node, jobs=None: tuning.get_study(node.simulation_id, node.data["study"], jobs),
+    "tuning": lambda node, jobs=None: {"studies": tuning.list_studies(node.simulation_id, jobs), "labels": tuning_labels()},
+    "study": lambda node, jobs=None: {**tuning.get_study(node.simulation_id, node.data["study"], jobs), "labels": tuning_labels()},
     "results": lambda node: results.list_runs(node.simulation_id)["runs"],
     "run": lambda node: results.get_run_detail(node.data["result_dir"]),
     "batch": lambda node: batch.list_batch_runs()["batch_runs"],
@@ -149,6 +150,20 @@ LOADERS: dict[str, Callable[..., Any]] = {
     "batch_run": lambda node: {**batch.get_batch_run(node.data["batch"]), "analysis": results.batch_analysis(node.data["batch"])},
     "hardware": lambda node: hardware.environment_status(),
 }
+
+
+@lru_cache(maxsize=1)
+def tuning_labels() -> dict[str, dict[str, str]]:
+    """Display names of tuning objectives, samplers and search-space parameters."""
+    meta = tuning.meta()
+    return {
+        "objectives": {o["key"]: o["label"] for o in meta["objectives"]},
+        "samplers": {o["key"]: o["label"] for o in meta["samplers"]},
+        "parameters": {p["key"]: p["label"] for p in meta["parameters"]},
+    }
+
+
+TRIAL_STATUS = {"ok": "OK", "infeasible": "Infeasible", "error": "Error", "pending": "Pending"}
 
 
 def load(node: Node, jobs: Any = None) -> Any:
@@ -229,7 +244,7 @@ def _build_simulations(node: Node, data: list[dict], actions: PageActions) -> Pa
             pp = sim["simulation_parameters"]["partitioning_parameters"]
             strategy = pp["partitioning_strategy"]
             simulated = (pp.get("strategies") or {}).get(strategy, {}).get("simulated")
-            rows.append([sim["id"], sim["simulation_config"]["input_matrix"], method_label(strategy, simulated), pp["common"]["k_target"], sim["runs_count"]])
+            rows.append([sim["id"], sim["simulation_config"]["input_matrix"], method_label(strategy, simulated, short=True), pp["common"]["k_target"], sim["runs_count"]])
         keys.append(f"simulation:{sim['id']}")
     table.set_rows(rows, keys)
     table.on_activate(actions.select_key)
@@ -237,11 +252,13 @@ def _build_simulations(node: Node, data: list[dict], actions: PageActions) -> Pa
     return page
 
 
-def _build_tuning(node: Node, data: list[dict], actions: PageActions) -> Page:
+def _build_tuning(node: Node, data: dict, actions: PageActions) -> Page:
     page = Page()
+    labels, data = data["labels"], data["studies"]
     table = DataTable(["Study", "Objectives", "Sampler", "Trials", "State"], numeric={3})
     table.set_rows(
-        [[s["id"], ", ".join(s.get("objectives") or []), s.get("sampler") or "—",
+        [[s["id"], ", ".join(labels["objectives"].get(o, o) for o in s.get("objectives") or []),
+          labels["samplers"].get(s.get("sampler"), s.get("sampler") or "—"),
           f"{(s.get('summary') or {}).get('trials_done', 0)} / {s.get('n_trials') or '—'}",
           "Running" if s.get("running_job_id") else str((s.get("summary") or {}).get("state", "—")).capitalize()] for s in data],
         [f"study:{node.simulation_id}/{s['id']}" for s in data],
@@ -264,20 +281,22 @@ def _build_study(node: Node, data: dict, actions: PageActions) -> Page:
         page.add(InlineMessage("info", "This study is running. The table and the plot update as trials finish."))
     elif summary.get("stop_reason"):
         page.add(InlineMessage("info", f"Stopped: {summary['stop_reason']}"))
+    labels = data.get("labels") or tuning_labels()
+    objective_label = lambda key: labels["objectives"].get(key, key.replace("_", " ").capitalize())  # noqa: E731
     objectives = config.get("objectives") or []
     rows = [
-        ("Objectives", ", ".join(objectives), ""),
+        ("Objectives", ", ".join(objective_label(o) for o in objectives), ""),
         ("Combination", "Pareto front" if config.get("aggregation") == "pareto" else "Weighted sum", ""),
-        ("Sampler", str(config.get("sampler", "—")), ""),
+        ("Sampler", labels["samplers"].get(config.get("sampler"), str(config.get("sampler", "—"))), ""),
         ("Trials", f"{fmt(summary.get('trials_done'))} of {fmt(config.get('n_trials'))}", ""),
         ("Successful", fmt(summary.get("trials_ok")), ""),
         ("Infeasible / failed", f"{fmt(summary.get('trials_infeasible'))} / {fmt(summary.get('trials_error'))}", ""),
-        ("Explored parameters", ", ".join(data.get("free_parameters") or []) or "—", ""),
+        ("Explored parameters", ", ".join(labels["parameters"].get(p, p) for p in data.get("free_parameters") or []) or "—", ""),
     ]
     if summary.get("best_trial") is not None:
         rows.append(("Best trial", fmt(summary["best_trial"]), ""))
         for key, value in (summary.get("best_values") or {}).items():
-            rows.append((f"Best {key.replace('_', ' ')}", fmt(value, 4), ""))
+            rows.append((f"Best {objective_label(key).lower()}", fmt(value, 4), ""))
     page.section("Study", PropertyTable(rows))
 
     buttons = []
@@ -295,10 +314,12 @@ def _build_study(node: Node, data: dict, actions: PageActions) -> Page:
 
     trials = data.get("trials") or []
     front = set(summary.get("pareto_front") or [])
-    table = DataTable(["Trial", "Status"] + [o.replace("_", " ").capitalize() for o in objectives] + ["Front"],
-                      numeric={0} | set(range(2, 2 + len(objectives))), max_visible_rows=12)
-    table.set_rows([[t.get("number"), t.get("status", "—")] + [fmt((t.get("values") or {}).get(o), 4) for o in objectives]
-                    + ["Yes" if t.get("number") in front else ""] for t in reversed(trials)])
+    pareto = config.get("aggregation") == "pareto"
+    headers = ["Trial", "Status"] + [objective_label(o) for o in objectives] + (["Pareto"] if pareto else [])
+    table = DataTable(headers, numeric={0} | set(range(2, 2 + len(objectives))), max_visible_rows=None, stretch=1)
+    table.set_rows([[t.get("number"), TRIAL_STATUS.get(t.get("status"), str(t.get("status", "—")).capitalize())]
+                    + [fmt((t.get("values") or {}).get(o), 4) for o in objectives]
+                    + (["Yes" if t.get("number") in front else ""] if pareto else []) for t in reversed(trials)])
     page.section("Trials", table)
     actions.show_study(data)
     return page
@@ -328,7 +349,9 @@ def _build_results(node: Node, data: list[dict], actions: PageActions) -> Page:
     page = Page()
     table = DataTable(["Run", "Method", "k", "Bandwidth reduction (%)"], numeric={2, 3}, multi_select=True)
     table.set_rows(
-        [[r["run_id"], method_label(r.get("partitioning_strategy"), r.get("simulated"), short=True) if r.get("partitioning_strategy") != "unknown" else "—",
+        [[run_time(r["run_id"]),
+          "Failed" if r.get("status") == "failed" else
+          method_label(r.get("partitioning_strategy"), r.get("simulated"), short=True) if r.get("partitioning_strategy") != "unknown" else "—",
           r.get("k_target"), fmt((r.get("kpi_summary") or {}).get("bandwidth_reduction_pct"), 1)] for r in data],
         [r["result_dir"] for r in data],
     )

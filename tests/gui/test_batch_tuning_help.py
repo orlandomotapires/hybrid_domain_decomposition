@@ -114,6 +114,10 @@ def test_create_open_and_delete_a_study(qtbot, window, root, monkeypatch):
     qtbot.waitUntil(lambda: window.settings_panel.title.text() == study_id
                     and any(b.text() == "Apply best parameters" for b in window.settings_panel.page().findChildren(QPushButton)), timeout=10000)
     assert not button(window.settings_panel.page(), "Apply best parameters").isEnabled()
+    from hdd.studio.widgets import PropertyTable
+
+    values = {t.item(r, 0).text(): t.item(r, 1).text() for t in window.settings_panel.page().findChildren(PropertyTable) for r in range(t.rowCount())}
+    assert values["Objectives"] == "Edge cut, Imbalance"
 
     monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.Yes)
     window.study_action("sim_a", study_id, "delete")
