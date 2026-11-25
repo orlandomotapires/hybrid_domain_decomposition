@@ -56,6 +56,8 @@ class GraphicsArea(QWidget):
         self.bands = CurveView("Half-bandwidth (% of n)", "Nonzeros inside the band (%)", markers=True)
         self.convergence = CurveView("Trial", "Best score so far", integer_x=True, markers=True)
         self.pareto = ScatterView()
+        self.caption = QLabel()
+        self.caption.setProperty("role", "caption")
         self.message = QLabel()
         self.message.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.message.setProperty("role", "muted")
@@ -91,6 +93,8 @@ class GraphicsArea(QWidget):
         row.setContentsMargins(4, 0, 6, 0)
         row.setSpacing(6)
         row.addWidget(self.tabs)
+        row.addSpacing(8)
+        row.addWidget(self.caption)
         row.addStretch(1)
         row.addWidget(self.plot_choice)
         row.addWidget(self.fit_button)
@@ -133,7 +137,12 @@ class GraphicsArea(QWidget):
         )
 
     # ----------------------------------------------------------------- show
+    def set_caption(self, text: str) -> None:
+        """Say what the plot shows when it is not the selected item itself (e.g. "Latest run: …")."""
+        self.caption.setText(text)
+
     def clear(self, text: str = "Select a matrix or a run to see its plots.") -> None:
+        self.caption.setText("")
         self._result_dir = None
         self._matrix_shown = None
         self._set_tabs([])
@@ -149,6 +158,7 @@ class GraphicsArea(QWidget):
 
     def show_coarsening(self, preview: dict | None) -> None:
         """Nodes per level of a coarsening preview, with the target range as reference lines."""
+        self.caption.setText("")
         if preview is None:
             self.clear("Fix the parameter errors to preview the coarsening.")
             return
@@ -167,7 +177,8 @@ class GraphicsArea(QWidget):
     def set_coarsening_limits(self, lower: int | None, upper: int | None) -> None:
         self._limits = (lower, upper)
 
-    def show_matrix(self, matrix_id: str) -> None:
+    def show_matrix(self, matrix_id: str, caption: str = "") -> None:
+        self.caption.setText(caption)
         if self._matrix_shown == matrix_id and self.stack.currentWidget() is self.sparsity:
             return
         self._matrix_shown = matrix_id
@@ -184,7 +195,8 @@ class GraphicsArea(QWidget):
             key="graphics",
         )
 
-    def show_run(self, result_dir: str, detail: dict[str, Any]) -> None:
+    def show_run(self, result_dir: str, detail: dict[str, Any], caption: str = "") -> None:
+        self.caption.setText(caption)
         self._matrix_shown = None
         self._result_dir = result_dir
         tabs = []
@@ -237,6 +249,7 @@ class GraphicsArea(QWidget):
     # ------------------------------------------------------------- comparison
     def show_comparison(self, runs: list[dict[str, Any]]) -> None:
         """Locality curves of several runs: each run in its own colour, the original ordering in grey."""
+        self.caption.setText("")
         runs = [r for r in runs if r.get("curves")]
         if not runs:
             self.clear("The selected runs have no metrics to compare.")
@@ -256,6 +269,7 @@ class GraphicsArea(QWidget):
 
     def show_band_concentration(self, curve: dict[str, Any] | None, title: str = "") -> None:
         """One coarsening scale of a batch: share of nonzeros near the diagonal for each method."""
+        self.caption.setText("")
         if not curve or not curve.get("points"):
             self.clear("No completed cases for this matrix and scale.")
             return
@@ -347,6 +361,7 @@ class GraphicsArea(QWidget):
     # ----------------------------------------------------------------- tuning
     def show_study(self, study: dict[str, Any], objective_labels: dict[str, str]) -> None:
         """Pareto front of a two-objective study, else the best score per trial."""
+        self.caption.setText("")
         config, summary, trials = study.get("config") or {}, study.get("summary") or {}, study.get("trials") or []
         objectives = config.get("objectives") or []
         ok = [t for t in trials if t.get("status") == "ok" and t.get("values")]

@@ -106,3 +106,11 @@ def test_a_failed_run_shows_its_error_and_log(qtbot, window, populated):
         import shutil
 
         shutil.rmtree(failed)
+
+
+def test_simulation_pages_show_the_latest_run_and_list_pages_explain_themselves(qtbot, window):
+    window.select_key("partitioning:sim_a")
+    qtbot.waitUntil(lambda: window.graphics.caption.text().startswith("Latest run") and window.graphics.current_view() == "sparsity", timeout=20000)
+    window.select_key("hardware")
+    qtbot.waitUntil(lambda: window.graphics.current_view() == "message" and window.graphics.caption.text() == "", timeout=10000)
+    assert "hardware" in window.graphics.message.text()

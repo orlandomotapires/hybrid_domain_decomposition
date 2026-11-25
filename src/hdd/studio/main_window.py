@@ -494,10 +494,7 @@ class MainWindow(QMainWindow):
             return
         self.settings_panel.show_header(node, self._breadcrumb())
         self.settings_panel.show_text("Loading…")
-        if node.kind == "matrix":
-            self.graphics.show_matrix(node.data["matrix"])
-        elif node.kind not in ("input", "run", "coarsening"):
-            self.graphics.clear()
+        self._show_context_plot(node)
         if node.kind in sim_pages.BUILDERS and node.kind != "preset" and doc is not None:
             self._show_page(node, None)  # the open document is the source of truth
             return
@@ -512,6 +509,79 @@ class MainWindow(QMainWindow):
             lambda exc, n=node: self._show_page_error(n, exc),
             key="page",
         )
+
+    # Plot area for items that have no plot of their own.
+    _PLACEHOLDERS = {
+        "matrices": "Select a matrix to see its sparsity pattern.",
+        "simulations": "Select a simulation to see its latest run, or its matrix if it has not run yet.",
+        "batch": "Select a batch run to compare its methods.",
+        "batch_runs": "Select a batch run to compare its methods.",
+        "batch_config": "The plan on the left lists every case. Run the batch, then select its run to compare methods.",
+        "hardware": "Nothing to plot for the hardware checks.",
+    }
+    _SIMULATION_CONTEXT = ("simulation", "partitioning", "refinement", "outputs", "presets", "preset", "results")
+
+    def _show_context_plot(self, node: Node) -> None:
+        kind = node.kind
+        if kind == "matrix":
+            self.graphics.show_matrix(node.data["matrix"])
+        elif kind in self._SIMULATION_CONTEXT:
+            self._show_simulation_context(node.simulation_id)
+        elif kind == "tuning":
+            self._show_latest_study(node.simulation_id)
+        elif kind in self._PLACEHOLDERS:
+            self.graphics.clear(self._PLACEHOLDERS[kind])
+        # input, coarsening, run, study and batch_run pages draw their own plot
+
+    def _show_simulation_context(self, sim_id: str) -> None:
+        """The simulation's latest successful run, else its input matrix."""
+        sim = self._simulation_data(sim_id) if self.snapshot else None
+        matrix = ((sim or {}).get("simulation_config") or {}).get("input_matrix")
+
+        def load():
+            for run in results.list_runs(sim_id)["runs"]:
+                if run.get("status") == "completed" and (run.get("can_render_plots") or run.get("kpi_summary")):
+                    return run, results.get_run_detail(run["result_dir"])
+            return None
+
+        def show(found) -> None:
+            node = self.project.current_node()
+            if node is None or node.simulation_id != sim_id or node.kind not in self._SIMULATION_CONTEXT:
+                return
+            if found is not None:
+                from .tree import run_label
+
+                run, detail = found
+                self.graphics.show_run(run["result_dir"], detail, caption=f"Latest run · {run_label(run)}")
+            elif matrix:
+                self.graphics.show_matrix(matrix, caption="Input matrix · no successful run yet")
+            else:
+                self.graphics.clear("This simulation has no matrix and no runs yet.")
+
+        self.ctx.tasks.run(load, show, lambda exc: self.graphics.clear(f"Could not load the latest run: {exc}"), key="graphics")
+
+    def _show_latest_study(self, sim_id: str) -> None:
+        jobs = self.ctx.jobs
+
+        def load():
+            studies = tuning.list_studies(sim_id, jobs)
+            if not studies:
+                return None
+            labels = {o["key"]: o["label"] for o in tuning.meta()["objectives"]}
+            return tuning.get_study(sim_id, studies[0]["id"], jobs), labels
+
+        def show(found) -> None:
+            node = self.project.current_node()
+            if node is None or node.kind != "tuning" or node.simulation_id != sim_id:
+                return
+            if found is None:
+                self.graphics.clear("No tuning studies yet. Create one to see its trials here.")
+                return
+            study, labels = found
+            self.graphics.show_study(study, labels)
+            self.graphics.set_caption(f"Latest study · {study['id']}")
+
+        self.ctx.tasks.run(load, show, lambda exc: self.graphics.clear(f"Could not load the studies: {exc}"), key="graphics")
 
     def _page_actions(self) -> pages.PageActions:
         return pages.PageActions(
