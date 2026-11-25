@@ -5,7 +5,10 @@
 #   packaging/linux/install-launcher.sh --remove   uninstall
 #
 # The launcher runs this checkout through run.sh --desktop, so it always starts the
-# code in this repository with its .venv. Nothing outside ~/.local/share is touched.
+# code in this repository. It remembers the Python that has the app's dependencies
+# when you install it (your activated conda env or venv), because the application
+# menu does not activate environments. Run it again after switching environments.
+# Nothing outside ~/.local/share is touched.
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -27,18 +30,16 @@ if [[ "${1:-}" == "--remove" ]]; then
 	exit 0
 fi
 
-if [[ ! -x "$ROOT_DIR/.venv/bin/python" ]]; then
-	echo "warning: $ROOT_DIR/.venv not found; the launcher will use python3 from PATH" >&2
-fi
+PYTHON_BIN="$("$ROOT_DIR/run.sh" --which-python)"  # exits with instructions when none has the dependencies
 
 mkdir -p "$APPS_DIR" "$ICON_DIR"
 install -m 0644 "$ROOT_DIR/src/hdd/studio/resources/app/hdd-studio.svg" "$ICON_FILE"
-exec_line="\"$ROOT_DIR/run.sh\" --desktop"
+exec_line="env HDD_PYTHON=$PYTHON_BIN \"$ROOT_DIR/run.sh\" --desktop"
 sed -e "s|@EXEC@|$exec_line|" -e "s|@TRYEXEC@|$ROOT_DIR/run.sh|" "$ROOT_DIR/packaging/linux/hdd-studio.desktop.in" > "$DESKTOP_FILE"
 chmod 0644 "$DESKTOP_FILE"
 if command -v desktop-file-validate >/dev/null; then
 	desktop-file-validate "$DESKTOP_FILE"
 fi
 refresh_caches
-echo "Installed $DESKTOP_FILE"
+echo "Installed $DESKTOP_FILE (Python: $PYTHON_BIN)"
 echo "HDD Studio is now in the application menu. Remove it with: $0 --remove"

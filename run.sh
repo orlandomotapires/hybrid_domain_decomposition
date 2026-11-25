@@ -3,9 +3,10 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# Python interpreters to try, best first: the activated conda env or venv, then the folders next to
-# this script, then whatever python3 is on PATH.
+# Python interpreters to try, best first: HDD_PYTHON, the activated conda env or venv, then the
+# folders next to this script, then whatever python3 is on PATH.
 candidate_pythons() {
+	[[ -n "${HDD_PYTHON:-}" ]] && echo "$HDD_PYTHON"  # set by the application-menu launcher
 	[[ -n "${CONDA_PREFIX:-}" ]] && echo "$CONDA_PREFIX/bin/python"
 	[[ -n "${VIRTUAL_ENV:-}" ]] && echo "$VIRTUAL_ENV/bin/python"
 	echo "$ROOT_DIR/.venv/bin/python"
@@ -48,7 +49,10 @@ if [[ $# -lt 1 ]]; then
 	set -- --desktop
 fi
 
-if [[ "$1" == "--desktop" ]]; then
+if [[ "$1" == "--which-python" ]]; then  # used by packaging/linux/install-launcher.sh
+	resolve_python "numpy, scipy, networkx, matplotlib, PySide6, pyqtgraph"
+	exit 0
+elif [[ "$1" == "--desktop" ]]; then
 	PYTHON_BIN="$(resolve_python "numpy, scipy, networkx, matplotlib, PySide6, pyqtgraph")"
 elif [[ "$1" == "--help" || "$1" == "-h" ]]; then
 	PYTHON_BIN=""
