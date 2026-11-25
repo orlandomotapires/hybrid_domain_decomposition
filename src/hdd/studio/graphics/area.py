@@ -18,7 +18,7 @@ from libs.runtime.utils import load_mtx
 
 from ..tasks import TaskRunner
 from ..theme import Theme
-from .views import CurveSeries, CurveView, SparsityData, SparsityView
+from .views import CurveSeries, CurveView, ScatterView, SparsityData, SparsityView
 
 PLOT_LABELS = {
     "original_matrix_partitioned": "Original matrix",
@@ -54,12 +54,14 @@ class GraphicsArea(QWidget):
         self.curves = CurveView("Half-bandwidth (% of n)", "Nonzeros inside the band (%)")
         self.trajectory = CurveView("Level", "Nodes", integer_x=True, markers=True)
         self.bands = CurveView("Half-bandwidth (% of n)", "Nonzeros inside the band (%)", markers=True)
+        self.convergence = CurveView("Trial", "Best score so far", integer_x=True, markers=True)
+        self.pareto = ScatterView()
         self.message = QLabel()
         self.message.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.message.setProperty("role", "muted")
         self.message.setWordWrap(True)
         self.stack = QStackedWidget()
-        for widget in (self.sparsity, self.curves, self.trajectory, self.bands, self.message):
+        for widget in (self.sparsity, self.curves, self.trajectory, self.bands, self.convergence, self.pareto, self.message):
             self.stack.addWidget(widget)
 
         self.plot_choice = QComboBox()
@@ -118,13 +120,15 @@ class GraphicsArea(QWidget):
     def _on_tab(self, index: int) -> None:
         name = self.tabs.tabText(index)
         self.stack.setCurrentWidget(
-            {"Locality curve": self.curves, "Comparison": self.curves, "Coarsening": self.trajectory, "Band concentration": self.bands}.get(name, self.sparsity)
+            {"Locality curve": self.curves, "Comparison": self.curves, "Coarsening": self.trajectory, "Band concentration": self.bands,
+             "Convergence": self.convergence, "Pareto front": self.pareto}.get(name, self.sparsity)
         )
         self.plot_choice.setVisible(name == "Sparsity" and self._result_dir is not None)
 
     def current_view(self) -> str:
         widget = self.stack.currentWidget()
-        return {id(self.message): "message", id(self.curves): "curves", id(self.trajectory): "trajectory", id(self.bands): "bands"}.get(
+        return {id(self.message): "message", id(self.curves): "curves", id(self.trajectory): "trajectory", id(self.bands): "bands",
+                id(self.convergence): "convergence", id(self.pareto): "pareto"}.get(
             id(widget), "sparsity"
         )
 
@@ -336,3 +340,30 @@ class GraphicsArea(QWidget):
             exporter.parameters()["width"] = max(1600, int(view.width() * 2))
             exporter.export(str(target))
         return target
+
+    # ----------------------------------------------------------------- tuning
+    def show_study(self, study: dict[str, Any], objective_labels: dict[str, str]) -> None:
+        """Pareto front of a two-objective study, else the best score per trial."""
+        config, summary, trials = study.get("config") or {}, study.get("summary") or {}, study.get("trials") or []
+        objectives = config.get("objectives") or []
+        ok = [t for t in trials if t.get("status") == "ok" and t.get("values")]
+        self._result_dir = None
+        self._matrix_shown = None
+        self.plot_choice.setVisible(False)
+        self.fit_button.setVisible(True)
+        self.export_button.setVisible(True)
+        if config.get("aggregation") == "pareto" and len(objectives) >= 2 and ok:
+            x_key, y_key = objectives[0], objectives[1]
+            self.pareto.set_labels(objective_labels.get(x_key, x_key), objective_labels.get(y_key, y_key))
+            self.pareto.set_points([(t["values"][x_key], t["values"][y_key], t["number"]) for t in ok], set(summary.get("pareto_front") or []))
+            self._set_tabs(["Pareto front"])
+            self.stack.setCurrentWidget(self.pareto)
+            return
+        curve = [v for v in (summary.get("best_curve") or [])]
+        points = [(i, v) for i, v in enumerate(curve) if v is not None]
+        if not points:
+            self.clear("No successful trials yet.")
+            return
+        self.convergence.set_curves(np.array([p[0] for p in points], dtype=float), [CurveSeries("Best score", np.array([p[1] for p in points]))])
+        self._set_tabs(["Convergence"])
+        self.stack.setCurrentWidget(self.convergence)

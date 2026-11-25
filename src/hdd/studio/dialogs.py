@@ -93,3 +93,149 @@ class CompareDialog(QDialog):
             return
         self.summary.setText("The two parameter sets are identical." if not rows else f"{len(rows)} parameters differ.")
         self.table.set_rows([[catalog.label_for_key(key), fmt(a, 4) if isinstance(a, float) else fmt(a), fmt(b, 4) if isinstance(b, float) else fmt(b)] for key, a, b in rows])
+
+
+SPACE_GROUP_FOR_STRATEGY = {"quantum_annealing": "qa.", "quantum_approximation_optimizer": "qaoa."}
+
+
+class NewStudyDialog(QDialog):
+    """Objectives, sampler, budget and search space of a new tuning study."""
+
+    def __init__(self, meta: dict[str, Any], defaults: dict[str, Any], parent: QWidget | None = None) -> None:
+        from PySide6.QtCore import Qt
+        from PySide6.QtWidgets import QCheckBox, QHeaderView, QSpinBox, QTableWidget, QTableWidgetItem
+
+        from .widgets import Section, segmented
+
+        super().__init__(parent)
+        self.setWindowTitle("New tuning study")
+        self.resize(720, 760)
+        self._meta, self._defaults = meta, defaults
+        strategy = defaults["parameters"]["partitioning_parameters"]["partitioning_strategy"]
+        prefix = SPACE_GROUP_FOR_STRATEGY.get(strategy)
+        labels = {p["key"]: p["label"] for p in meta["parameters"]}
+
+        self.objectives: dict[str, QCheckBox] = {}
+        objectives = Section("Objectives")
+        for objective in meta["objectives"]:
+            box = QCheckBox(objective["label"])
+            box.setToolTip(objective["description"])
+            box.setChecked(objective["key"] in ("edge_cut", "imbalance"))
+            objectives.add(box)
+            self.objectives[objective["key"]] = box
+        aggregation, self._aggregation = segmented(["Pareto front", "Weighted sum"], 0)
+        form = FormGrid()
+        form.add_row("Combine objectives", aggregation, tooltip="Pareto keeps every non-dominated trade-off; a weighted sum ranks by one score.")
+        objectives.add(form)
+
+        search = Section("Search")
+        self.sampler = QComboBox()
+        for sampler in meta["samplers"]:
+            self.sampler.addItem(sampler["label"], sampler["key"])
+            self.sampler.setItemData(self.sampler.count() - 1, sampler["description"], Qt.ItemDataRole.ToolTipRole)
+        self.trials = QSpinBox()
+        self.trials.setRange(1, 10000)
+        self.trials.setValue(30)
+        self.repeats = QSpinBox()
+        self.repeats.setRange(1, 20)
+        self.repeats.setValue(1)
+        self.start = QCheckBox("Start the study now")
+        self.start.setChecked(True)
+        grid = FormGrid()
+        grid.add_row("Sampler", self.sampler)
+        grid.add_row("Trials", self.trials)
+        grid.add_row("Runs per trial", self.repeats, tooltip="Repeat each trial with different seeds and average the objectives.")
+        search.add(grid)
+        search.add(self.start)
+
+        space = Section("Parameters to explore")
+        self.space = {k: dict(v) for k, v in defaults["search_space"].items()
+                      if "." not in k or (prefix is not None and k.startswith(prefix))}
+        self.table = QTableWidget(len(self.space), 4)
+        self.table.setHorizontalHeaderLabels(["Parameter", "Explore", "From", "To"])
+        self.table.verticalHeader().setVisible(False)
+        self.table.setShowGrid(False)
+        header = self.table.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        for column in (1, 2, 3):
+            header.setSectionResizeMode(column, QHeaderView.ResizeMode.ResizeToContents)
+        self._keys = list(self.space)
+        for row, key in enumerate(self._keys):
+            entry = self.space[key]
+            name = QTableWidgetItem(labels.get(key.split(".")[-1], key))
+            name.setFlags(name.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            name.setToolTip(key)
+            self.table.setItem(row, 0, name)
+            free = QTableWidgetItem()
+            free.setFlags(Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsEnabled)
+            free.setCheckState(Qt.CheckState.Checked if entry.get("free") else Qt.CheckState.Unchecked)
+            self.table.setItem(row, 1, free)
+            if "choices" in entry:
+                choices = QTableWidgetItem(", ".join(map(str, entry["choices"])))
+                choices.setFlags(choices.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                self.table.setItem(row, 2, choices)
+                self.table.setSpan(row, 2, 1, 2)
+            else:
+                for column, bound in ((2, "low"), (3, "high")):
+                    item = QTableWidgetItem(str(entry.get(bound)))
+                    item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+                    self.table.setItem(row, column, item)
+        self.table.setMinimumHeight(min(len(self._keys), 12) * 24 + 30)
+        space.add(self.table)
+        self.error = QLabel()
+        self.error.setProperty("role", "error")
+        self.error.setWordWrap(True)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        buttons.button(QDialogButtonBox.StandardButton.Ok).setText("Create study")
+        buttons.button(QDialogButtonBox.StandardButton.Ok).setProperty("role", "primary")
+        buttons.accepted.connect(self._accept)
+        buttons.rejected.connect(self.reject)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(16, 14, 16, 12)
+        layout.setSpacing(6)
+        for widget in (objectives, search, space, self.error):
+            layout.addWidget(widget)
+        layout.addStretch(1)
+        layout.addWidget(buttons)
+
+    def request(self) -> dict[str, Any]:
+        """The study request for ``hdd.services.tuning.create_study``. Raises ValueError on bad bounds."""
+        from PySide6.QtCore import Qt
+
+        objectives = [k for k, box in self.objectives.items() if box.isChecked()]
+        if not objectives:
+            raise ValueError("Choose at least one objective.")
+        space = {}
+        for row, key in enumerate(self._keys):
+            entry = dict(self.space[key])
+            entry["free"] = self.table.item(row, 1).checkState() == Qt.CheckState.Checked
+            if "choices" not in entry:
+                kind = int if isinstance(entry.get("low"), int) and isinstance(entry.get("high"), int) else float
+                try:
+                    low, high = kind(self.table.item(row, 2).text()), kind(self.table.item(row, 3).text())
+                except ValueError as exc:
+                    raise ValueError(f"{self.table.item(row, 0).text()}: the range must be numbers.") from exc
+                if low > high:
+                    raise ValueError(f"{self.table.item(row, 0).text()}: 'From' must not exceed 'To'.")
+                entry.update(low=low, high=high)
+            space[key] = entry
+        if not any(v["free"] for v in space.values()):
+            raise ValueError("Tick at least one parameter to explore.")
+        return {
+            "objectives": objectives,
+            "aggregation": "pareto" if self._aggregation.checkedId() == 0 else "weighted",
+            "sampler": self.sampler.currentData(),
+            "n_trials": self.trials.value(),
+            "repeats": self.repeats.value(),
+            "search_space": space,
+            "parameters": self._defaults["parameters"],
+        }
+
+    def _accept(self) -> None:
+        try:
+            self.request()
+        except ValueError as exc:
+            self.error.setText(str(exc))
+            return
+        self.accept()

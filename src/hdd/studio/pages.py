@@ -2,17 +2,17 @@
 
 A page is built in two steps: ``load_<kind>`` runs on a worker thread and returns
 plain data; ``build_<kind>`` turns that data into widgets on the GUI thread.
-Parameter pages are read-only in this version.
+Simulation parameters are edited in ``sim_pages`` and the batch configuration in
+``batch_page``; the pages here show everything else.
 """
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass
 from typing import Any, Callable
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QComboBox, QHBoxLayout, QLabel, QPlainTextEdit, QPushButton, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QComboBox, QHBoxLayout, QLabel, QLineEdit, QPushButton, QVBoxLayout, QWidget
 
 from hdd.services import batch, hardware, matrices, results, simulations, tuning
 from hdd.services.catalog import method_label
@@ -22,8 +22,6 @@ from .theme import Theme
 from .tree import Node
 from .widgets import InlineMessage, PropertyTable, Section
 from .widgets.tables import DataTable, fmt
-
-READ_ONLY_NOTE = "Read-only in this version of the desktop app. Edit the batch configuration in the web Studio for now."
 
 PARAMETER_LABELS = {
     "dof_per_node": ("Rows per graph node (dof)", ""),
@@ -56,15 +54,6 @@ PARAMETER_LABELS = {
     "adam_learning_rate": ("Learning rate", ""),
 }
 
-OUTPUT_LABELS = {
-    "matrix_permuted": "Permuted matrix (.mtx)",
-    "run_metrics": "Run metrics (.json, .txt)",
-    "run_simulation_parameters": "Parameters used (.json)",
-    "permutation": "Permutation (.txt)",
-    "coarsened_graph": "Coarsened graph (.mtx)",
-}
-
-
 @dataclass
 class PageActions:
     """What a page can ask the window to do."""
@@ -75,16 +64,10 @@ class PageActions:
     select_key: Callable[[str], None]
     compare_runs: Callable[[list[str]], None] = lambda dirs: None
     show_batch: Callable[[str, str, str], None] = lambda batch, matrix, scale: None
-
-
-def _param_rows(block: dict[str, Any]) -> list[tuple[str, str, str]]:
-    rows = []
-    for key, value in block.items():
-        if isinstance(value, dict):
-            continue
-        label, unit = PARAMETER_LABELS.get(key, (key.replace("_", " ").capitalize(), ""))
-        rows.append((label, fmt(value, 3) if isinstance(value, float) else fmt(value), unit))
-    return rows
+    new_study: Callable[[str], None] = lambda sim: None
+    study_action: Callable[[str, str, str], None] = lambda sim, study, action: None
+    run_task: Callable = lambda fn, ok, err, owner=None: None
+    show_study: Callable[[dict], None] = lambda study: None
 
 
 def _buttons(*buttons: QPushButton) -> QWidget:
@@ -145,7 +128,7 @@ def _simulation(node: Node) -> dict[str, Any]:
     return simulations.get_simulation(node.simulation_id)
 
 
-LOADERS: dict[str, Callable[[Node], Any]] = {
+LOADERS: dict[str, Callable[..., Any]] = {
     "matrices": lambda node: matrices.list_matrices()["matrices"],
     "matrix": lambda node: inspect_matrix(node.data["matrix"]),
     "simulations": lambda node: simulations.list_simulations()["demonstrators"],
@@ -157,21 +140,23 @@ LOADERS: dict[str, Callable[[Node], Any]] = {
     "outputs": _simulation,
     "presets": _simulation,
     "preset": lambda node: simulations.load_preset(node.simulation_id, node.data["preset"]),
-    "tuning": lambda node: tuning.list_studies(node.simulation_id, None),
-    "study": lambda node: tuning.get_study(node.simulation_id, node.data["study"]),
+    "tuning": lambda node, jobs=None: tuning.list_studies(node.simulation_id, jobs),
+    "study": lambda node, jobs=None: tuning.get_study(node.simulation_id, node.data["study"], jobs),
     "results": lambda node: results.list_runs(node.simulation_id)["runs"],
     "run": lambda node: results.get_run_detail(node.data["result_dir"]),
     "batch": lambda node: batch.list_batch_runs()["batch_runs"],
-    "batch_config": lambda node: {**batch.load_configuration(), "plan": batch.plan(batch.load_configuration()["configuration"], batch.duration_estimates())},
     "batch_runs": lambda node: batch.list_batch_runs()["batch_runs"],
     "batch_run": lambda node: {**batch.get_batch_run(node.data["batch"]), "analysis": results.batch_analysis(node.data["batch"])},
     "hardware": lambda node: hardware.environment_status(),
 }
 
 
-def load(node: Node) -> Any:
+def load(node: Node, jobs: Any = None) -> Any:
+    """Data of a page, read on a worker thread. ``jobs`` (the job manager) marks running studies."""
     loader = LOADERS.get(node.kind)
-    return loader(node) if loader else None
+    if loader is None:
+        return None
+    return loader(node, jobs) if node.kind in ("tuning", "study") else loader(node)
 
 
 # ----------------------------------------------------------------- builders
@@ -252,121 +237,20 @@ def _build_simulations(node: Node, data: list[dict], actions: PageActions) -> Pa
     return page
 
 
-def _estimate_text(estimates: dict[str, Any]) -> str | None:
-    if "expected_qpu_submissions" in estimates:
-        where = "emulator" if estimates.get("simulated") else "D-Wave QPU"
-        return f"{estimates['expected_qpu_submissions']:,} annealing problems and {estimates['expected_qpu_reads']:,} reads on the {where}."
-    if "expected_qlm_jobs" in estimates:
-        where = "emulator" if estimates.get("simulated") else "QLM QPU"
-        return f"{estimates['expected_qlm_jobs']:,} circuit jobs and {estimates['total_circuit_shots']:,} shots on the {where}."
-    return None
-
-
-def _build_simulation(node: Node, data: dict, actions: PageActions) -> Page:
-    page = Page()
-    pp = data["simulation_parameters"]["partitioning_parameters"]
-    strategy = pp["partitioning_strategy"]
-    simulated = (pp.get("strategies") or {}).get(strategy, {}).get("simulated")
-    matrix = data.get("matrix") or {}
-    if not matrix.get("ready", True):
-        page.add(InlineMessage("error", f"Input matrix {data['simulation_config']['input_matrix']!r} is not in the library."))
-    page.section("Summary", PropertyTable([
-        ("Input matrix", data["simulation_config"]["input_matrix"], ""),
-        ("Active preset", data["active_parameters_file"], ""),
-        ("Method", method_label(strategy, simulated), ""),
-        ("Number of parts (k)", fmt(pp["common"]["k_target"]), ""),
-        ("Runs", fmt(data["runs_count"]), ""),
-    ]))
-    estimate = _estimate_text(data.get("estimates") or {})
-    if estimate:
-        page.add(InlineMessage("info", f"Estimate: {estimate}"))
-    for warning in (data.get("estimates") or {}).get("warnings", []):
-        page.add(InlineMessage("warning", warning))
-    page.add(_buttons(
-        _button("Run", lambda: actions.run_simulation(data["id"]), icon="run", primary=True),
-        _button("Open folder", lambda: actions.open_path(data["demonstrator_dir"]), icon="folder"),
-    ))
-    return page
-
-
-def _build_input(node: Node, data: dict, actions: PageActions) -> Page:
-    page = Page()
-    matrix = data.get("matrix") or {}
-    if not matrix.get("ready", True):
-        page.add(InlineMessage("error", matrix.get("error") or "The matrix is not in the library."))
-    page.section("Matrix", PropertyTable([("Library matrix", str(matrix.get("id")), "")] + _matrix_rows(matrix.get("info") or {})))
-    page.section("Graph", PropertyTable(_param_rows(data["simulation_parameters"]["general_parameters"])))
-    page.note(READ_ONLY_NOTE)
-    return page
-
-
-def _stage_page(block_name: str, title: str) -> Callable[[Node, dict, PageActions], Page]:
-    def builder(node: Node, data: dict, actions: PageActions) -> Page:
-        page = Page()
-        page.section(title, PropertyTable(_param_rows(data["simulation_parameters"][block_name])))
-        page.note(READ_ONLY_NOTE)
-        return page
-
-    return builder
-
-
-def _build_partitioning(node: Node, data: dict, actions: PageActions) -> Page:
-    page = Page()
-    pp = data["simulation_parameters"]["partitioning_parameters"]
-    strategy = pp["partitioning_strategy"]
-    block = (pp.get("strategies") or {}).get(strategy, {})
-    page.section("Method", PropertyTable([("Method", method_label(strategy, block.get("simulated")), "")] + _param_rows(pp["common"])))
-    if block:
-        page.section(method_label(strategy, block.get("simulated")), PropertyTable(_param_rows(block)))
-    estimate = _estimate_text(data.get("estimates") or {})
-    if estimate:
-        page.add(InlineMessage("info", f"Estimate: {estimate}"))
-    page.note(READ_ONLY_NOTE)
-    return page
-
-
-def _build_outputs(node: Node, data: dict, actions: PageActions) -> Page:
-    page = Page()
-    saved = set(data["simulation_config"].get("save_output") or [])
-    rows = [(OUTPUT_LABELS.get(key, key), "Saved" if key in saved else "Not saved", "") for key in data.get("available_save_outputs", [])]
-    page.section("Files written by each run", PropertyTable(rows))
-    if not {"matrix_permuted", "permutation", "coarsened_graph"} <= saved:
-        page.add(InlineMessage("info", "Plots of a run need the permuted matrix, the permutation and the coarsened graph."))
-    page.note(READ_ONLY_NOTE)
-    return page
-
-
-def _build_presets(node: Node, data: dict, actions: PageActions) -> Page:
-    page = Page()
-    table = DataTable(["Preset", "State"])
-    files = data.get("preset_files", [])
-    table.set_rows([[f, "Active" if f == data["active_parameters_file"] else ""] for f in files], [f"preset:{data['id']}/{f}" for f in files])
-    table.on_activate(actions.select_key)
-    page.section("Parameter presets", table)
-    return page
-
-
-def _build_preset(node: Node, data: dict, actions: PageActions) -> Page:
-    page = Page()
-    text = QPlainTextEdit(json.dumps(data["parameters"], indent=2))
-    text.setReadOnly(True)
-    text.setFont(Theme.instance().mono_font())
-    text.setMinimumHeight(420)
-    page.section(data["filename"], text)
-    return page
-
-
 def _build_tuning(node: Node, data: list[dict], actions: PageActions) -> Page:
     page = Page()
-    table = DataTable(["Study", "Objectives", "Sampler", "Trials"], numeric={3})
+    table = DataTable(["Study", "Objectives", "Sampler", "Trials", "State"], numeric={3})
     table.set_rows(
-        [[s["id"], ", ".join(s.get("objectives") or []), s.get("sampler") or "—", f"{(s.get('summary') or {}).get('trials_done', 0)} / {s.get('n_trials') or '—'}"] for s in data],
+        [[s["id"], ", ".join(s.get("objectives") or []), s.get("sampler") or "—",
+          f"{(s.get('summary') or {}).get('trials_done', 0)} / {s.get('n_trials') or '—'}",
+          "Running" if s.get("running_job_id") else str((s.get("summary") or {}).get("state", "—")).capitalize()] for s in data],
         [f"study:{node.simulation_id}/{s['id']}" for s in data],
     )
     table.on_activate(actions.select_key)
     page.section("Studies", table)
     if not data:
-        page.note("No tuning studies yet.")
+        page.note("No tuning studies yet. A study runs the pipeline many times, searching the parameters that best meet your objectives.")
+    page.add(_buttons(_button("New study…", lambda: actions.new_study(node.simulation_id), icon="add", primary=True)))
     return page
 
 
@@ -374,22 +258,49 @@ def _build_study(node: Node, data: dict, actions: PageActions) -> Page:
     page = Page()
     summary = data.get("summary") or {}
     config = data.get("config") or {}
-    if data.get("running_job_id"):
-        page.add(InlineMessage("info", "This study is running."))
-    page.section("Study", PropertyTable([
-        ("Objectives", ", ".join(config.get("objectives") or []), ""),
-        ("Aggregation", str(config.get("aggregation", "—")), ""),
-        ("Sampler", str(config.get("sampler", "—")), ""),
-        ("Trials completed", fmt(summary.get("trials_done")), ""),
-        ("Trial budget", fmt(config.get("n_trials")), ""),
-        ("Free parameters", ", ".join(data.get("free_parameters") or []) or "—", ""),
-        ("State", str(summary.get("state", "—")), ""),
-    ]))
-    trials = data.get("trials") or []
+    sim, study = node.simulation_id, data["id"]
+    running = bool(data.get("running_job_id"))
+    if running:
+        page.add(InlineMessage("info", "This study is running. The table and the plot update as trials finish."))
+    elif summary.get("stop_reason"):
+        page.add(InlineMessage("info", f"Stopped: {summary['stop_reason']}"))
     objectives = config.get("objectives") or []
-    table = DataTable(["Trial", "Status"] + objectives, numeric=set(range(2, 2 + len(objectives))) | {0})
-    table.set_rows([[t.get("number"), t.get("status", "—")] + [fmt((t.get("values") or {}).get(o), 4) for o in objectives] for t in trials])
+    rows = [
+        ("Objectives", ", ".join(objectives), ""),
+        ("Combination", "Pareto front" if config.get("aggregation") == "pareto" else "Weighted sum", ""),
+        ("Sampler", str(config.get("sampler", "—")), ""),
+        ("Trials", f"{fmt(summary.get('trials_done'))} of {fmt(config.get('n_trials'))}", ""),
+        ("Successful", fmt(summary.get("trials_ok")), ""),
+        ("Infeasible / failed", f"{fmt(summary.get('trials_infeasible'))} / {fmt(summary.get('trials_error'))}", ""),
+        ("Explored parameters", ", ".join(data.get("free_parameters") or []) or "—", ""),
+    ]
+    if summary.get("best_trial") is not None:
+        rows.append(("Best trial", fmt(summary["best_trial"]), ""))
+        for key, value in (summary.get("best_values") or {}).items():
+            rows.append((f"Best {key.replace('_', ' ')}", fmt(value, 4), ""))
+    page.section("Study", PropertyTable(rows))
+
+    buttons = []
+    if running:
+        buttons.append(_button("Stop after this trial", lambda: actions.study_action(sim, study, "stop"), icon="stop"))
+    else:
+        buttons.append(_button("Resume", lambda: actions.study_action(sim, study, "resume"), icon="run", primary=True))
+    apply = _button("Apply best parameters", lambda: actions.study_action(sim, study, "apply"), icon="ok")
+    apply.setEnabled(summary.get("best_trial") is not None)
+    buttons.append(apply)
+    delete = _button("Delete", lambda: actions.study_action(sim, study, "delete"), icon="delete")
+    delete.setEnabled(not running)
+    buttons.append(delete)
+    page.add(_buttons(*buttons))
+
+    trials = data.get("trials") or []
+    front = set(summary.get("pareto_front") or [])
+    table = DataTable(["Trial", "Status"] + [o.replace("_", " ").capitalize() for o in objectives] + ["Front"],
+                      numeric={0} | set(range(2, 2 + len(objectives))), max_visible_rows=12)
+    table.set_rows([[t.get("number"), t.get("status", "—")] + [fmt((t.get("values") or {}).get(o), 4) for o in objectives]
+                    + ["Yes" if t.get("number") in front else ""] for t in reversed(trials)])
     page.section("Trials", table)
+    actions.show_study(data)
     return page
 
 
@@ -492,25 +403,6 @@ def _build_batch(node: Node, data: list[dict], actions: PageActions) -> Page:
     return _build_batch_runs(node, data, actions)
 
 
-def _build_batch_config(node: Node, data: dict, actions: PageActions) -> Page:
-    page = Page()
-    totals = data["plan"]["totals"]
-    rows = [("Cases", fmt(data["case_count"]), ""), ("Asynchronous cases", fmt(totals["async_count"]), "")]
-    if totals["estimated"]:
-        rows.append(("Estimated duration", fmt(totals["seconds"] / 60, 1), "min"))
-    if totals["submissions"]:
-        rows.append(("QPU submissions", fmt(totals["submissions"]), ""))
-    page.section("Plan", PropertyTable(rows))
-    if totals["over_capacity"]:
-        page.add(InlineMessage("warning", f"{totals['over_capacity']} cases ask for a coarse graph larger than their backend accepts."))
-    table = DataTable(["Case", "Method", "Scale", "Est. (s)"], numeric={3})
-    table.set_rows([[c["case_key"], method_label(c["partitioning_strategy"], (c.get("strategy_parameters") or {}).get("simulated"), short=True),
-                     c["coarsening_size"], fmt((c.get("estimate") or {}).get("seconds"), 0)] for c in data["plan"]["cases"]])
-    page.section("Cases", table)
-    page.note(READ_ONLY_NOTE)
-    return page
-
-
 def _build_batch_runs(node: Node, data: list[dict], actions: PageActions) -> Page:
     page = Page()
     table = DataTable(["Batch", "Cases", "Completed", "Failed"], numeric={1, 2, 3})
@@ -573,13 +465,56 @@ def _build_batch_run(node: Node, data: dict, actions: PageActions) -> Page:
 def _build_hardware(node: Node, data: dict, actions: PageActions) -> Page:
     page = Page()
     labels = {"ready": "Ready", "configured": "Configured", "needs_credentials": "Needs credentials", "missing_sdk": "SDK missing"}
-    table = DataTable(["Backend", "Status"])
-    table.set_rows([[b["label"], labels.get(b["status"], b["status"])] for b in data["backends"].values()])
+    table = DataTable(["Backend", "Status", "Details"], stretch=2)
+    table.set_rows([[b["label"], labels.get(b["status"], b["status"]),
+                     "; ".join(f"{c.get('label', '')}: {c['detail']}" for c in b["checks"] if not c["ok"]) or "—"] for b in data["backends"].values()])
     page.section("Partitioning backends", table)
+
+    from .widgets import FormGrid
+
+    def probe_section(title: str, fields: list[tuple[str, str]], run) -> Section:
+        form = FormGrid()
+        edits = []
+        for label, value in fields:
+            edit = QLineEdit(value)
+            form.add_row(label, edit)
+            edits.append(edit)
+        result = QVBoxLayout()
+        holder = QWidget()
+        holder.setLayout(result)
+
+        def show(message: InlineMessage) -> None:
+            while result.count():
+                item = result.takeAt(0)
+                if item.widget():
+                    item.widget().deleteLater()
+            result.addWidget(message)
+
+        def start() -> None:
+            values = [e.text().strip() or None for e in edits]
+            show(InlineMessage("info", "Contacting the service…"))
+            actions.run_task(lambda: run(*values), lambda r: show(render(r)), lambda exc: show(InlineMessage("error", str(exc))), holder)
+
+        section = page.section(title, form, holder, _buttons(_button("Probe", start, icon="external")), expanded=False)
+        return section
+
+    def render(result: dict) -> InlineMessage:
+        if "largest_clique_capacity" in result:
+            if result["reachable"]:
+                return InlineMessage("ok", f"{result['solver_name']} is reachable. Largest dense problem it embeds: {result['largest_clique_capacity']} variables.")
+            return InlineMessage("error", f"Not reachable: {result['error']}")
+        if result["reachable"]:
+            summary = result.get("summary") or {}
+            details = ", ".join(f"{k}: {v}" for k, v in list(summary.items())[:4])
+            return InlineMessage("ok", f"{result['requested_qpu_name']} is reachable. {details}")
+        return InlineMessage("error", f"Not reachable: {(result.get('summary') or {}).get('inspection_error', 'unknown error')}")
+
+    probe_section("Probe D-Wave Leap", [("Solver", hardware.DEFAULT_DWAVE_SOLVER), ("Region", hardware.DEFAULT_DWAVE_REGION)], hardware.probe_dwave)
+    probe_section("Probe QLM", [("QPU", hardware.DEFAULT_QLM_QPU)], hardware.probe_qlm)
     packages = DataTable(["Package", "Version", "Used for"], stretch=2)
     packages.set_rows([[p["name"], p["version"] or "not installed", p["purpose"]] for p in data["package_versions"]])
     page.section("Packages", packages, expanded=False)
-    page.note("Probing a remote QPU arrives in a later version.")
+    page.note("Probes contact the remote service with your saved credentials and may take a while.")
     return page
 
 
@@ -587,20 +522,11 @@ BUILDERS: dict[str, Callable[[Node, Any, PageActions], Page]] = {
     "matrices": _build_matrices,
     "matrix": _build_matrix,
     "simulations": _build_simulations,
-    "simulation": _build_simulation,
-    "input": _build_input,
-    "coarsening": _stage_page("coarsening_parameters", "Coarsening"),
-    "partitioning": _build_partitioning,
-    "refinement": _stage_page("uncoarsening_parameters", "Refinement"),
-    "outputs": _build_outputs,
-    "presets": _build_presets,
-    "preset": _build_preset,
     "tuning": _build_tuning,
     "study": _build_study,
     "results": _build_results,
     "run": _build_run,
     "batch": _build_batch,
-    "batch_config": _build_batch_config,
     "batch_runs": _build_batch_runs,
     "batch_run": _build_batch_run,
     "hardware": _build_hardware,

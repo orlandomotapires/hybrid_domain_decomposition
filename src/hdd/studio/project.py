@@ -22,8 +22,11 @@ class ProjectSnapshot:
     problems: list[tuple[str, str, str]] = field(default_factory=list)  # (severity, message, location)
 
 
-def load_snapshot() -> ProjectSnapshot:
-    """Read the workspace through the services. Runs on a worker thread; never raises for one bad item."""
+def load_snapshot(jobs: Any = None) -> ProjectSnapshot:
+    """Read the workspace through the services. Runs on a worker thread; never raises for one bad item.
+
+    ``jobs`` (the job manager) lets running tuning studies show as running.
+    """
     snap = ProjectSnapshot(root=workspace.root())
     snap.matrices = matrices.list_matrices()["matrices"]
     for matrix in snap.matrices:
@@ -32,7 +35,7 @@ def load_snapshot() -> ProjectSnapshot:
     snap.simulations = simulations.list_simulations()["demonstrators"]
     studies_by_sim: dict[str, list] = {}
     try:
-        for study in tuning.list_studies(None, None):
+        for study in tuning.list_studies(None, jobs):
             studies_by_sim.setdefault(study["simulation"], []).append(study)
     except Exception as exc:
         snap.problems.append(("warning", f"Tuning studies could not be read: {exc}", "Simulations"))

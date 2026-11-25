@@ -29,11 +29,13 @@ from hdd.services.catalog import STAGE_LABELS
 from hdd.services.errors import ServiceError
 from libs.runtime import workspace
 
-from . import APP_NAME, pages, sim_pages
+from . import APP_NAME, batch_page, pages, sim_pages
+from .batch_doc import BatchDocument
 from .context import AppContext
-from .dialogs import CompareDialog, NewSimulationDialog
+from .dialogs import CompareDialog, NewSimulationDialog, NewStudyDialog
 from .documents import SimulationDocument
 from .graphics.area import GraphicsArea
+from .help import HelpPanel
 from .jobs_panel import JobConsole, JobsPanel
 from .project import ProjectSnapshot, load_snapshot
 from .settings import LAYOUT_VERSION, Settings
@@ -41,6 +43,14 @@ from .theme import MODES, Theme
 from .tree import Node, ProjectPanel
 from .widgets import ConsolePanel
 from .widgets.tables import DataTable
+
+# Help topic shown by F1 when no parameter has the focus, per project-tree node kind.
+HELP_TOPIC_FOR_NODE = {
+    "matrices": "stage-1", "matrix": "stage-1-mtx-tools", "simulations": "stage-1", "simulation": "stage-1", "input": "stage-1",
+    "coarsening": "stage-2", "partitioning": "stage-3", "refinement": "stage-4", "outputs": "stage-5", "presets": "param-preset-file",
+    "preset": "param-preset-file", "results": "metric-bandwidth", "run": "metric-bandwidth", "batch": "batch-study",
+    "batch_config": "batch-study", "batch_runs": "batch-study", "batch_run": "batch-study", "hardware": "hardware-backends",
+}
 
 THEME_LABELS = {"system": "Follow system", "light": "Light", "dark": "Dark"}
 
@@ -157,6 +167,7 @@ class MainWindow(QMainWindow):
         self.ctx = AppContext(root, self)
         self.snapshot: ProjectSnapshot | None = None
         self.docs: dict[str, SimulationDocument] = {}
+        self.batch_doc: BatchDocument | None = None
         self.undo_group = QUndoGroup(self)
         self._pending_focus: str | None = None
         self.setObjectName("MainWindow")
@@ -204,7 +215,9 @@ class MainWindow(QMainWindow):
         self.console_dock = self._dock("Console", "ConsoleDock", self.console_panel)
         self.jobs_dock = self._dock("Jobs", "JobsDock", self.jobs)
         self.problems_dock = self._dock("Problems", "ProblemsDock", self.problems)
-        self.docks = [self.project_dock, self.settings_dock, self.console_dock, self.jobs_dock, self.problems_dock]
+        self.help = HelpPanel()
+        self.help_dock = self._dock("Help", "HelpDock", self.help)
+        self.docks = [self.project_dock, self.settings_dock, self.console_dock, self.jobs_dock, self.problems_dock, self.help_dock]
         left, bottom = Qt.DockWidgetArea.LeftDockWidgetArea, Qt.DockWidgetArea.BottomDockWidgetArea
         self.addDockWidget(left, self.project_dock)
         self.splitDockWidget(self.project_dock, self.settings_dock, Qt.Orientation.Horizontal)
@@ -212,6 +225,8 @@ class MainWindow(QMainWindow):
         self.tabifyDockWidget(self.console_dock, self.jobs_dock)
         self.tabifyDockWidget(self.jobs_dock, self.problems_dock)
         self.console_dock.raise_()
+        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.help_dock)
+        self.help_dock.hide()
         self._apply_default_sizes()
 
     def _dock(self, title: str, name: str, widget: QWidget) -> Dock:
@@ -271,6 +286,9 @@ class MainWindow(QMainWindow):
         self.act_redo = self.undo_group.createRedoAction(self, "&Redo")
         self.act_redo.setShortcut(QKeySequence(QKeySequence.StandardKey.Redo))
         self._theme.bind_icon(self.act_redo, "redo")
+        self.act_new_study = a("&New study…", lambda: self.new_study(self._current_sim()), "add")
+        self.act_edit_batch = a("&Edit configuration", lambda: self.select_key("batch_config"), "settings")
+        self.act_help = a("&Documentation", self.show_help, "docs", "F1", tip="Documentation for the selected item or parameter (F1)")
         self.act_reset_layout = a("&Reset layout", self.reset_layout)
         self.act_gallery = a("&Widget gallery", self.show_gallery)
         self.act_about = a(f"&About {APP_NAME}", self.about)
@@ -307,7 +325,9 @@ class MainWindow(QMainWindow):
         sim_menu.addSeparator()
         sim_menu.addActions([self.act_rename_sim, self.act_delete_sim])
         batch_menu = bar.addMenu("&Batch")
-        batch_menu.addAction(self.act_run_batch)
+        batch_menu.addActions([self.act_edit_batch, self.act_run_batch])
+        tuning_menu = bar.addMenu("&Tuning")
+        tuning_menu.addActions([self.act_auto_select, self.act_new_study])
         view_menu = bar.addMenu("&View")
         for dock in self.docks:
             view_menu.addAction(dock.toggleViewAction())
@@ -317,6 +337,8 @@ class MainWindow(QMainWindow):
         view_menu.addSeparator()
         view_menu.addAction(self.act_reset_layout)
         help_menu = bar.addMenu("&Help")
+        help_menu.addAction(self.act_help)
+        help_menu.addSeparator()
         help_menu.addAction(self.act_gallery)
         help_menu.addSeparator()
         help_menu.addAction(self.act_about)
@@ -405,7 +427,10 @@ class MainWindow(QMainWindow):
 
     # ---------------------------------------------------------------- project
     def reload(self) -> None:
-        self.ctx.tasks.run(load_snapshot, self._on_snapshot, self._on_snapshot_error, key="snapshot")
+        self.ctx.tasks.run(self._load_snapshot, self._on_snapshot, self._on_snapshot_error, key="snapshot")
+
+    def _load_snapshot(self) -> ProjectSnapshot:
+        return load_snapshot(self.ctx.jobs)
 
     def _on_snapshot(self, snap: ProjectSnapshot) -> None:
         self.snapshot = snap
@@ -455,10 +480,13 @@ class MainWindow(QMainWindow):
     def _on_node_selected(self, node: Node | None) -> None:
         sim_id = node.simulation_id if node else None
         for action in (self.act_run, self.act_save_preset, self.act_compare, self.act_rename_sim, self.act_delete_sim,
-                       self.act_preview, self.act_auto_select):
+                       self.act_preview, self.act_auto_select, self.act_new_study):
             action.setEnabled(bool(sim_id))
         doc = self.docs.get(sim_id) if sim_id else None
-        self.undo_group.setActiveStack(doc.undo if doc else None)
+        if node is not None and node.kind == "batch_config" and self.batch_doc is not None:
+            self.undo_group.setActiveStack(self.batch_doc.undo)
+        else:
+            self.undo_group.setActiveStack(doc.undo if doc else None)
         self._update_dirty_state()
         if node is None:
             self.settings_panel.show_header(None, [])
@@ -474,8 +502,13 @@ class MainWindow(QMainWindow):
         if node.kind in sim_pages.BUILDERS and node.kind != "preset" and doc is not None:
             self._show_page(node, None)  # the open document is the source of truth
             return
+        if node.kind == "batch_config":
+            self.ctx.tasks.run(self._load_batch, lambda data, n=node: self._show_batch_config(n, data),
+                               lambda exc, n=node: self._show_page_error(n, exc), key="page")
+            return
+        jobs = self.ctx.jobs
         self.ctx.tasks.run(
-            lambda: pages.load(node),
+            lambda: pages.load(node, jobs),
             lambda data, n=node: self._show_page(n, data),
             lambda exc, n=node: self._show_page_error(n, exc),
             key="page",
@@ -489,7 +522,147 @@ class MainWindow(QMainWindow):
             select_key=self.select_key,
             compare_runs=self.compare_runs,
             show_batch=self.show_batch_analysis,
+            new_study=self.new_study,
+            study_action=self.study_action,
+            run_task=lambda fn, ok, err, owner=None: self.ctx.tasks.run(fn, ok, err, key="probe", owner=owner),
+            show_study=self.show_study,
         )
+
+    # ---------------------------------------------------------------- batch
+    @staticmethod
+    def _load_batch() -> dict:
+        return {"loaded": batch.load_configuration(), "estimates": batch.duration_estimates(), "library": matrices.list_matrices()["matrices"]}
+
+    def _show_batch_config(self, node: Node, data: dict) -> None:
+        if self.settings_panel.node is not node:
+            return
+        if self.batch_doc is None:
+            self.batch_doc = BatchDocument(data["loaded"], data["estimates"], self)
+            self.batch_doc.dirtyChanged.connect(lambda _d: self._update_dirty_state())
+            self.undo_group.addStack(self.batch_doc.undo)
+        else:
+            self.batch_doc.estimates = data["estimates"]
+            self.batch_doc.reload_from(data["loaded"])
+        self.undo_group.setActiveStack(self.batch_doc.undo)
+        actions = batch_page.BatchActions(save=self.save_batch, revert=self.revert_batch, run=self.run_batch, open_path=self.open_path)
+        self.settings_panel.show_widget(batch_page.build_batch_config(self.batch_doc, data["library"], actions).finish())
+        self._update_dirty_state()
+
+    def save_batch(self) -> bool:
+        doc = self.batch_doc
+        if doc is None or not doc.is_dirty():
+            return True
+        problems = doc.problems()
+        if problems:
+            QMessageBox.warning(self, "Save batch configuration", "\n".join(problems))
+            return False
+        try:
+            doc.save()
+        except ServiceError as exc:
+            QMessageBox.warning(self, "Save batch configuration", f"The configuration could not be saved:\n\n{exc}")
+            return False
+        self.statusBar().showMessage("Saved the batch configuration.", 4000)
+        return True
+
+    def revert_batch(self) -> None:
+        if self.batch_doc is not None and self.batch_doc.is_dirty():
+            if QMessageBox.question(self, "Revert", "Discard the unsaved changes to the batch configuration?") == QMessageBox.StandardButton.Yes:
+                self.batch_doc.revert()
+
+    # --------------------------------------------------------------- tuning
+    def show_study(self, study: dict) -> None:
+        def labels() -> dict:
+            return {o["key"]: o["label"] for o in tuning.meta()["objectives"]}
+
+        self.ctx.tasks.run(labels, lambda names: self.graphics.show_study(study, names),
+                           lambda exc: self.graphics.clear(f"Could not plot the study: {exc}"), key="graphics")
+
+    def new_study(self, sim_id: str | None) -> None:
+        if not sim_id:
+            return
+        doc = self.docs.get(sim_id)
+        if doc is not None and doc.is_dirty():
+            answer = QMessageBox.question(self, "New study", f"{sim_id} has unsaved changes. A study starts from the saved parameters. Save them first?",
+                                          QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No | QMessageBox.StandardButton.Cancel)
+            if answer == QMessageBox.StandardButton.Cancel or (answer == QMessageBox.StandardButton.Yes and not self.save_simulation(sim_id)):
+                return
+        self.statusBar().showMessage("Preparing the study (matrix features and search space)…")
+        self.ctx.tasks.run(
+            lambda: (tuning.meta(), tuning.study_defaults(sim_id)),
+            lambda result: self._open_study_dialog(sim_id, *result),
+            lambda exc: (self.statusBar().clearMessage(), QMessageBox.warning(self, "New study", str(exc))),
+        )
+
+    def _open_study_dialog(self, sim_id: str, meta: dict, defaults: dict) -> None:
+        self.statusBar().clearMessage()
+        dialog = NewStudyDialog(meta, defaults, self)
+        if dialog.exec() != dialog.DialogCode.Accepted:
+            return
+        self.create_study(sim_id, dialog.request(), dialog.start.isChecked())
+
+    def create_study(self, sim_id: str, request: dict, start: bool) -> dict | None:
+        try:
+            result = tuning.create_study(sim_id, request, start=start, jobs=self.ctx.jobs)
+        except (ServiceError, OSError) as exc:
+            QMessageBox.warning(self, "New study", f"The study could not be created:\n\n{exc}")
+            return None
+        if result.get("job"):
+            self._started(result["job"])
+        self._reload_and_select(f"study:{sim_id}/{result['study']['id']}")
+        return result
+
+    def study_action(self, sim_id: str, study_id: str, action: str) -> None:
+        try:
+            if action == "stop":
+                tuning.stop_study(sim_id, study_id)
+                self.statusBar().showMessage(f"{study_id} stops after its current trial.", 6000)
+            elif action == "resume":
+                self._started(tuning.resume_study(sim_id, study_id, self.ctx.jobs)["job"])
+            elif action == "apply":
+                doc = self.docs.get(sim_id)
+                if doc is not None and doc.is_dirty():
+                    if QMessageBox.question(self, "Apply best parameters", f"This replaces the unsaved changes to {sim_id}. Continue?") != QMessageBox.StandardButton.Yes:
+                        return
+                tuning.apply_study(sim_id, study_id)
+                if doc is not None:
+                    doc.undo.clear()
+                    doc._load(simulations.get_simulation(sim_id))
+                    doc.changed.emit("")
+                self.statusBar().showMessage(f"Applied the best parameters of {study_id} to {sim_id}.", 6000)
+            elif action == "delete":
+                if QMessageBox.question(self, "Delete study", f"Delete {study_id} and its trial runs? This cannot be undone.") != QMessageBox.StandardButton.Yes:
+                    return
+                tuning.delete_study(sim_id, study_id, self.ctx.jobs)
+                self._reload_and_select(f"tuning:{sim_id}")
+                return
+        except (ServiceError, OSError) as exc:
+            QMessageBox.warning(self, "Tuning", str(exc))
+            return
+        self._reload_and_select(f"study:{sim_id}/{study_id}")
+
+    # ----------------------------------------------------------------- help
+    def show_help(self) -> None:
+        """Open the documentation at the parameter that has the focus, else at the selected item's topic."""
+        from .editors import FieldEditor
+
+        widget = self.focusWidget()
+        while widget is not None and not isinstance(widget, FieldEditor):
+            widget = widget.parentWidget()
+        shown = False
+        if widget is not None:
+            doc = self.docs.get(self._current_sim() or "")
+            value = doc.value(widget.spec) if doc is not None else None
+            from hdd.services import wiki
+
+            topic = wiki.topic_for_parameter(widget.spec.key, value)
+            shown = bool(topic) and self.help.show_topic(topic["id"])
+        if not shown:
+            node = self.project.current_node()
+            topic_id = HELP_TOPIC_FOR_NODE.get(node.kind) if node else None
+            if topic_id:
+                self.help.show_topic(topic_id)
+        self.help_dock.show()
+        self.help_dock.raise_()
 
     def compare_runs(self, result_dirs: list[str]) -> None:
         """Overlay the locality curves of up to five runs and list their KPIs side by side."""
@@ -625,12 +798,16 @@ class MainWindow(QMainWindow):
         return [d for d in self.docs.values() if d.is_dirty()]
 
     def _update_dirty_state(self) -> None:
-        doc = self.docs.get(self._current_sim() or "")
-        dirty = bool(doc and doc.is_dirty())
+        if self._batch_selected():
+            dirty = bool(self.batch_doc and self.batch_doc.is_dirty())
+        else:
+            doc = self.docs.get(self._current_sim() or "")
+            dirty = bool(doc and doc.is_dirty())
         self.settings_panel.dirty.setVisible(dirty)
         self.act_save.setEnabled(dirty)
         self.act_revert.setEnabled(dirty)
-        self.setWindowModified(bool(self.dirty_documents()))
+        batch_dirty = bool(self.batch_doc and self.batch_doc.is_dirty())
+        self.setWindowModified(bool(self.dirty_documents()) or batch_dirty)
         self._update_title()
 
     def _refresh_problems(self) -> None:
@@ -665,12 +842,20 @@ class MainWindow(QMainWindow):
         self.problems_dock.show()
         self.problems_dock.raise_()
 
+    def _batch_selected(self) -> bool:
+        node = self.project.current_node()
+        return node is not None and node.kind == "batch_config"
+
     def save_current(self) -> None:
-        if self._current_sim():
+        if self._batch_selected():
+            self.save_batch()
+        elif self._current_sim():
             self.save_simulation(self._current_sim())
 
     def revert_current(self) -> None:
-        if self._current_sim():
+        if self._batch_selected():
+            self.revert_batch()
+        elif self._current_sim():
             self.revert_simulation(self._current_sim())
 
     def save_simulation(self, sim_id: str) -> bool:
@@ -872,7 +1057,7 @@ class MainWindow(QMainWindow):
         if node.simulation_id:
             menu.addActions([self.act_run, self.act_save, self.act_revert])
             menu.addSeparator()
-            menu.addActions([self.act_save_preset, self.act_compare, self.act_auto_select])
+            menu.addActions([self.act_save_preset, self.act_compare, self.act_auto_select, self.act_new_study])
             menu.addSeparator()
             menu.addActions([self.act_rename_sim, self.act_delete_sim])
         elif node.kind == "simulations":
@@ -883,7 +1068,7 @@ class MainWindow(QMainWindow):
             action = menu.addAction(self._theme.icon("delete"), "Delete matrix…")
             action.triggered.connect(lambda: self.delete_matrix(node.data["matrix"]))
         elif node.kind in ("batch", "batch_config"):
-            menu.addAction(self.act_run_batch)
+            menu.addActions([self.act_edit_batch, self.act_run_batch])
         if node.data.get("result_dir"):
             open_action = menu.addAction(self._theme.icon("folder"), "Open folder")
             open_action.triggered.connect(lambda: self.open_path(node.data["result_dir"]))
@@ -943,6 +1128,10 @@ class MainWindow(QMainWindow):
             self._update_status()
 
     def run_batch(self) -> None:
+        if self.batch_doc is not None and self.batch_doc.is_dirty():
+            answer = QMessageBox.question(self, "Run batch", "The batch configuration has unsaved changes. Save them and run?")
+            if answer != QMessageBox.StandardButton.Yes or not self.save_batch():
+                return
         try:
             config = batch.load_configuration()
             plan = batch.plan(config["configuration"], batch.duration_estimates())
@@ -991,7 +1180,7 @@ class MainWindow(QMainWindow):
         )
 
     def _reload_and_select(self, key: str) -> None:
-        self.ctx.tasks.run(load_snapshot, lambda snap: (self._on_snapshot(snap), self.project.select_key(key)), self._on_snapshot_error, key="snapshot")
+        self.ctx.tasks.run(self._load_snapshot, lambda snap: (self._on_snapshot(snap), self.project.select_key(key)), self._on_snapshot_error, key="snapshot")
 
     # ------------------------------------------------------------- workspaces
     def choose_workspace(self) -> None:
@@ -1020,6 +1209,10 @@ class MainWindow(QMainWindow):
             return False
         for sim_id in list(self.docs):
             self._drop_document(sim_id)
+        if self.batch_doc is not None:
+            self.undo_group.removeStack(self.batch_doc.undo)
+            self.batch_doc.deleteLater()
+            self.batch_doc = None
         self.ctx.jobs.cancel_all()
         self.ctx.close()
         self.ctx = AppContext(root, self)
@@ -1050,19 +1243,22 @@ class MainWindow(QMainWindow):
     def _confirm_unsaved(self, what: str) -> bool:
         """Offer to save edited simulations. Returns False when the user cancels."""
         dirty = self.dirty_documents()
-        if not dirty:
+        batch_dirty = bool(self.batch_doc and self.batch_doc.is_dirty())
+        if not dirty and not batch_dirty:
             return True
-        names = ", ".join(d.simulation_id for d in dirty)
+        names = ", ".join([d.simulation_id for d in dirty] + (["the batch configuration"] if batch_dirty else []))
         box = QMessageBox(QMessageBox.Icon.Warning, what, f"Unsaved changes in {names}.", parent=self)
         save = box.addButton("Save all", QMessageBox.ButtonRole.AcceptRole)
         discard = box.addButton("Discard", QMessageBox.ButtonRole.DestructiveRole)
         box.addButton(QMessageBox.StandardButton.Cancel)
         box.exec()
         if box.clickedButton() is save:
-            return all(self.save_simulation(d.simulation_id) for d in dirty)
+            return all(self.save_simulation(d.simulation_id) for d in dirty) and self.save_batch()
         if box.clickedButton() is discard:
             for doc in dirty:
                 doc.revert()
+            if self.batch_doc is not None:
+                self.batch_doc.revert()
             return True
         return False
 

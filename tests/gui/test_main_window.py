@@ -44,11 +44,12 @@ def tree_labels(window) -> list[str]:
 
 def test_window_layout_and_menus(window):
     names = {dock.objectName() for dock in window.docks}
-    assert names == {"ProjectDock", "SettingsDock", "ConsoleDock", "JobsDock", "ProblemsDock"}
+    assert names == {"ProjectDock", "SettingsDock", "ConsoleDock", "JobsDock", "ProblemsDock", "HelpDock"}
+    assert not window.help_dock.isVisible()
     assert window.dockWidgetArea(window.project_dock) == Qt.DockWidgetArea.LeftDockWidgetArea
     assert window.dockWidgetArea(window.console_dock) == Qt.DockWidgetArea.BottomDockWidgetArea
     menus = [a.text().replace("&", "") for a in window.menuBar().actions()]
-    assert menus == ["File", "Edit", "Simulation", "Batch", "View", "Help"]
+    assert menus == ["File", "Edit", "Simulation", "Batch", "Tuning", "View", "Help"]
     assert window.windowTitle().startswith("ws")
     assert not window.isWindowModified()
 

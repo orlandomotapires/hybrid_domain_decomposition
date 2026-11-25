@@ -301,3 +301,43 @@ class CurveView(ThemedPlot):
         self._readout.setAnchor((1, 1) if right else (0, 1))
         offset = (x_max - x_min) * 0.01
         self._readout.setPos(x - offset if right else x + offset, y_min + (y_max - y_min) * 0.04)
+
+
+class ScatterView(ThemedPlot):
+    """Trials of a two-objective study; the Pareto front highlighted and joined."""
+
+    def __init__(self, x_label: str = "", y_label: str = "", parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._points: list[tuple[float, float, int]] = []
+        self._front: set[int] = set()
+        self.set_labels(x_label, y_label)
+        self.restyle()
+
+    def set_labels(self, x_label: str, y_label: str) -> None:
+        self.getPlotItem().setLabel("bottom", x_label)
+        self.getPlotItem().setLabel("left", y_label)
+
+    def set_points(self, points: list[tuple[float, float, int]], front: set[int]) -> None:
+        """``points`` are (x, y, trial number); ``front`` the numbers on the Pareto front."""
+        self._points, self._front = points, front
+        self.redraw()
+
+    def redraw(self) -> None:
+        tokens = Theme.instance().tokens
+        item = self.getPlotItem()
+        item.clear()
+        if not self._points:
+            return
+        legend = self.legend()
+        others = [(x, y) for x, y, n in self._points if n not in self._front]
+        front = sorted((x, y) for x, y, n in self._points if n in self._front)
+        if others:
+            dots = pg.ScatterPlotItem([p[0] for p in others], [p[1] for p in others], size=8, pen=pg.mkPen(tokens.plot.surface, width=2),
+                                      brush=pg.mkBrush(tokens.plot.reference))
+            item.addItem(dots)
+            legend.addItem(dots, "Trials")
+        if front:
+            line = item.plot([p[0] for p in front], [p[1] for p in front], pen=pg.mkPen(tokens.plot.series[0], width=2), symbol="o",
+                             symbolSize=9, symbolBrush=pg.mkBrush(tokens.plot.series[0]), symbolPen=pg.mkPen(tokens.plot.surface, width=2))
+            legend.addItem(line, "Pareto front")
+        self.fit()
