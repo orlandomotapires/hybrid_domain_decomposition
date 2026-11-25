@@ -237,7 +237,7 @@ class MainWindow(QMainWindow):
         return dock
 
     def _apply_default_sizes(self) -> None:
-        self.resizeDocks([self.project_dock, self.settings_dock], [280, 500], Qt.Orientation.Horizontal)
+        self.resizeDocks([self.project_dock, self.settings_dock], [270, 560], Qt.Orientation.Horizontal)
         self.resizeDocks([self.console_dock], [230], Qt.Orientation.Vertical)
 
     def _sync_dock_titles(self) -> None:

@@ -371,7 +371,7 @@ def build_comparison_table(details: list[dict], labels: list[str]) -> DataTable:
                 value *= 100
             row.append(fmt(value, decimals))
         rows.append(row)
-    return DataTable(["Metric"] + labels, rows, numeric=set(range(1, len(labels) + 1)), stretch=0)
+    return DataTable(["Metric"] + labels, rows, numeric=set(range(1, len(labels) + 1)))
 
 
 def _build_run(node: Node, data: dict, actions: PageActions) -> Page:
@@ -451,7 +451,7 @@ def _build_batch_run(node: Node, data: dict, actions: PageActions) -> Page:
         form = FormGrid()
         form.add_row("Matrix", matrix_box)
         form.add_row("Coarsening scale", scale_box)
-        summary = DataTable(["Method", "Scale", "Bandwidth, permuted", "Within 1 % (%)"], numeric={2, 3}, stretch=0)
+        summary = DataTable(["Method", "Scale", "Bandwidth, permuted", "Within 1 % (%)"], numeric={2, 3})
 
         def refresh() -> None:
             matrix = matrix_box.currentText()
@@ -478,10 +478,14 @@ def _build_batch_run(node: Node, data: dict, actions: PageActions) -> Page:
 def _build_hardware(node: Node, data: dict, actions: PageActions) -> Page:
     page = Page()
     labels = {"ready": "Ready", "configured": "Configured", "needs_credentials": "Needs credentials", "missing_sdk": "SDK missing"}
-    table = DataTable(["Backend", "Status", "Details"], stretch=2)
-    table.set_rows([[b["label"], labels.get(b["status"], b["status"]),
-                     "; ".join(f"{c.get('label', '')}: {c['detail']}" for c in b["checks"] if not c["ok"]) or "—"] for b in data["backends"].values()])
-    page.section("Partitioning backends", table)
+    table = DataTable(["Backend", "Status"])
+    table.set_rows([[b["label"], labels.get(b["status"], b["status"])] for b in data["backends"].values()])
+    notes = []
+    for backend in data["backends"].values():
+        for check in (c for c in backend["checks"] if not c["ok"]):
+            severity = "error" if backend["status"] == "missing_sdk" else "warning"
+            notes.append(InlineMessage(severity, f"{backend['label']} — {check.get('label', 'Check')}: {check['detail']}"))
+    page.section("Partitioning backends", table, *notes)
 
     from .widgets import FormGrid
 

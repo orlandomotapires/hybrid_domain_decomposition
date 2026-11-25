@@ -28,6 +28,7 @@ from .editors import ComboBox, DoubleSpinBox, SpinBox
 from .pages import PARAMETER_LABELS, Page, _button, _buttons
 from .theme import Theme
 from .widgets import FormGrid, InlineMessage, PropertyTable
+from .widgets.forms import NUMBER_WIDTH
 from .widgets.tables import fmt
 
 
@@ -58,7 +59,8 @@ def _table(headers: list[str]) -> QTableWidget:
     table.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
     table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
     table.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-    table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+    table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+    table.setTextElideMode(Qt.TextElideMode.ElideMiddle)
     table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
     header = table.horizontalHeader()
     header.setHighlightSections(False)
@@ -100,6 +102,7 @@ def _number_box(kind: str, minimum: float, maximum: float, decimals: int = 3):
         box.setDecimals(decimals)
         box.setRange(float(minimum), float(maximum))
     box.setAlignment(Qt.AlignmentFlag.AlignRight)
+    box.setFixedWidth(NUMBER_WIDTH)
     return box
 
 
@@ -142,11 +145,14 @@ def build_batch_config(doc: BatchDocument, library: list[dict[str, Any]], action
     info = {m["id"]: m for m in library}
     matrix_ids = sorted(set(info) | {m.get("key") for m in doc.config.get("matrices", [])})
     matrices_table = _table(["Matrix", "Rows", "Nonzeros"])
+    matrices_table.horizontalHeaderItem(1).setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+    matrices_table.horizontalHeaderItem(2).setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
     matrices_table.setRowCount(len(matrix_ids))
     for row, matrix_id in enumerate(matrix_ids):
         details = (info.get(matrix_id) or {}).get("info") or {}
         missing = matrix_id not in info
         name = QTableWidgetItem(matrix_id + ("  (not in the library)" if missing else ""))
+        name.setToolTip(matrix_id)
         name.setFlags(Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsEnabled)
         name.setData(Qt.ItemDataRole.UserRole, matrix_id)
         matrices_table.setItem(row, 0, name)
@@ -186,11 +192,14 @@ def build_batch_config(doc: BatchDocument, library: list[dict[str, Any]], action
     # ----------------------------------------------- methods × scales
     scales = [p.get("key") for p in doc.config.get("coarsening_presets", [])]
     algorithms = doc.config.get("algorithm_presets", [])
-    grid = _table(["Method"] + [f"{s.capitalize()} scale" for s in scales] + ["In background"])
+    grid = _table(["Method"] + [s.capitalize() for s in scales] + ["Background"])
     grid.setRowCount(len(algorithms))
     for row, alg in enumerate(algorithms):
         params = alg.get("strategy_parameters") or {}
-        grid.setItem(row, 0, _text_item(method_label(alg.get("partitioning_strategy"), params.get("simulated")), alg.get("key", "")))
+        grid.setItem(row, 0, _text_item(method_label(alg.get("partitioning_strategy"), params.get("simulated"), short=True),
+                                        f"{method_label(alg.get('partitioning_strategy'), params.get('simulated'))} ({alg.get('key', '')})"))
+    for column, scale in enumerate(scales, start=1):
+        grid.horizontalHeaderItem(column).setToolTip(f"Run the method at the {scale} coarsening scale")
     grid.horizontalHeaderItem(len(scales) + 1).setToolTip(
         "Remote QPU cases that are submitted and collected later, so the rest of the batch does not wait for the queue."
     )
