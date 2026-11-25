@@ -3,25 +3,28 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# Python interpreters to try, best first: the activated conda env or venv, then the folders next to
+# this script, then whatever python3 is on PATH.
+candidate_pythons() {
+	[[ -n "${CONDA_PREFIX:-}" ]] && echo "$CONDA_PREFIX/bin/python"
+	[[ -n "${VIRTUAL_ENV:-}" ]] && echo "$VIRTUAL_ENV/bin/python"
+	echo "$ROOT_DIR/.venv/bin/python"
+	echo "$ROOT_DIR/.env_ocean/bin/python"
+	command -v python3 || true
+}
+
+# The first candidate that can import the given modules (the pipeline's, plus PySide6 for the app).
 resolve_python() {
-	# An activated environment (a conda env other than base, or a venv) wins over the folders next to this script.
-	if [[ -n "${CONDA_PREFIX:-}" && "${CONDA_DEFAULT_ENV:-base}" != "base" && -x "$CONDA_PREFIX/bin/python" ]]; then
-		echo "$CONDA_PREFIX/bin/python"
-		return
-	fi
-	if [[ -n "${VIRTUAL_ENV:-}" && -x "$VIRTUAL_ENV/bin/python" ]]; then
-		echo "$VIRTUAL_ENV/bin/python"
-		return
-	fi
-	if [[ -x "$ROOT_DIR/.venv/bin/python" ]]; then
-		echo "$ROOT_DIR/.venv/bin/python"
-		return
-	fi
-	if [[ -x "$ROOT_DIR/.env_ocean/bin/python" ]]; then
-		echo "$ROOT_DIR/.env_ocean/bin/python"
-		return
-	fi
-	echo "python3"
+	local modules="$1" candidate
+	while read -r candidate; do
+		if [[ -n "$candidate" && -x "$candidate" ]] && "$candidate" -c "import $modules" >/dev/null 2>&1; then
+			echo "$candidate"
+			return
+		fi
+	done < <(candidate_pythons)
+	echo "No Python environment with the dependencies was found (needs: $modules)." >&2
+	echo "Install them into your environment first:  pip install -e \".[gui]\"" >&2
+	exit 1
 }
 
 show_usage() {
@@ -41,10 +44,16 @@ show_usage() {
 	echo "  ./run.sh --qlm_inspect --help" >&2
 }
 
-PYTHON_BIN="$(resolve_python)"
-
 if [[ $# -lt 1 ]]; then
 	set -- --desktop
+fi
+
+if [[ "$1" == "--desktop" ]]; then
+	PYTHON_BIN="$(resolve_python "numpy, scipy, networkx, matplotlib, PySide6, pyqtgraph")"
+elif [[ "$1" == "--help" || "$1" == "-h" ]]; then
+	PYTHON_BIN=""
+else
+	PYTHON_BIN="$(resolve_python "numpy, scipy, networkx, matplotlib")"
 fi
 
 case "$1" in
