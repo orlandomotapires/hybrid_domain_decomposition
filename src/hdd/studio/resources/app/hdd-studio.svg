@@ -1,18 +1,16 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
-  <!-- HDD Studio: a sparse matrix permuted into diagonal blocks. -->
-  <rect x="8" y="8" width="240" height="240" rx="28" fill="#2F6592"/>
-  <rect x="40" y="40" width="176" height="176" rx="4" fill="#24527A"/>
-  <g fill="#FFFFFF">
-    <rect x="48" y="48" width="56" height="56" rx="3"/>
-    <rect x="104" y="104" width="48" height="48" rx="3" opacity="0.88"/>
-    <rect x="152" y="152" width="56" height="56" rx="3" opacity="0.76"/>
-  </g>
-  <g fill="#9EC5F4">
-    <rect x="116" y="56" width="10" height="10" rx="2"/>
-    <rect x="164" y="72" width="10" height="10" rx="2"/>
-    <rect x="60" y="120" width="10" height="10" rx="2"/>
-    <rect x="164" y="116" width="10" height="10" rx="2"/>
-    <rect x="76" y="168" width="10" height="10" rx="2"/>
-    <rect x="120" y="180" width="10" height="10" rx="2"/>
+  <!-- HDD Studio: a sparse matrix reordered into diagonal blocks, A' = P A P^T. -->
+  <rect x="8" y="8" width="240" height="240" rx="40" fill="#2F6592"/>
+  <rect x="32" y="32" width="192" height="192" rx="6" fill="#24527A"/>
+  <rect x="32" y="32" width="80" height="80" fill="#FFFFFF"/>
+  <rect x="112" y="112" width="48" height="48" fill="#D6E5F3"/>
+  <rect x="160" y="160" width="64" height="64" fill="#ADC9E6"/>
+  <g fill="#7FA9D3">
+    <rect x="130" y="50" width="12" height="12" rx="3"/>
+    <rect x="50" y="130" width="12" height="12" rx="3"/>
+    <rect x="194" y="82" width="12" height="12" rx="3"/>
+    <rect x="82" y="194" width="12" height="12" rx="3"/>
+    <rect x="194" y="146" width="12" height="12" rx="3"/>
+    <rect x="146" y="194" width="12" height="12" rx="3"/>
   </g>
 </svg>

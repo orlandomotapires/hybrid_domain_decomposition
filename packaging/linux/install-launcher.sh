@@ -17,6 +17,7 @@ APPS_DIR="$DATA_HOME/applications"
 ICON_DIR="$DATA_HOME/icons/hicolor/scalable/apps"
 DESKTOP_FILE="$APPS_DIR/hdd-studio.desktop"
 ICON_FILE="$ICON_DIR/hdd-studio.svg"
+SMALL_SIZES=(16x16 24x24 32x32)  # the simplified icon, legible at small sizes
 
 refresh_caches() {
 	command -v update-desktop-database >/dev/null && update-desktop-database "$APPS_DIR" >/dev/null 2>&1 || true
@@ -25,6 +26,7 @@ refresh_caches() {
 
 if [[ "${1:-}" == "--remove" ]]; then
 	rm -f "$DESKTOP_FILE" "$ICON_FILE"
+	for size in "${SMALL_SIZES[@]}"; do rm -f "$DATA_HOME/icons/hicolor/$size/apps/hdd-studio.svg"; done
 	refresh_caches
 	echo "Removed the HDD Studio launcher."
 	exit 0
@@ -34,6 +36,9 @@ PYTHON_BIN="$("$ROOT_DIR/run.sh" --which-python)"  # exits with instructions whe
 
 mkdir -p "$APPS_DIR" "$ICON_DIR"
 install -m 0644 "$ROOT_DIR/src/hdd/studio/resources/app/hdd-studio.svg" "$ICON_FILE"
+for size in "${SMALL_SIZES[@]}"; do
+	install -D -m 0644 "$ROOT_DIR/src/hdd/studio/resources/app/hdd-studio-small.svg" "$DATA_HOME/icons/hicolor/$size/apps/hdd-studio.svg"
+done
 exec_line="env HDD_PYTHON=$PYTHON_BIN \"$ROOT_DIR/run.sh\" --desktop"
 sed -e "s|@EXEC@|$exec_line|" -e "s|@TRYEXEC@|$ROOT_DIR/run.sh|" "$ROOT_DIR/packaging/linux/hdd-studio.desktop.in" > "$DESKTOP_FILE"
 chmod 0644 "$DESKTOP_FILE"

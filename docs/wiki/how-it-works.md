@@ -2,6 +2,10 @@
 
 A run takes one square sparse matrix $A$ and returns a permutation $P$ and the reordered matrix $A' = P A P^\top$, whose nonzeros sit in $k$ diagonal blocks with little coupling between them. It is a multilevel scheme: shrink the matrix graph, partition the small graph, then project the partition back.
 
+![The same matrix before and after reordering into six parts](images/reordering.png)
+
+Each colour is one part. On the left, rows of every part are spread through the matrix; after reordering, each part's rows are numbered together, so its nonzeros form a diagonal block and only the coupling between parts stays off the diagonal.
+
 ## The five stages
 
 1. **Graph construction.** $A$ becomes a weighted undirected graph $G_0$: one vertex per row, or per block of `dof_per_node` rows that must stay together (for example 3 degrees of freedom per mesh node in 3D FEM). Vertex weights come from the diagonal, edge weights from the off-diagonal magnitudes.

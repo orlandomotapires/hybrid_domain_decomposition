@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <!-- HDD Studio (small sizes): a sparse matrix reordered into diagonal blocks, A' = P A P^T. -->
+  <rect x="8" y="8" width="240" height="240" rx="40" fill="#2F6592"/>
+  <rect x="32" y="32" width="192" height="192" rx="6" fill="#24527A"/>
+  <rect x="32" y="32" width="80" height="80" fill="#FFFFFF"/>
+  <rect x="112" y="112" width="48" height="48" fill="#D6E5F3"/>
+  <rect x="160" y="160" width="64" height="64" fill="#ADC9E6"/>
+</svg>

@@ -31,13 +31,21 @@ Every panel can be moved, floated, tabbed or closed; **View → Reset layout** r
 | **Batch** → Runs → run | Cases and their status; band concentration per method, for a chosen matrix and coarsening scale |
 | **Quantum hardware** | Installed SDKs and credentials per backend; probe D-Wave Leap and QLM |
 
-![Coarsening preview](images/coarsening.png)
+Editing the coarsening limits: the preview recomputes every level as you type, and says so when a range cannot be reached.
+
+![The coarsening preview following edits to the limits](images/coarsening-preview.gif)
+
+Comparing two runs of a simulation: their locality curves overlaid, their KPIs side by side.
+
+![Two runs compared](images/compare-runs.png)
 
 ## Editing
 
 Parameter edits are kept in memory until you save (**Ctrl+S**). The header shows **● Unsaved changes**; undo and redo work per simulation. Fields are checked as you type and errors appear under the field and in the **Problems** panel; a simulation with errors cannot be saved or run. Running a simulation with unsaved changes asks whether to save first or run the edited parameters without saving them. Quitting or switching workspace with unsaved changes asks too.
 
 ## Jobs
+
+![Running a simulation: live log, then the finished run](images/run-simulation.gif)
 
 Simulations, batches and tuning studies run as separate processes, so the window stays responsive and a job can be stopped at any time (**Shift+F5** stops the job shown in the console). Each job keeps a record and a log in `<workspace>/.hdd/jobs/` (a batch's log is `batch/runs/<batch>/batch.log`).
 
