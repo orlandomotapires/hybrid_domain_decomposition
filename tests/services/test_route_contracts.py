@@ -22,9 +22,11 @@ class RouteContractTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         cls.tmp = TemporaryDirectory()
+        cls.addClassCleanup(cls.tmp.cleanup)
         cls.root = workspace.init(cls.tmp.name)
         cls.env = patch.dict(os.environ, {workspace.ENV_VAR: str(cls.root), "HDD_HISTORY_PATH": str(cls.root / "history.jsonl")})
         cls.env.start()
+        cls.addClassCleanup(cls.env.stop)
         from fastapi.testclient import TestClient
 
         from backend.app import app
@@ -33,11 +35,6 @@ class RouteContractTest(unittest.TestCase):
         created = cls.client.post("/api/matrix-library/generate-demo", json={"name": "demo"})
         assert created.status_code == 200, created.text
         cls.matrix_id = created.json()["id"]
-
-    @classmethod
-    def tearDownClass(cls) -> None:
-        cls.env.stop()
-        cls.tmp.cleanup()
 
     def new_simulation(self, name: str, **body) -> dict:
         response = self.client.post("/api/demonstrators", json={"name": name, "matrix": self.matrix_id, **body})

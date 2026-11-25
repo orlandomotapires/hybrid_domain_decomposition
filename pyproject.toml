@@ -33,7 +33,7 @@ gui = [
 dev = [
   "pytest>=9",
   "pytest-qt>=4.5",
-  "httpx>=0.28",
+  "httpx2>=2.16",
 ]
 
 [project.scripts]

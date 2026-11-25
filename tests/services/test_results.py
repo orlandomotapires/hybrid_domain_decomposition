@@ -24,8 +24,10 @@ class ResultsServiceTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         cls.tmp = TemporaryDirectory()
+        cls.addClassCleanup(cls.tmp.cleanup)
         cls.env = patch.dict(os.environ, {workspace.ENV_VAR: cls.tmp.name, "HDD_DISABLE_HISTORY": "1"})
         cls.env.start()
+        cls.addClassCleanup(cls.env.stop)
         cls.root = make_workspace(Path(cls.tmp.name).resolve())
         config_path = cls.root / "simulations" / "sim_a" / "data" / "simulation_config.json"
         config = json.loads(config_path.read_text())
@@ -33,11 +35,6 @@ class ResultsServiceTest(unittest.TestCase):
         config_path.write_text(json.dumps(config))
         run_dir = run_simulation("simulations/sim_a")
         cls.result_dir = workspace.rel(run_dir)
-
-    @classmethod
-    def tearDownClass(cls) -> None:
-        cls.env.stop()
-        cls.tmp.cleanup()
 
     def test_list_runs_summarises_each_run(self) -> None:
         runs = results.list_runs("sim_a")["runs"]
