@@ -160,12 +160,6 @@
       "k_target": 4
     }
   },
-  "summary_percent_bands": [
-    0.1,
-    0.4,
-    0.7,
-    1
-  ],
   "matrices": [
     {
       "key": "simpleblade_t14mm_h60_5mm_base"
@@ -173,5 +167,11 @@
     {
       "key": "simpleblade_t14mm_h60"
     }
+  ],
+  "summary_percent_bands": [
+    0.1,
+    0.4,
+    0.7,
+    1
   ]
 }

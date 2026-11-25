@@ -3,7 +3,8 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
-import batch.run_batch as run_batch
+import libs.batch.run_batch as run_batch
+from libs.runtime import workspace
 
 
 class RunBatchTest(unittest.TestCase):
@@ -11,13 +12,13 @@ class RunBatchTest(unittest.TestCase):
         self.assertTrue(run_batch.GEOMETRIES)
         for geometry in run_batch.GEOMETRIES:
             self.assertTrue(
-                (run_batch.ROOT_DIR / "matrices" / geometry.key / "matrix.json").exists(),
+                (workspace.root() / "matrices" / geometry.key / "matrix.json").exists(),
                 f"{geometry.key} is not a matrix in the library",
             )
 
     def test_case_results_go_to_the_batch_cases_folder(self) -> None:
         case = run_batch.build_cases()[0]
-        batch_dir = run_batch.BATCH_RUNS_DIR / "batch_test"
+        batch_dir = workspace.batch_runs_dir() / "batch_test"
         kwargs = run_batch._case_run_kwargs(case, batch_dir)
         self.assertEqual(f"batch/runs/batch_test/cases/{case.case_key}", kwargs["results_dir_override"])
         self.assertEqual(case.geometry.key, kwargs["simulation_config_override"]["input_matrix"])
@@ -63,7 +64,7 @@ class RunBatchTest(unittest.TestCase):
             "cases": [],
         }
 
-        with TemporaryDirectory(dir=run_batch.ROOT_DIR) as tmp_dir:
+        with TemporaryDirectory(dir=workspace.root()) as tmp_dir:
             batch_dir = Path(tmp_dir)
             manifest_path = batch_dir / "batch_manifest.json"
 
@@ -76,14 +77,14 @@ class RunBatchTest(unittest.TestCase):
             self.assertFalse((batch_dir / "batch_summary.csv").exists())
 
     def test_write_batch_configuration_snapshot_copies_json_into_batch_dir(self) -> None:
-        with TemporaryDirectory(dir=run_batch.ROOT_DIR) as tmp_dir:
+        with TemporaryDirectory(dir=workspace.root()) as tmp_dir:
             batch_dir = Path(tmp_dir)
 
             snapshot_path = run_batch._write_batch_configuration_snapshot(batch_dir)
 
             self.assertEqual(batch_dir / "batch_configuration.json", snapshot_path)
             self.assertTrue(snapshot_path.exists())
-            self.assertEqual(run_batch._load_json(run_batch.BATCH_CONFIGURATION_PATH), run_batch._load_json(snapshot_path))
+            self.assertEqual(run_batch._load_json(workspace.batch_config_path()), run_batch._load_json(snapshot_path))
 
     def test_build_case_parameters_stays_in_memory(self) -> None:
         case = run_batch.build_cases()[0]

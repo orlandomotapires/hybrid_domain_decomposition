@@ -1,6 +1,6 @@
 import unittest
 
-from backend.services.job_manager import _parse_log_line
+from hdd.services.jobs.parsing import parse_log_line as _parse_log_line
 
 
 class ParseLogLineLevelTests(unittest.TestCase):

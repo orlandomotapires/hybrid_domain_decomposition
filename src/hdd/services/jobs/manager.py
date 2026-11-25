@@ -1,0 +1,743 @@
+"""The job manager: starts jobs as detached processes, follows their logs and keeps their records.
+
+A job writes its output straight to its log file, in its own session, so it keeps
+running when the Studio closes. The manager follows that file: one follower thread
+per running job reads new lines and applies them under the job's lock. Progress
+comes from structured events (``libs.runtime.events``); ordinary lines become the
+visible log. When the Studio opens again, jobs whose process is still alive are
+followed again, and jobs that ended meanwhile are settled from the ``exit`` event
+in their log.
+
+Listeners registered with :meth:`JobManager.subscribe` are called with
+``(event, job_id)`` from follower threads, outside every lock; they should only
+note the change and let their own thread pull the state with :meth:`get_job`.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import shutil
+import signal
+import subprocess
+import threading
+import time
+import uuid
+from dataclasses import dataclass, field, fields
+from datetime import datetime
+from pathlib import Path
+from typing import Any, Callable
+
+from libs.runtime import events as job_events
+from libs.runtime import workspace
+
+from .. import catalog
+from . import commands, parsing
+from .parsing import _parse_log_line
+from .store import JobStore
+
+Listener = Callable[[str, str], None]
+CommandFactory = Callable[[str, list[str]], list[str]]
+EVENTS = ("added", "changed", "finished", "removed")
+MAX_LOG_ENTRIES = 50_000
+INTERRUPTED_MESSAGE = "The job ended while the Studio was closed and did not report a result."
+NO_RESULT_MESSAGE = "The job ended without reporting a result (it may have been killed)."
+POLL_SEC = 0.1
+# Fields written to a job record (everything else is runtime state).
+_RECORD_EXCLUDE = {"logs", "parameters_override"}
+
+
+def _run_meta_from_params(params: dict[str, Any] | None) -> dict[str, Any]:
+    """Extract display metadata (strategy, simulated flag, k_target) from simulation parameters."""
+    meta: dict[str, Any] = {"partitioning_strategy": None, "simulated": None, "k_target": None}
+    if not isinstance(params, dict):
+        return meta
+    try:
+        pp = params.get("partitioning_parameters") or {}
+        strat = pp.get("partitioning_strategy") or None
+        meta["partitioning_strategy"] = strat
+        if strat and strat != "metis_partitioning":
+            sim = (pp.get("strategies") or {}).get(strat, {}).get("simulated")
+            meta["simulated"] = bool(sim) if sim is not None else None
+        k_t = (pp.get("common") or {}).get("k_target")
+        if k_t is not None:
+            meta["k_target"] = int(k_t)
+    except Exception:
+        pass
+    return meta
+
+
+def _load_params_file(root: Path, demonstrator_dir: str, parameters_file: str | None) -> dict[str, Any] | None:
+    """Best-effort load of the parameters file a live run will use (when no in-memory override)."""
+    try:
+        data_dir = root / demonstrator_dir / "data"
+        name = parameters_file
+        if not name:
+            cfg = json.loads((data_dir / "simulation_config.json").read_text(encoding="utf-8"))
+            name = cfg.get("parameters_file_path") or "simulation_parameters.json"
+        path = Path(name)
+        if not path.is_absolute():
+            path = data_dir / path
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+
+@dataclass
+class SimulationJob:
+    job_id: str
+    job_type: str  # "single" | "batch" | "tuning"
+    title: str
+    demonstrator_dir: str | None = None
+    parameters_override: dict[str, Any] | None = None
+    status: str = "running"  # "running" | "completed" | "failed" | "cancelled"
+    current_stage: str = "initialization"
+    stage_progress: int = 5
+    created_at: str = field(default_factory=lambda: datetime.now().isoformat())
+    finished_at: str | None = None
+    started_epoch: float = field(default_factory=time.time)
+    finished_epoch: float | None = None
+    stage_started_epoch: float = field(default_factory=time.time)
+    stage_durations_sec: dict[str, float] = field(default_factory=dict)
+    result_dir: str | None = None
+    batch_dir: str | None = None
+    study_dir: str | None = None
+    pid: int | None = None
+    pid_start: int | None = None  # start time of the process, to tell it from a later process with the same pid
+    exit_code: int | None = None
+    exit_reported: int | None = None  # code from the job's own ``exit`` event
+    error_message: str | None = None
+    logs: list[dict[str, Any]] = field(default_factory=list)
+    telemetry: dict[str, Any] = field(default_factory=dict)
+    demonstrator_id: str | None = None
+    partitioning_strategy: str | None = None
+    simulated: bool | None = None
+    k_target: int | None = None
+    log_path: str | None = None  # workspace-relative file holding the raw output
+    logs_dropped: int = 0  # entries removed from the head of ``logs`` to bound memory
+    _process: subprocess.Popen | None = field(default=None, repr=False)
+    _logs_loaded: bool = field(default=True, repr=False)
+    _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
+
+    def to_dict(self, include_logs: bool = True, log_offset: int = 0) -> dict[str, Any]:
+        with self._lock:
+            now = time.time()
+            end_t = self.finished_epoch if self.finished_epoch is not None else now
+            elapsed_sec = round(max(0.0, end_t - self.started_epoch), 2)
+
+            durations = {k: round(v, 2) for k, v in self.stage_durations_sec.items()}
+            if self.status == "running" and self.current_stage:
+                live_stage_sec = max(0.0, now - self.stage_started_epoch)
+                durations[self.current_stage] = round(
+                    self.stage_durations_sec.get(self.current_stage, 0.0) + live_stage_sec,
+                    2,
+                )
+
+            payload = {
+                "job_id": self.job_id,
+                "job_type": self.job_type,
+                "title": self.title,
+                "demonstrator_dir": self.demonstrator_dir,
+                "demonstrator_id": self.demonstrator_id,
+                "partitioning_strategy": self.partitioning_strategy,
+                "simulated": self.simulated,
+                "k_target": self.k_target,
+                "status": self.status,
+                "current_stage": self.current_stage,
+                "stage_progress": self.stage_progress,
+                "created_at": self.created_at,
+                "finished_at": self.finished_at,
+                "elapsed_sec": elapsed_sec,
+                "stage_durations_sec": durations,
+                "result_dir": self.result_dir,
+                "batch_dir": self.batch_dir,
+                "study_dir": self.study_dir,
+                "pid": self.pid,
+                "exit_code": self.exit_code,
+                "error_message": self.error_message,
+                "telemetry": dict(self.telemetry),
+                "log_count": self.logs_dropped + len(self.logs),
+            }
+            if include_logs:
+                payload["logs"] = self.logs[max(0, log_offset - self.logs_dropped):]
+            return payload
+
+    def append_log(self, entry: dict[str, Any]) -> None:
+        """Append under the caller's lock, keeping at most ``MAX_LOG_ENTRIES`` in memory."""
+        self.logs.append(entry)
+        overflow = len(self.logs) - MAX_LOG_ENTRIES
+        if overflow > 0:
+            del self.logs[:overflow]
+            self.logs_dropped += overflow
+
+    def close_stage(self, now: float) -> None:
+        if self.current_stage:
+            self.stage_durations_sec[self.current_stage] = self.stage_durations_sec.get(self.current_stage, 0.0) + max(
+                0.0, now - self.stage_started_epoch
+            )
+
+    def to_record(self) -> dict[str, Any]:
+        with self._lock:
+            return {f.name: getattr(self, f.name) for f in fields(self) if not f.name.startswith("_") and f.name not in _RECORD_EXCLUDE}
+
+    @classmethod
+    def from_record(cls, record: dict[str, Any]) -> "SimulationJob":
+        known = {f.name for f in fields(cls) if not f.name.startswith("_")}
+        job = cls(**{k: v for k, v in record.items() if k in known and k not in _RECORD_EXCLUDE})
+        job._logs_loaded = not job.log_path
+        return job
+
+
+
+
+class JobManager:
+    def __init__(
+        self,
+        root: Path | None = None,
+        *,
+        command_factory: CommandFactory | None = None,
+        load_history: bool = True,
+        kill_grace_sec: float = 5.0,
+    ) -> None:
+        self.root = Path(root).resolve() if root is not None else workspace.root()
+        self.store = JobStore(self.root / workspace.STATE_DIR_NAME / "jobs")
+        self._command = command_factory or commands.job_command
+        self._kill_grace_sec = kill_grace_sec
+        self._jobs: dict[str, SimulationJob] = {}
+        self._lock = threading.Lock()
+        self._listeners: list[Listener] = []
+        self._listeners_lock = threading.Lock()
+        self._closed = threading.Event()
+        self._load_records()
+        if load_history:
+            self._load_historical_runs()
+
+    # ------------------------------------------------------------ listeners
+    def subscribe(self, listener: Listener) -> Callable[[], None]:
+        """Call ``listener(event, job_id)`` on every change. Returns a function that unsubscribes."""
+        with self._listeners_lock:
+            self._listeners.append(listener)
+
+        def unsubscribe() -> None:
+            with self._listeners_lock:
+                if listener in self._listeners:
+                    self._listeners.remove(listener)
+
+        return unsubscribe
+
+    def _notify(self, event: str, job_id: str) -> None:
+        with self._listeners_lock:
+            listeners = list(self._listeners)
+        for listener in listeners:
+            try:
+                listener(event, job_id)
+            except Exception:
+                pass  # a broken listener must never stop a job
+
+    # -------------------------------------------------------------- records
+    def _rel(self, path: Path) -> str:
+        try:
+            return str(Path(path).resolve().relative_to(self.root))
+        except ValueError:
+            return str(path)
+
+    def _save(self, job: SimulationJob) -> None:
+        if job.job_id.startswith("hist_"):
+            return
+        try:
+            self.store.save(job.to_record())
+        except OSError:
+            pass
+
+    def _load_records(self) -> None:
+        for record in self.store.load_all():
+            job = SimulationJob.from_record(record)
+            self._jobs[job.job_id] = job
+            if job.status != "running":
+                continue
+            # The job was running when the Studio last closed: rebuild its state from its log.
+            job.logs, job.logs_dropped, job.telemetry, job._logs_loaded = [], 0, {}, True
+            job.exit_reported = None
+            if job.log_path and _pid_alive(job.pid, job.pid_start):
+                self._start_follower(job, self._replay(job))
+            else:
+                self._follow(job, 0, settle=True)
+
+    def _replay(self, job: SimulationJob) -> int:
+        """Apply the complete lines already in the job's log; return the offset to follow from."""
+        path = self.root / job.log_path
+        try:
+            data = path.read_bytes()
+        except OSError:
+            return 0
+        end = data.rfind(b"\n") + 1
+        for raw in data[:end].split(b"\n"):
+            self._apply_raw(job, raw)
+        return end
+
+    def _ensure_logs(self, job: SimulationJob) -> None:
+        """Read a reloaded job's log file the first time someone asks for its logs."""
+        with job._lock:
+            if job._logs_loaded:
+                return
+            job._logs_loaded = True
+            path = self.root / job.log_path if job.log_path else None
+            if path is None or not path.exists():
+                return
+            stamp = datetime.fromtimestamp(job.started_epoch).strftime("%H:%M:%S")
+            for raw in path.read_text(encoding="utf-8", errors="replace").splitlines():
+                if raw.strip() and job_events.parse(raw) is None:
+                    job.append_log(_parse_log_line(raw, default_hms=stamp))
+
+    def _load_historical_runs(self) -> None:
+        dem_root = self.root / "simulations"
+        recorded = {j.result_dir for j in self._jobs.values() if j.result_dir}
+        if not dem_root.exists():
+            return
+        for dem_dir in sorted(dem_root.iterdir()):
+            results_dir = dem_dir / "results"
+            if not results_dir.is_dir():
+                continue
+            for run_dir in sorted(results_dir.iterdir()):
+                if not run_dir.is_dir() or not run_dir.name.startswith("run_"):
+                    continue
+                job_id = f"hist_{dem_dir.name}_{run_dir.name}"
+                rel_res = f"simulations/{dem_dir.name}/results/{run_dir.name}"
+                if rel_res in recorded:
+                    continue  # already known from its job record
+                strategy_str = ""
+                telemetry: dict[str, Any] = {}
+                run_meta = _run_meta_from_params(None)
+
+                params_file = run_dir / "run_simulation_parameters.json"
+                if params_file.exists():
+                    try:
+                        p = json.loads(params_file.read_text(encoding="utf-8"))
+                        run_meta = _run_meta_from_params(p)
+                        strat = p.get("partitioning_parameters", {}).get("partitioning_strategy", "")
+                        if strat:
+                            strategy_str = f" ({catalog.method_label(strat, run_meta['simulated'], short=True)})"
+                        k_t = p.get("partitioning_parameters", {}).get("common", {}).get("k_target")
+                        if k_t is not None:
+                            telemetry["coarse_parts"] = int(k_t)
+                    except Exception:
+                        pass
+
+                metrics_file = run_dir / "run_metrics.json"
+                if metrics_file.exists():
+                    try:
+                        m = json.loads(metrics_file.read_text(encoding="utf-8"))
+                        k_m = m.get("matrix", {})
+                        fg = k_m.get("fine_graph_partition", {})
+                        cg = k_m.get("coarse_graph_partition", {})
+                        if fg.get("num_nodes") is not None:
+                            telemetry["initial_nodes"] = int(fg["num_nodes"])
+                            telemetry["initial_edges"] = int(fg.get("num_edges", 0))
+                        if cg.get("num_nodes") is not None:
+                            telemetry["coarse_nodes"] = int(cg["num_nodes"])
+                            telemetry["coarse_edges"] = int(cg.get("num_edges", 0))
+                        if cg.get("num_parts") is not None:
+                            telemetry["coarse_parts"] = int(cg["num_parts"])
+                    except Exception:
+                        pass
+
+                mtime = run_dir.stat().st_mtime
+                created_iso = datetime.fromtimestamp(mtime).isoformat()
+                default_hms = datetime.fromtimestamp(mtime).strftime("%H:%M:%S")
+
+                parsed_logs: list[dict[str, str]] = []
+                has_error_log = False
+                run_log_file = run_dir / "run_log"
+                if run_log_file.exists():
+                    try:
+                        for raw_l in run_log_file.read_text(encoding="utf-8", errors="replace").splitlines():
+                            if not raw_l.strip():
+                                continue
+                            entry = _parse_log_line(raw_l, default_hms=default_hms)
+                            parsed_logs.append(entry)
+                            if entry["level"] == "ERROR":
+                                has_error_log = True
+                            parsing.update_telemetry(telemetry, entry["message"])
+                    except Exception:
+                        pass
+
+                if not parsed_logs:
+                    parsed_logs = [
+                        {
+                            "timestamp": default_hms,
+                            "level": "INFO",
+                            "message": f"Loaded historical run from {rel_res}",
+                        }
+                    ]
+
+                status_val = "failed" if (has_error_log and not metrics_file.exists()) else "completed"
+                job = SimulationJob(
+                    job_id=job_id,
+                    job_type="single",
+                    title=f"{dem_dir.name}{strategy_str}",
+                    demonstrator_dir=f"simulations/{dem_dir.name}",
+                    status=status_val,
+                    current_stage="permutation" if status_val == "completed" else "initialization",
+                    stage_progress=100 if status_val == "completed" else 15,
+                    created_at=created_iso,
+                    finished_at=created_iso,
+                    started_epoch=mtime,
+                    finished_epoch=mtime,
+                    result_dir=rel_res if status_val == "completed" else None,
+                    exit_code=0 if status_val == "completed" else 1,
+                    telemetry=telemetry,
+                    logs=parsed_logs,
+                    demonstrator_id=dem_dir.name,
+                    **run_meta,
+                )
+                self._jobs[job_id] = job
+
+    # ---------------------------------------------------------------- queries
+    def list_jobs(self, limit: int | None = 40) -> list[dict[str, Any]]:
+        """Newest jobs first, without logs."""
+        with self._lock:
+            jobs = list(self._jobs.values())
+        jobs.sort(key=lambda j: j.created_at, reverse=True)
+        return [j.to_dict(include_logs=False) for j in (jobs if limit is None else jobs[:limit])]
+
+    def get_job(self, job_id: str, log_offset: int = 0) -> dict[str, Any] | None:
+        """One job with the log entries from ``log_offset`` on (pass the last ``log_count`` to get only new ones)."""
+        with self._lock:
+            job = self._jobs.get(job_id)
+        if job is None:
+            return None
+        self._ensure_logs(job)
+        return job.to_dict(include_logs=True, log_offset=log_offset)
+
+    def running_jobs(self) -> list[str]:
+        with self._lock:
+            return [j.job_id for j in self._jobs.values() if j.status == "running"]
+
+    # -------------------------------------------------------------- mutation
+    def delete_job(self, job_id: str, delete_files: bool = False) -> bool:
+        with self._lock:
+            job = self._jobs.get(job_id)
+            if job is None or job.status == "running":
+                return False
+            del self._jobs[job_id]
+        self.store.delete(job_id)
+        if delete_files and job.result_dir:
+            target = (self.root / job.result_dir).resolve()
+            try:
+                target.relative_to((self.root / "simulations").resolve())
+                if target.is_dir() and target.name.startswith("run_"):
+                    shutil.rmtree(target)
+            except Exception:
+                pass
+        self._notify("removed", job_id)
+        return True
+
+    def start_single_simulation(
+        self,
+        demonstrator_dir: str,
+        *,
+        parameters_override: dict[str, Any] | None = None,
+        parameters_file_override: str | None = None,
+    ) -> dict[str, Any]:
+        job_id = f"sim_{datetime.now():%Y%m%d_%H%M%S}_{uuid.uuid4().hex[:6]}"
+        name = demonstrator_dir.strip("/").split("/")[-1]
+        params = parameters_override if parameters_override is not None else _load_params_file(self.root, demonstrator_dir, parameters_file_override)
+        meta = _run_meta_from_params(params)
+        strategy = (f" ({catalog.method_label(meta['partitioning_strategy'], meta['simulated'], short=True)})"
+                    if parameters_override and meta["partitioning_strategy"] else "")
+        job = SimulationJob(
+            job_id=job_id,
+            job_type="single",
+            title=f"Simulation: {name}{strategy}",
+            demonstrator_dir=demonstrator_dir,
+            demonstrator_id=name,
+            parameters_override=parameters_override,
+            **meta,
+        )
+        payload = json.dumps({"parameters_file_override": parameters_file_override, "parameters_override": parameters_override})
+        return self._launch(job, self._command("single", [demonstrator_dir, "--payload", payload]), self.store.log_path(job_id))
+
+    def start_batch_study(self, *, stop_on_error: bool = False) -> dict[str, Any]:
+        stamp = f"{datetime.now():%Y%m%d_%H%M%S}"
+        batch_dir = self.root / "batch" / "runs" / f"batch_{stamp}"
+        batch_dir.mkdir(parents=True, exist_ok=True)
+        job = SimulationJob(
+            job_id=f"batch_{stamp}_{uuid.uuid4().hex[:6]}",
+            job_type="batch",
+            title=f"Batch Study ({batch_dir.name})",
+            batch_dir=self._rel(batch_dir),
+        )
+        args = ["--stop-on-error"] if stop_on_error else []
+        return self._launch(job, self._command("batch", args), batch_dir / "batch.log", extra_env={"HDD_BATCH_DIR": self._rel(batch_dir)})
+
+    def start_tuning_study(self, *, study_dir: Path, title: str, demonstrator_id: str | None = None) -> dict[str, Any]:
+        job = SimulationJob(
+            job_id=f"tuning_{datetime.now():%Y%m%d_%H%M%S}_{uuid.uuid4().hex[:6]}",
+            job_type="tuning",
+            title=title,
+            study_dir=self._rel(study_dir),
+            demonstrator_id=demonstrator_id,
+            stage_progress=0,
+        )
+        return self._launch(job, self._command("tune", [str(Path(study_dir).resolve())]), self.store.log_path(job.job_id))
+
+    def _launch(self, job: SimulationJob, argv: list[str], log_file: Path, extra_env: dict[str, str] | None = None) -> dict[str, Any]:
+        now = time.time()
+        job.started_epoch = job.stage_started_epoch = now
+        job.log_path = self._rel(log_file)
+        log_file.parent.mkdir(parents=True, exist_ok=True)
+        env = commands.job_environment(self.root)
+        env.update(extra_env or {})
+        position = log_file.stat().st_size if log_file.exists() else 0
+        with log_file.open("ab") as handle:
+            # The child owns its output: nothing breaks when the Studio closes.
+            proc = subprocess.Popen(
+                argv,
+                cwd=str(self.root),
+                stdout=handle,
+                stderr=subprocess.STDOUT,
+                stdin=subprocess.DEVNULL,
+                start_new_session=True,
+                env=env,
+            )
+        job._process = proc
+        job.pid = proc.pid
+        job.pid_start = _process_start(proc.pid)
+        with self._lock:
+            self._jobs[job.job_id] = job
+        self._save(job)
+        self._start_follower(job, position)
+        self._notify("added", job.job_id)
+        return job.to_dict(include_logs=True)
+
+    def cancel_job(self, job_id: str) -> dict[str, Any] | None:
+        """Stop a job: SIGTERM to its process group, SIGKILL if it is still alive after the grace period."""
+        with self._lock:
+            job = self._jobs.get(job_id)
+        if job is None:
+            return None
+        proc = job._process
+        if proc is not None:
+            if proc.poll() is None:
+                _signal_group(proc.pid, signal.SIGTERM)
+                self._after_grace(lambda: proc.poll() is None and _signal_group(proc.pid, signal.SIGKILL))
+        elif _pid_alive(job.pid, job.pid_start):  # followed again after a restart: not our child
+            pid, start = job.pid, job.pid_start
+            _signal_group(pid, signal.SIGTERM)
+            self._after_grace(lambda: _pid_alive(pid, start) and _signal_group(pid, signal.SIGKILL))
+        changed = False
+        with job._lock:
+            if job.status == "running":
+                now = time.time()
+                job.close_stage(now)
+                job.status = "cancelled"
+                job.finished_epoch = now
+                job.finished_at = datetime.now().isoformat()
+                job.append_log({"timestamp": datetime.now().strftime("%H:%M:%S"), "level": "WARNING", "message": "Job cancelled by user."})
+                changed = True
+        if changed:
+            self._save(job)
+            self._notify("finished", job_id)
+        return job.to_dict(include_logs=True)
+
+    def _after_grace(self, fn: Callable[[], Any]) -> None:
+        timer = threading.Timer(self._kill_grace_sec, fn)
+        timer.daemon = True
+        timer.start()
+
+    def cancel_all(self) -> list[str]:
+        """Cancel every running job."""
+        ids = self.running_jobs()
+        for job_id in ids:
+            self.cancel_job(job_id)
+        return ids
+
+    def close(self) -> None:
+        """Stop following the jobs. Their processes keep running; the next manager picks them up."""
+        self._closed.set()
+
+    # -------------------------------------------------------------- follower
+    def _start_follower(self, job: SimulationJob, position: int) -> None:
+        threading.Thread(target=self._follow, args=(job, position), daemon=True, name=f"job-{job.job_id}").start()
+
+    def _follow(self, job: SimulationJob, position: int, settle: bool = False) -> None:
+        """Apply the job's log from ``position`` on until its process ends (or the manager closes).
+
+        ``settle`` reads a job whose process is already gone, to rebuild its final state.
+        """
+        path = self.root / job.log_path if job.log_path else None
+        buffer = b""
+        handle = path.open("rb") if path is not None and path.exists() else None
+        try:
+            if handle is not None:
+                handle.seek(position)
+            while True:
+                chunk = handle.read(65536) if handle is not None else b""
+                if chunk:
+                    buffer += chunk
+                    *lines, buffer = buffer.split(b"\n")
+                    for raw in lines:
+                        self._apply_raw(job, raw)
+                    if lines and not settle:
+                        self._notify("changed", job.job_id)
+                    continue
+                ended, code = (True, None) if settle else self._process_ended(job)
+                if ended:
+                    if handle is not None:
+                        buffer += handle.read()
+                    for raw in buffer.split(b"\n"):
+                        self._apply_raw(job, raw)
+                    when = path.stat().st_mtime if settle and path is not None and path.exists() else None
+                    self._finish(job, code, when=when, interrupted=settle)
+                    return
+                if self._closed.is_set():
+                    return
+                time.sleep(POLL_SEC)
+        finally:
+            if handle is not None:
+                handle.close()
+
+    @staticmethod
+    def _process_ended(job: SimulationJob) -> tuple[bool, int | None]:
+        proc = job._process
+        if proc is not None:
+            code = proc.poll()
+            return code is not None, code
+        return not _pid_alive(job.pid, job.pid_start), None
+
+    def _finish(self, job: SimulationJob, code: int | None, *, when: float | None = None, interrupted: bool = False) -> None:
+        note = None
+        with job._lock:
+            now = when or time.time()
+            job.close_stage(now)
+            if code is None:
+                code = job.exit_reported
+            job.exit_code = code
+            job.pid = None
+            job.finished_epoch = now
+            job.finished_at = datetime.fromtimestamp(now).isoformat()
+            if job.status != "cancelled":
+                if code is None:
+                    job.status = "failed"
+                    job.error_message = INTERRUPTED_MESSAGE if interrupted else NO_RESULT_MESSAGE
+                    note = job.error_message
+                    job.append_log({"timestamp": datetime.fromtimestamp(now).strftime("%H:%M:%S"), "level": "WARNING", "message": note})
+                else:
+                    job.status = "completed" if code == 0 else "failed"
+                    if code == 0:
+                        job.stage_progress = 100
+                    elif job.error_message is None:
+                        job.error_message = f"Stopped by signal {-code}." if code < 0 else f"Exited with code {code}."
+        if note and job.log_path:
+            try:
+                with (self.root / job.log_path).open("a", encoding="utf-8") as handle:
+                    handle.write(f"[{datetime.now():%H:%M:%S} WARNING] {note}\n")
+            except OSError:
+                pass
+        self._save(job)
+        self._notify("finished", job.job_id)
+
+    def _apply_raw(self, job: SimulationJob, raw: bytes) -> None:
+        line = raw.decode("utf-8", errors="replace").rstrip("\r")
+        if line.strip():
+            self._apply_line(job, line)
+
+    def _apply_line(self, job: SimulationJob, line: str) -> None:
+        event = job_events.parse(line)
+        with job._lock:
+            if event is not None:
+                self._apply_event(job, event)
+                return
+            entry = _parse_log_line(line)
+            job.append_log(entry)
+            parsing.update_telemetry(job.telemetry, entry["message"])
+            # Tuning trials may fail individually; only the exit code decides the job status.
+            if entry["level"] == "ERROR" and job.error_message is None and job.job_type != "tuning":
+                job.error_message = entry["message"]
+
+    def _apply_event(self, job: SimulationJob, event: dict[str, Any]) -> None:
+        """Update the job from one progress event (under the job's lock)."""
+        kind, t = event["event"], job.telemetry
+        if kind == "exit":
+            job.exit_reported = int(event.get("code", 1))
+        elif kind == "result" and event.get("result_dir"):
+            job.result_dir = self._rel(self.root / event["result_dir"])
+        elif job.job_type == "single" and kind in ("stage", "progress"):
+            # Batch cases and tuning trials run the pipeline too; their own counters measure progress.
+            if kind == "stage" and event.get("stage") in parsing.STAGE_INDEX:
+                if event["stage"] != job.current_stage:
+                    now = time.time()
+                    job.close_stage(now)
+                    job.current_stage = event["stage"]
+                    job.stage_started_epoch = now
+                fraction = 0.0
+            elif kind == "progress":
+                fraction = float(event.get("fraction") or 0.0)
+            else:
+                return
+            count = len(parsing.PIPELINE_STAGES)
+            job.stage_progress = max(1, min(99, int(100 * (parsing.STAGE_INDEX.get(job.current_stage, 0) + fraction) / count)))
+        elif kind == "batch":
+            t["batch_total"] = int(event.get("total", 0))
+            t.setdefault("batch_done", 0)
+            t.setdefault("batch_failed", 0)
+        elif kind == "batch_case":
+            t["batch_index"], t["batch_total"], t["batch_case"] = int(event["index"]), int(event["total"]), event.get("case")
+        elif kind == "batch_done":
+            t["batch_done"] = int(t.get("batch_done", 0)) + 1
+            if event.get("status") == "failed":
+                t["batch_failed"] = int(t.get("batch_failed", 0)) + 1
+            job.stage_progress = min(99, int(100 * t["batch_done"] / max(int(t.get("batch_total", 0)), 1)))
+        elif kind == "tuning":
+            t["tuning_total"] = int(event.get("total", 0))
+            t.setdefault("tuning_done", 0)
+        elif kind == "trial":
+            done, total = int(event["done"]), int(event["total"])
+            t["tuning_done"], t["tuning_total"] = done, total
+            key = f"tuning_{event.get('status', 'ok')}"
+            t[key] = int(t.get(key, 0)) + 1
+            job.stage_progress = min(99, int(100 * done / max(total, 1)))
+
+
+def _process_start(pid: int | None) -> int | None:
+    """Start time of a process in clock ticks since boot (Linux), or None when unknown."""
+    if not pid:
+        return None
+    try:
+        stat = Path(f"/proc/{pid}/stat").read_text()
+        return int(stat[stat.rindex(")") + 2:].split()[19])
+    except (OSError, ValueError, IndexError):
+        return None
+
+
+def _pid_alive(pid: int | None, start: int | None = None) -> bool:
+    """Whether ``pid`` is still the process that was started (not a zombie, not a reused pid)."""
+    if not pid:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return False
+    try:
+        stat = Path(f"/proc/{pid}/stat").read_text()
+        fields_after = stat[stat.rindex(")") + 2:].split()
+        if fields_after[0] == "Z":
+            return False
+        if start is not None and int(fields_after[19]) != start:
+            return False
+    except (OSError, ValueError, IndexError):
+        pass
+    return True
+
+
+def _signal_group(pid: int, sig: int) -> None:
+    """Signal the job's process group (it leads its own session), else the process alone."""
+    try:
+        os.killpg(pid, sig)
+    except Exception:
+        try:
+            os.kill(pid, sig)
+        except Exception:
+            pass

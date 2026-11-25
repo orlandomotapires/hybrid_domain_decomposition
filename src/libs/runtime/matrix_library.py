@@ -16,9 +16,8 @@ import re
 from pathlib import Path
 from typing import Any
 
-PROJECT_ROOT = Path(__file__).resolve().parents[3]
-MATRIX_LIBRARY_DIR = PROJECT_ROOT / "matrices"
-SIMULATIONS_DIR = PROJECT_ROOT / "simulations"
+from libs.runtime import workspace
+
 MATRIX_META_FILE = "matrix.json"
 
 _MATRIX_ID_RE = re.compile(r"^[A-Za-z0-9_-]+$")
@@ -35,7 +34,7 @@ def sanitize_matrix_id(raw: str) -> str:
 def matrix_dir(matrix_id: str, library_dir: Path | None = None) -> Path:
     if not isinstance(matrix_id, str) or not _MATRIX_ID_RE.match(matrix_id):
         raise ValueError(f"Invalid matrix id: {matrix_id!r}")
-    return (library_dir or MATRIX_LIBRARY_DIR) / matrix_id
+    return (library_dir or workspace.matrices_dir()) / matrix_id
 
 
 def load_matrix_meta(matrix_id: str, library_dir: Path | None = None) -> dict[str, Any]:
@@ -69,7 +68,7 @@ def resolve_matrix(matrix_id: str, library_dir: Path | None = None) -> Path:
 
 
 def list_matrix_ids(library_dir: Path | None = None) -> list[str]:
-    root = library_dir or MATRIX_LIBRARY_DIR
+    root = library_dir or workspace.matrices_dir()
     if not root.exists():
         return []
     return sorted(d.name for d in root.iterdir() if d.is_dir() and (d / MATRIX_META_FILE).exists())
