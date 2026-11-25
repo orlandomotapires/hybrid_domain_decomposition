@@ -30,11 +30,17 @@ def create_application(argv: list[str] | None = None) -> QApplication:
     app.setApplicationName(APP_NAME)
     app.setApplicationDisplayName(APP_NAME)
     app.setDesktopFileName(APP_ID)
-    icon = Path(__file__).resolve().parent / "resources" / "app" / "hdd-studio.svg"
-    if icon.is_file():
+    icons = Path(__file__).resolve().parent / "resources" / "app"
+    if (icons / "hdd-studio.svg").is_file():
+        from PySide6.QtCore import QSize
         from PySide6.QtGui import QIcon
 
-        app.setWindowIcon(QIcon(str(icon)))
+        icon = QIcon()
+        for size in (16, 24, 32):  # the detail of the full icon blurs at these sizes
+            icon.addFile(str(icons / "hdd-studio-small.svg"), QSize(size, size))
+        for size in (48, 64, 128, 256):
+            icon.addFile(str(icons / "hdd-studio.svg"), QSize(size, size))
+        app.setWindowIcon(icon)
     return app
 
 

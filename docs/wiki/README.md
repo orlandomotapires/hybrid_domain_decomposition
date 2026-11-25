@@ -1,8 +1,12 @@
+<img src="../../src/hdd/studio/resources/app/hdd-studio.svg" width="56" height="56" align="left" alt="HDD Studio icon">
+
 # Hybrid Domain Decomposition wiki
 
-Hybrid Domain Decomposition reorders a square sparse matrix $A$ into $A' = P A P^\top$ by partitioning its graph, classically with METIS or with quantum methods (annealing on D-Wave, QAOA on QLM), so that its nonzeros gather in diagonal blocks. It runs on your machine, from a desktop app or the command line.
+Reorders a square sparse matrix $A$ into $A' = P A P^\top$ by partitioning its graph, classically with METIS or with quantum methods (annealing on D-Wave, QAOA on QLM), so that its nonzeros gather in diagonal blocks. It runs on your machine, from a desktop app or the command line.
 
-![The desktop app on a finished run](images/run.png)
+<br clear="left">
+
+![The same matrix before and after reordering: scattered nonzeros become six diagonal blocks](images/reordering.png)
 
 ## Start here
 

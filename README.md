@@ -1,6 +1,12 @@
+<img src="src/hdd/studio/resources/app/hdd-studio.svg" width="64" height="64" align="left" alt="HDD Studio icon">
+
 # Hybrid Domain Decomposition
 
 Reorders any square sparse matrix (`.mtx`) into $A' = P A P^\top$ by partitioning its graph with METIS, Quantum Annealing or QAOA. Everything runs on your machine.
+
+<br clear="left">
+
+![The same matrix before and after reordering: scattered nonzeros become six diagonal blocks](docs/wiki/images/reordering.png)
 
 ## Install
 
@@ -26,6 +32,10 @@ packaging/linux/install-launcher.sh      # add HDD Studio to the application men
 ./run.sh --tune simulations/simulation_01 --auto
 ```
 
+Running a simulation from the desktop app: the log streams in the console, then the run opens with its reordered matrix and locality curve.
+
+![Running a simulation in HDD Studio](docs/wiki/images/run-simulation.gif)
+
 ## Test
 
 ```sh
@@ -33,7 +43,9 @@ pip install -e ".[gui,dev]"
 QT_QPA_PLATFORM=offscreen python -m pytest
 ```
 
-Everything else (how the pipeline works, the desktop app, the command line, tuning, workspaces, quantum backends) is in the [wiki](docs/wiki/README.md).
+## Documentation
+
+The [wiki](docs/wiki/README.md) explains [how the pipeline works](docs/wiki/how-it-works.md), the [desktop app](docs/wiki/desktop-app.md), the [command line](docs/wiki/command-line.md), [batch studies](docs/wiki/batch-studies.md), [parameter tuning](docs/wiki/parameter-tuning.md) and every [parameter](docs/wiki/parameter-reference.md).
 
 ## License
 

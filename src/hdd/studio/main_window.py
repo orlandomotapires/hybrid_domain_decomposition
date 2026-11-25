@@ -381,6 +381,8 @@ class MainWindow(QMainWindow):
             bar.addWidget(widget)
         bar.addPermanentWidget(self.status_running)
         bar.addPermanentWidget(self.status_workspace)
+        # A temporary message ("Saved …") is drawn where the job labels are: hide them meanwhile.
+        bar.messageChanged.connect(lambda message: self._update_status())
         self._theme.changed.connect(self._update_status)
         self._update_status()
 
@@ -408,8 +410,9 @@ class MainWindow(QMainWindow):
     def _update_status(self) -> None:
         job = self.ctx.jobs.get_job(self.console.job_id, log_offset=10**9) if self.console.job_id else None
         running = job is not None and job["status"] == "running"
+        show_job = job is not None and not self.statusBar().currentMessage()
         for widget in (self.status_icon, self.status_job, self.status_progress, self.status_percent):
-            widget.setVisible(job is not None)
+            widget.setVisible(show_job)
         if job is not None:
             icon, tint = {"running": ("running", "accent"), "completed": ("ok", "ok"), "failed": ("error", "error")}.get(job["status"], ("cancelled", "muted"))
             self.status_icon.setPixmap(self._theme.pixmap(icon, 16, tint, self.devicePixelRatioF()))
@@ -417,9 +420,9 @@ class MainWindow(QMainWindow):
             target = job.get("demonstrator_id") or job["title"]
             self.status_job.setText(f"{target} · {stage}")
             self.status_progress.setValue(int(job.get("stage_progress") or 0))
-            self.status_progress.setVisible(running)
+            self.status_progress.setVisible(running and show_job)
             self.status_percent.setText(f"{job.get('stage_progress', 0)} %")
-            self.status_percent.setVisible(running)
+            self.status_percent.setVisible(running and show_job)
         count = len(self.ctx.jobs.running_jobs())
         self.status_running.setText(f"{count} job running" if count == 1 else f"{count} jobs running")
         self.status_workspace.setText(str(self.ctx.root))

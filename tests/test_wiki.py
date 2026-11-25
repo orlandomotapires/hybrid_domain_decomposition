@@ -7,7 +7,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 WIKI = ROOT / "docs" / "wiki"
-LINK = re.compile(r"!?\[[^\]]*\]\(([^)\s]+)\)")
+LINK = re.compile(r"!?\[[^\]]*\]\(([^)\s]+)\)|<img\b[^>]*\bsrc=\"([^\"]+)\"")
 FENCE = re.compile(r"```.*?```", re.DOTALL)
 
 
@@ -44,7 +44,7 @@ class WikiTest(unittest.TestCase):
     def test_links_point_to_existing_files_and_headings(self) -> None:
         broken = []
         for doc in _documents():
-            for target in LINK.findall(FENCE.sub("", doc.read_text(encoding="utf-8"))):
+            for target in (a or b for a, b in LINK.findall(FENCE.sub("", doc.read_text(encoding="utf-8")))):
                 if re.match(r"^[a-z]+:", target):
                     continue  # external
                 path_part, _, anchor = target.partition("#")
