@@ -21,9 +21,10 @@ class NewSimulationDialog(QDialog):
         for matrix_id in matrix_ids:
             self.matrix.addItem(matrix_id, matrix_id)
         self.clone = QComboBox()
-        self.clone.addItem("Start from defaults adapted to the matrix", None)
+        self.clone.addItem("Defaults for the matrix", None)
+        self.clone.setToolTip("Start from defaults adapted to the matrix, or copy another simulation's parameters")
         for sim in simulation_ids:
-            self.clone.addItem(f"Copy the parameters of {sim}", sim)
+            self.clone.addItem(f"Copy from {sim}", sim)
         form = FormGrid()
         form.add_row("Name", self.name)
         form.add_row("Input matrix", self.matrix)

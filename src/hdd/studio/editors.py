@@ -41,7 +41,33 @@ class SpinBox(_NoWheel, QSpinBox):
 
 
 class DoubleSpinBox(_NoWheel, QDoubleSpinBox):
-    pass
+    """Thousands separators like the tables; scientific notation from a million on (1e18, not 1000000000000000000)."""
+
+    SCIENTIFIC_FROM = 1e6
+
+    def textFromValue(self, value: float) -> str:  # noqa: N802 - Qt naming
+        if abs(value) >= self.SCIENTIFIC_FROM:
+            mantissa, exponent = f"{value:.6e}".split("e")
+            return f"{mantissa.rstrip('0').rstrip('.')}e{int(exponent)}"
+        return f"{value:,.{self.decimals()}f}"
+
+    def valueFromText(self, text: str) -> float:  # noqa: N802 - Qt naming
+        try:
+            return float(text.replace(",", "").strip())
+        except ValueError:
+            return self.value()
+
+    def validate(self, text: str, pos: int):
+        from PySide6.QtGui import QValidator
+
+        clean = text.replace(",", "").strip()
+        try:
+            value = float(clean)
+        except ValueError:
+            partial = clean in ("", "-", "+", ".") or clean.lower().endswith(("e", "e-", "e+"))
+            return (QValidator.State.Intermediate if partial else QValidator.State.Invalid), text, pos
+        inside = self.minimum() <= value <= self.maximum()
+        return (QValidator.State.Acceptable if inside else QValidator.State.Intermediate), text, pos
 
 
 class ComboBox(_NoWheel, QComboBox):

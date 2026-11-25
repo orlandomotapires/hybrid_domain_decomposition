@@ -10,7 +10,7 @@ from typing import Any
 import numpy as np
 from PySide6.QtCore import QSize, Qt
 from PySide6.QtGui import QAction
-from PySide6.QtWidgets import QComboBox, QFileDialog, QHBoxLayout, QLabel, QMenu, QStackedWidget, QTabBar, QToolButton, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QComboBox, QFileDialog, QHBoxLayout, QLabel, QMenu, QSizePolicy, QStackedWidget, QTabBar, QToolButton, QVBoxLayout, QWidget
 
 from hdd.services import catalog, results
 from libs.runtime.matrix_library import resolve_matrix
@@ -39,6 +39,28 @@ def load_run_plot(result_dir: str, plot_name: str) -> SparsityData:
     return SparsityData(data.n, data.rows, data.cols, data.labels, PLOT_LABELS[plot_name])
 
 
+class ElidedLabel(QLabel):
+    """A one-line label that gives way to its neighbours and ends in "…" when it does not fit."""
+
+    def __init__(self, text: str = "", parent: QWidget | None = None) -> None:
+        super().__init__(text, parent)
+        self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        self.setMinimumWidth(0)
+
+    def setText(self, text: str) -> None:  # noqa: N802 - Qt naming
+        super().setText(text)
+        self.setToolTip(text)
+
+    def paintEvent(self, event) -> None:  # noqa: N802 - Qt naming
+        from PySide6.QtGui import QPainter
+
+        painter = QPainter(self)
+        painter.setPen(self.palette().color(self.foregroundRole()))
+        painter.setFont(self.font())
+        elided = self.fontMetrics().elidedText(self.text(), Qt.TextElideMode.ElideRight, self.width())
+        painter.drawText(self.rect(), int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter), elided)
+
+
 class GraphicsArea(QWidget):
     def __init__(self, tasks: TaskRunner, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -48,15 +70,18 @@ class GraphicsArea(QWidget):
         self._matrix_shown: str | None = None
 
         self.tabs = QTabBar()
+        self.tabs.setUsesScrollButtons(False)
+        self.tabs.setElideMode(Qt.TextElideMode.ElideNone)
         self.tabs.setExpanding(False)
         self.tabs.setDrawBase(False)
         self.sparsity = SparsityView()
         self.curves = CurveView("Half-bandwidth (% of n)", "Nonzeros inside the band (%)")
-        self.trajectory = CurveView("Level", "Nodes", integer_x=True, markers=True)
+        # The node count falls to the right, so its legend sits top-right, away from the data.
+        self.trajectory = CurveView("Level", "Nodes", integer_x=True, markers=True, legend_offset=(-12, 12))
         self.bands = CurveView("Half-bandwidth (% of n)", "Nonzeros inside the band (%)", markers=True)
         self.convergence = CurveView("Trial", "Best score so far", integer_x=True, markers=True)
         self.pareto = ScatterView()
-        self.caption = QLabel()
+        self.caption = ElidedLabel()
         self.caption.setProperty("role", "caption")
         self.message = QLabel()
         self.message.setAlignment(Qt.AlignmentFlag.AlignCenter)

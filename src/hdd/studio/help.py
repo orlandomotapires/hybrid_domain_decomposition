@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import html
+import re
 from typing import Any
 
 from PySide6.QtCore import QSize, Qt
@@ -14,6 +15,21 @@ from hdd.services import wiki
 from .theme import Theme
 
 TOPIC_ROLE = Qt.ItemDataRole.UserRole + 1
+
+
+_SUB = str.maketrans("0123456789+-=()aehijklmnoprstuvx", "₀₁₂₃₄₅₆₇₈₉₊₋₌₍₎ₐₑₕᵢⱼₖₗₘₙₒₚᵣₛₜᵤᵥₓ")
+_SUP = str.maketrans("0123456789+-=()in", "⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻⁼⁽⁾ⁱⁿ")
+_SUB_CHARS, _SUP_CHARS = set("0123456789+-=()aehijklmnoprstuvx"), set("0123456789+-=()in")
+
+
+def pretty_formula(text: str) -> str:
+    """``P_{k-1}`` as ``Pₖ₋₁`` and ``x^{2}`` as ``x²`` where Unicode has the characters; anything else is kept."""
+    def replace(match: re.Match) -> str:
+        mark, body = match.group(1), match.group(2) or match.group(3)
+        table, allowed = (_SUB, _SUB_CHARS) if mark == "_" else (_SUP, _SUP_CHARS)
+        return body.translate(table) if set(body) <= allowed else match.group(0)
+
+    return re.sub(r"([_^])(?:\{([^{}]+)\}|([0-9a-z]))", replace, text)
 
 
 def render_topic(topic: dict[str, Any]) -> str:
@@ -38,7 +54,7 @@ def render_topic(topic: dict[str, Any]) -> str:
     if topic.get("formula"):
         parts.append(
             f"<table width='100%' cellpadding='8' style='background:{c.base_alt};border:1px solid {c.border};margin:6px 0'>"
-            f"<tr><td style='font-family:{mono}'>{e(topic['formula'])}</td></tr></table>"
+            f"<tr><td style='font-family:{mono}'>{e(pretty_formula(topic['formula']))}</td></tr></table>"
         )
     parts.append(section("Background", topic.get("scientificBackground")))
     parts.append(section("In this implementation", topic.get("implementationDetails")))

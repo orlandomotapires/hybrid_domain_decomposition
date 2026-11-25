@@ -120,8 +120,9 @@ class SettingsPanel(QWidget):
         box = QVBoxLayout(header)
         box.setContentsMargins(14, 8, 14, 9)
         box.setSpacing(1)
-        self.dirty = QLabel("Unsaved changes")
-        self.dirty.setProperty("role", "caption")
+        self.dirty = QLabel("● Unsaved changes")
+        self.dirty.setProperty("role", "dirty")
+        self.dirty.setToolTip("Save with Ctrl+S, or revert from the File menu")
         self.dirty.setVisible(False)
         title_row = QHBoxLayout()
         title_row.setSpacing(10)
@@ -730,8 +731,14 @@ class MainWindow(QMainWindow):
             topic_id = HELP_TOPIC_FOR_NODE.get(node.kind) if node else None
             if topic_id:
                 self.help.show_topic(topic_id)
+        first = not self.help_dock.isVisible() and not getattr(self, "_help_sized", False)
+        left = [self.project_dock.width(), self.settings_dock.width()]
         self.help_dock.show()
         self.help_dock.raise_()
+        if first:
+            # The panel takes its width from the plot area, not from the tree or the settings.
+            self._help_sized = True
+            self.resizeDocks([self.project_dock, self.settings_dock, self.help_dock], [*left, 420], Qt.Orientation.Horizontal)
 
     def compare_runs(self, result_dirs: list[str]) -> None:
         """Overlay the locality curves of up to five runs and list their KPIs side by side."""

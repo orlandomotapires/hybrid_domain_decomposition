@@ -56,3 +56,30 @@ def test_gallery_builds_in_both_themes(qtbot, theme):
     first = gallery.content
     theme.apply("dark")
     assert gallery.content is not first
+
+
+def test_double_spin_box_uses_separators_and_scientific_notation(qapp):
+    from hdd.studio.editors import DoubleSpinBox
+
+    box = DoubleSpinBox()
+    box.setDecimals(3)
+    box.setRange(0, 1e18)
+    assert box.textFromValue(1234.5) == "1,234.500"
+    assert box.textFromValue(1e15) == "1e15"
+    assert box.textFromValue(2.5e6) == "2.5e6"
+    assert box.valueFromText("1e18") == 1e18
+    assert box.valueFromText("1,234.5") == 1234.5
+
+
+def test_property_values_align_by_kind():
+    from hdd.studio.widgets.property_table import is_numeric
+
+    assert all(is_numeric(v) for v in ("1,800", "3.240", "20 of 20", "2 / 0", "—", "1e15", "-0.5"))
+    assert not any(is_numeric(v) for v in ("METIS (Classical)", "simulation_parameters.json", "Matrix Market, coordinate"))
+
+
+def test_formulas_use_unicode_sub_and_superscripts():
+    from hdd.studio.help import pretty_formula
+
+    assert pretty_formula("P_{k-1} + x^{2}") == "Pₖ₋₁ + x²"
+    assert pretty_formula("G_{coarse}") == "G_{coarse}"  # no subscript "c" in Unicode: left as written

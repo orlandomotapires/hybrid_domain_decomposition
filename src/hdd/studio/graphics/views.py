@@ -49,6 +49,7 @@ class ThemedPlot(pg.PlotWidget):
         font = theme.ui_font(small=True)
         for name in ("left", "bottom"):
             axis = self.getPlotItem().getAxis(name)
+            axis.enableAutoSIPrefix(False)  # no "(x0.001)" rescaling of axis labels
             axis.setTickFont(font)
             axis.label.setFont(font)
         self.redraw()
@@ -199,7 +200,10 @@ class CurveView(ThemedPlot):
 
     legend_offset = (12, 12)  # these curves rise to the right, so the legend sits top-left
 
-    def __init__(self, x_label: str, y_label: str, parent: QWidget | None = None, *, integer_x: bool = False, markers: bool = False) -> None:
+    def __init__(self, x_label: str, y_label: str, parent: QWidget | None = None, *, integer_x: bool = False, markers: bool = False,
+                 legend_offset: tuple[int, int] | None = None) -> None:
+        if legend_offset is not None:
+            self.legend_offset = legend_offset
         super().__init__(parent)
         self._markers = markers
         if integer_x:

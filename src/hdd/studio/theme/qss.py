@@ -203,6 +203,7 @@ QLabel[role="heading"] { font-size: ${heading_pt}pt; font-weight: 600; }
 QLabel[role="section"] { font-weight: 600; }
 QLabel[role="caption"] { color: $text_muted; font-size: ${small_pt}pt; }
 QLabel[role="error"] { color: $error; font-size: ${small_pt}pt; }
+QLabel[role="dirty"] { color: $warn; font-weight: 600; font-size: ${small_pt}pt; }
 QLabel[role="dock-title"] { color: $text_muted; font-weight: 600; font-size: ${small_pt}pt; }
 """
 )

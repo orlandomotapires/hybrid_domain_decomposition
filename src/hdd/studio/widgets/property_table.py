@@ -2,11 +2,22 @@
 
 from __future__ import annotations
 
+import re
+
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QBrush, QColor
 from PySide6.QtWidgets import QAbstractItemView, QHeaderView, QTableWidget, QTableWidgetItem, QWidget
 
 from ..theme import Theme
+
+
+_NUMBER = re.compile(r"[-+]?(\d[\d,]*)?\.?\d+(e[-+]?\d+)?", re.IGNORECASE)
+
+
+def is_numeric(value: str) -> bool:
+    """Numbers, ranges like "20 of 30" or "2 / 0", and the em dash align right; text aligns left."""
+    parts = [p.strip() for p in re.split(r"\s+of\s+|/", value.strip())]
+    return value.strip() == "—" or all(_NUMBER.fullmatch(p) for p in parts if p)
 
 
 class PropertyTable(QTableWidget):
@@ -45,7 +56,9 @@ class PropertyTable(QTableWidget):
         for index, (name, value, unit) in enumerate(rows):
             name_item = QTableWidgetItem(name)
             value_item = QTableWidgetItem(value)
-            value_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            value_item.setTextAlignment((Qt.AlignmentFlag.AlignRight if is_numeric(value) else Qt.AlignmentFlag.AlignLeft) | Qt.AlignmentFlag.AlignVCenter)
+            if len(value) > 24:
+                value_item.setToolTip(value)
             unit_item = QTableWidgetItem(unit)
             self.setItem(index, 0, name_item)
             self.setItem(index, 1, value_item)

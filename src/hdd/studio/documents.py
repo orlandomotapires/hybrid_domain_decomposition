@@ -19,6 +19,7 @@ class Issue:
     """A validation finding. ``key`` is the parameter it is about, when known."""
 
     def __init__(self, severity: str, message: str, key: str | None = None) -> None:
+        message = message.replace(">=", "≥").replace("<=", "≤")
         self.severity, self.message, self.key = severity, message, key
 
     def __repr__(self) -> str:  # pragma: no cover - debugging aid

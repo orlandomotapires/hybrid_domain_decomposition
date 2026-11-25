@@ -9,6 +9,7 @@ Simulation parameters are edited in ``sim_pages`` and the batch configuration in
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from functools import lru_cache
 from typing import Any, Callable
 
@@ -161,6 +162,25 @@ def tuning_labels() -> dict[str, dict[str, str]]:
         "samplers": {o["key"]: o["label"] for o in meta["samplers"]},
         "parameters": {p["key"]: p["label"] for p in meta["parameters"]},
     }
+
+
+def stamp(iso: str | None) -> str:
+    """``2026-11-04T23:27:57.292748`` as ``2026-11-04 23:27:57``."""
+    if not iso:
+        return "—"
+    try:
+        return datetime.fromisoformat(str(iso)).strftime("%Y-%m-%d %H:%M:%S")
+    except ValueError:
+        return str(iso)
+
+
+def duration(start: str | None, end: str | None) -> tuple[str, str]:
+    """(value, unit) of the time between two ISO timestamps."""
+    try:
+        seconds = (datetime.fromisoformat(str(end)) - datetime.fromisoformat(str(start))).total_seconds()
+    except (TypeError, ValueError):
+        return "—", ""
+    return (fmt(seconds / 60, 1), "min") if seconds >= 120 else (fmt(seconds, 0), "s")
 
 
 TRIAL_STATUS = {"ok": "OK", "infeasible": "Infeasible", "error": "Error", "pending": "Pending"}
@@ -456,8 +476,9 @@ def _build_batch_run(node: Node, data: dict, actions: PageActions) -> Page:
     if failed:
         page.add(InlineMessage("error", f"{len(failed)} of {len(rows)} cases failed."))
     page.section("Batch", PropertyTable([
-        ("Started", str(manifest.get("batch_started_at") or "—"), ""),
-        ("Finished", str(manifest.get("batch_finished_at") or "—"), ""),
+        ("Started", stamp(manifest.get("batch_started_at")), ""),
+        ("Finished", stamp(manifest.get("batch_finished_at")), ""),
+        ("Duration", *duration(manifest.get("batch_started_at"), manifest.get("batch_finished_at"))),
         ("Cases", fmt(len(rows)), ""),
         ("Completed", fmt(sum(1 for r in rows if r.get("status") == "completed")), ""),
     ]))
