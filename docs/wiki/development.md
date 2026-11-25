@@ -87,3 +87,11 @@ python docs/wiki/generate_parameter_reference.py
 ```
 
 `tests/test_wiki.py` fails when the reference is out of date or when a link in the README or the wiki points to a missing file.
+
+The repository's [GitHub Wiki](https://github.com/orlandomotapires/hybrid_domain_decomposition/wiki) is a published copy of these pages. After changing them, export and push:
+
+```sh
+git clone https://github.com/orlandomotapires/hybrid_domain_decomposition.wiki.git /tmp/hdd-wiki
+python docs/wiki/export_github_wiki.py /tmp/hdd-wiki
+cd /tmp/hdd-wiki && git add -A && git commit -m "Update from docs/wiki" && git push
+```
