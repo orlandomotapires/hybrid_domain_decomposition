@@ -1,6 +1,6 @@
 # Simulations (`simulations/`)
 
-A **simulation** is one configured pipeline run: which matrix to permute, its parameter presets, and its results. The Studio's **Single Run** tab shows one tab per simulation (`simulation_01`, `simulation_02`, …).
+A **simulation** is one configured pipeline run: which matrix to permute, its parameter presets, and its results. The desktop app lists each simulation (`simulation_01`, `simulation_02`, …) under **Simulations** in the project tree, with one page per pipeline stage.
 
 ## Layout
 
@@ -29,5 +29,5 @@ Each run also writes `run_inputs.json`, which records exactly which matrix file 
 
 ## Creating a Simulation
 
-- **Web Studio:** Click **New simulation** in the Single Run top bar. Leave the name empty for the next `simulation_NN`, pick a matrix, and optionally copy parameters from another simulation.
+- **Desktop app:** **File → New simulation…** (Ctrl+Shift+N). Leave the name empty for the next `simulation_NN`, pick a matrix, and optionally copy parameters from another simulation.
 - **CLI:** Copy an existing folder without its results (`mkdir -p simulations/simulation_04 && cp -r simulations/simulation_01/data simulations/simulation_04/`), set `input_matrix`, then run `./run.sh simulations/simulation_04`.

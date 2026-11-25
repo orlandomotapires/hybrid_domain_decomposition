@@ -1,6 +1,6 @@
 # Scientific Simulation Engine (`src/`)
 
-`src/` contains the pure mathematical and algorithmic implementation of the multilevel domain decomposition and sparse matrix permutation pipeline. Web-server code lives separately in [`../backend/`](../backend/README.md).
+`src/` contains the pure mathematical and algorithmic implementation of the multilevel domain decomposition and sparse matrix permutation pipeline (`libs/`), the application layer that the desktop app calls (`hdd/services/`), and the desktop app itself (`hdd/studio/`).
 
 ## Runtime Flow
 

@@ -16,8 +16,6 @@ METIS/
 ocean/
 
 *egg-info/
-frontend/node_modules/
-frontend/dist/
 
 # Parameter-selection subsystem (local state)
 /tuning/

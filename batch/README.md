@@ -24,5 +24,5 @@ From the repository root:
 ./run.sh --run_batch --nohup      # run in background
 ```
 
-You can also configure, launch, and analyze batch studies interactively in the **Batch Run** and **Results** tabs of the Web Studio (`./run.sh --ui`).
+You can also edit the configuration, launch the batch and analyze its runs in the desktop app (`./run.sh`): **Batch → Configuration** in the project tree, and **Batch → Runs** for the results.
 

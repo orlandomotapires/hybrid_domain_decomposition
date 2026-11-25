@@ -1,7 +1,7 @@
 """Cheap pre-checks that reject parameter sets before a full pipeline run.
 
-Mirrors ``frontend/src/lib/feasibility.ts`` (backend qubit/clique capacity) and dry-runs the
-real ``coarsen_chain`` so unreachable coarsening ranges are caught in milliseconds.
+Checks the partitioning backend's qubit/clique capacity and dry-runs the real
+``coarsen_chain``, so unreachable coarsening ranges are caught in milliseconds.
 """
 
 from __future__ import annotations

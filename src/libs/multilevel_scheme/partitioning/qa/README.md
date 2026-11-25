@@ -2,7 +2,7 @@
 
 This directory contains the backend-specific partitioning implementations used on the coarse graph.
 
-> In the Studio (`./run.sh --ui`), every strategy below can be selected in **Pipeline → Partitioning**, and installed SDKs and remote QPU access can be checked in the **Hardware** tab (D-Wave clique-capacity probe, QLM QPU inspector) before you submit a job. The Studio also warns when the coarse graph range is too large for the selected backend.
+> In the desktop app (`./run.sh`), every strategy below can be selected on a simulation's **Partitioning** page, and installed SDKs and remote QPU access can be checked under **Quantum hardware** (D-Wave clique-capacity probe, QLM QPU inspector) before you submit a job. The app also warns when the coarse graph range is too large for the selected backend.
 
 ## Supported Partitioning Strategies
 

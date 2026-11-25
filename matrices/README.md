@@ -24,7 +24,7 @@ The `.mtx` files are gitignored because they can be large. After cloning, copy t
 
 ## Adding a Matrix
 
-- **Web Studio:** In **Single Run → Stage 1 Input Matrix**, click **Upload .mtx** (name it and choose the file), or a **Demo matrix** button to generate a synthetic test matrix. It is added here and selected for the current simulation.
+- **Desktop app:** **File → Import matrix…** copies a `.mtx` file into the library; **File → Generate demo matrix…** adds a synthetic test matrix. Pick it for a simulation in the simulation's **Input matrix** page.
 - **By hand:** Create `matrices/<matrix_id>/`, copy the `.mtx` file into it, and write `matrix.json` as above. `<matrix_id>` may contain letters, digits, `_` and `-`.
 
 If the matrix comes in fixed-size row blocks that must stay together (e.g. 3 DOFs per mesh node in 3D FEM), set the simulation's **Block size** (`dof_per_node`) to that size; otherwise leave it at 1.
