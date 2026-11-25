@@ -1,37 +1,5 @@
-# Scientific Simulation Engine (`src/`)
+# Source code (`src/`)
 
-`src/` contains the pure mathematical and algorithmic implementation of the multilevel domain decomposition and sparse matrix permutation pipeline (`libs/`), the application layer that the desktop app calls (`hdd/services/`), and the desktop app itself (`hdd/studio/`).
+`libs/` is the scientific pipeline, `hdd/services/` the application layer and `hdd/studio/` the desktop app.
 
-## Runtime Flow
-
-1. **[main.py](main.py)** parses the target simulation directory (e.g. `simulations/simulation_01`); its matrix is read from the shared library in `matrices/`.
-2. **[libs/runtime/runtime.py](libs/runtime/runtime.py)** loads `data/simulation_config.json` and the active parameter preset JSON, validates all inputs, and resolves `.mtx` paths.
-3. **[libs/domain_decomposition.py](libs/domain_decomposition.py)** executes the 5-stage pipeline:
-   - **Stage 1 — Graph Construction:** Turns the input matrix $A$ into a weighted undirected graph $G_0 = (V_0, E_0, c, w)$, one vertex per row or per $(d \times d)$ diagonal block (`dof_per_node`, default 1).
-   - **Stage 2 — Coarsening:** Contracts $G_0 \to G_1 \to \dots \to G_L$ using Heavy-Edge Matching (`random`, `heavy_edge`, `modified`, `light_edge`) until the vertex count reaches `[coarsen_inferior_limit, coarsen_superior_limit]`.
-   - **Stage 3 — Coarse Partitioning:** Partitions the coarse graph $G_L$ into $k$ subdomains using classical METIS (`metis_partitioning`), recursive QUBO Quantum Annealing (`quantum_annealing`), or recursive Ising QAOA (`quantum_approximation_optimizer`).
-   - **Stage 4 — Uncoarsening & Refinement:** Projects the partition back level-by-level to $G_0$, applying multi-way Kernighan–Lin boundary refinement (`cut` or `cut_balance`) at every level.
-   - **Stage 5 — Matrix Permutation & Profiling:** Builds the row permutation vector $P$, computes $A' = P A P^\top$, and evaluates structural bandwidth and diagonal locality metrics.
-4. **[libs/runtime/runtime.py](libs/runtime/runtime.py)** writes the enabled artifacts (`save_output`) to `simulations/<name>/results/run_<timestamp>/`. `decomposition_metrics.json` (edge cut, imbalance, coarse-graph size, levels, per-stage wall time) is always written and also embedded in `run_metrics.json`; the run is appended to the tuning history.
-
-## Core Modules
-
-- **[main.py](main.py)** — CLI entry point.
-- **[libs/domain_decomposition.py](libs/domain_decomposition.py)** — End-to-end multilevel graph partitioning and matrix permutation orchestrator.
-- **[libs/permutation.py](libs/permutation.py)** — Applies node-level partition orderings to DOF-level sparse matrices $K$ and $M$.
-- **[libs/profiling/matrix_metrics.py](libs/profiling/matrix_metrics.py)** — Computes bandwidth, average bandwidth, $nB^2$ figure-of-merit, and near-diagonal band concentration curves.
-- **[libs/runtime/runtime.py](libs/runtime/runtime.py)** — File I/O, run directory creation, and artifact export.
-- **[libs/runtime/utils.py](libs/runtime/utils.py)** — Schema validation (`validate_and_normalize_simulation_config`, `validate_and_normalize_simulation_parameters`) and Matrix Market helpers.
-- **[libs/runtime/log.py](libs/runtime/log.py)** — Timestamped `[<time> <LEVEL>]` logger (`INFO`, `VERBOSE`, `WARNING`, `ERROR`).
-- **[libs/multilevel_scheme/coarsening/](libs/multilevel_scheme/coarsening/)** — Heavy-Edge Matching coarsening strategies.
-- **[libs/multilevel_scheme/partitioning/](libs/multilevel_scheme/partitioning/)** — Classical METIS, Quantum Annealing (`qa/`), and QAOA (`qaoa/`) solvers (see [qa/README.md](libs/multilevel_scheme/partitioning/qa/README.md)).
-- **[libs/multilevel_scheme/uncoarsening/](libs/multilevel_scheme/uncoarsening/)** — Multilevel projection and Kernighan–Lin boundary refinement.
-- **[libs/tuning/](libs/tuning/__init__.py)** — Parameter selection subsystem:
-  - `features.py` — matrix/graph features (cached in `matrices/<id>/features.json`);
-  - `feasibility.py` — backend capacity limits and a coarsening dry-run that rejects unreachable ranges;
-  - `objectives.py` — objective metrics (edge cut, imbalance, band quality, bandwidth, time) and weighted scores;
-  - `search_space.py` — declarative fixed/free search space (coarsening expressed as a coarse-graph target size);
-  - `auto_select.py` — Mode A: rules + guided dry-run;
-  - `tuner.py` — Mode B: Optuna ask/tell studies, warm starts, Pareto knee, suggest-next / report;
-  - `history.py` — global run history and nearest-matrix lookup;
-  - `cli.py` — `./run.sh --tune`.
+See the wiki: [How it works](../docs/wiki/how-it-works.md), [Development](../docs/wiki/development.md).

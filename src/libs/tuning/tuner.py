@@ -25,9 +25,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from libs.runtime import events
-
-from libs.runtime import workspace
+from libs.runtime import events, workspace
 from libs.runtime.matrix_library import resolve_matrix
 from libs.runtime.utils import load_mtx, validate_and_normalize_simulation_parameters
 from libs.tuning import history as history_mod
