@@ -41,9 +41,15 @@ class Node:
         return self.data.get("simulation")
 
 
+# (icon, tint) of a run in the tree, by outcome.
+_RUN_ICON = {"completed": ("ok", "ok"), "failed": ("error", "error"), "incomplete": ("result", "default")}
+
+
 def run_label(run: dict[str, Any]) -> str:
     stamp = run["run_id"].removeprefix("run_")
     pretty = f"{stamp[0:4]}-{stamp[4:6]}-{stamp[6:8]} {stamp[9:11]}:{stamp[11:13]}:{stamp[13:15]}" if len(stamp) >= 15 else run["run_id"]
+    if run.get("status") == "failed":
+        return f"{pretty} · failed"
     strategy = run.get("partitioning_strategy")
     if not strategy or strategy == "unknown":
         return f"{pretty} · incomplete"
@@ -73,8 +79,8 @@ def build_nodes(snap: ProjectSnapshot) -> list[Node]:
             for s in snap.studies.get(sid, [])
         ])
         runs = Node("results", "Results", "results", f"results:{sid}", dict(base), children=[
-            Node("run", run_label(r), "ok" if r.get("kpi_summary") else "result", f"run:{r['result_dir']}",
-                 {**base, "result_dir": r["result_dir"], "run": r["run_id"]}, "ok" if r.get("kpi_summary") else "default")
+            Node("run", run_label(r), _RUN_ICON.get(r.get("status"), ("result", "default"))[0], f"run:{r['result_dir']}",
+                 {**base, "result_dir": r["result_dir"], "run": r["run_id"]}, _RUN_ICON.get(r.get("status"), ("result", "default"))[1])
             for r in snap.runs.get(sid, [])
         ])
         node.children += [presets, tuning, runs]

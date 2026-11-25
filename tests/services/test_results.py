@@ -44,6 +44,7 @@ class ResultsServiceTest(unittest.TestCase):
         self.assertEqual("metis_partitioning", run["partitioning_strategy"])
         self.assertTrue(run["can_render_plots"])
         self.assertEqual(600, run["kpi_summary"]["n"])
+        self.assertEqual(("completed", None), (run["status"], run["error"]))
         with self.assertRaises(NotFound):
             results.list_runs("missing")
         with self.assertRaises(InvalidInput):
@@ -103,6 +104,32 @@ class ResultsServiceTest(unittest.TestCase):
         )
         out = subprocess.run([sys.executable, "-c", code], env={**os.environ, "PYTHONPATH": "src"}, capture_output=True, text=True, check=True)
         self.assertEqual("False", out.stdout.strip())
+
+
+class RunOutcomeTest(unittest.TestCase):
+    def outcome(self, log: str | None, metrics: bool = False):
+        with TemporaryDirectory() as tmp:
+            rdir = Path(tmp) / "run_x"
+            rdir.mkdir()
+            if log is not None:
+                (rdir / "run_log").write_text(log)
+            return results.run_outcome(rdir, metrics)
+
+    def test_metrics_mean_completed(self) -> None:
+        self.assertEqual(("completed", None), self.outcome(None, metrics=True))
+
+    def test_the_first_logged_error_explains_a_failure(self) -> None:
+        log = ("[25 Nov 2026 00:06:37 -03 INFO]  Coarsening Heavy Edge Matching\n"
+               "[25 Nov 2026 00:06:37 -03 ERROR]  Simulation failed: Unable to coarsen graph into [1500, 2500].\n"
+               "[25 Nov 2026 00:06:37 -03 ERROR]  Traceback (most recent call last):\n")
+        self.assertEqual(("failed", "Unable to coarsen graph into [1500, 2500]."), self.outcome(log))
+
+    def test_a_finished_run_without_metrics_is_completed(self) -> None:
+        self.assertEqual("completed", self.outcome("[10:00:00 VERBOSE] Results saved in simulations/a/results/run_x\n")[0])
+
+    def test_no_log_and_no_metrics_is_incomplete(self) -> None:
+        self.assertEqual(("incomplete", None), self.outcome(None))
+        self.assertEqual(("incomplete", None), self.outcome("[10:00:00 INFO] Converting matrix to graph\n"))
 
 
 class BatchAnalysisTest(unittest.TestCase):

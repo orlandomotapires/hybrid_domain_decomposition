@@ -14,7 +14,7 @@ from hdd.services.catalog import method_label
 from hdd.services.matrix_files import inspect_matrix
 
 from .documents import SimulationDocument, bind
-from .editors import CoarseningPreview, EstimateNote, IssueList, MatrixPicker, OutputsEditor, ParameterForm, StrategyForm
+from .editors import CoarseningPreview, EstimateNote, IssueList, MatrixPicker, OutputsEditor, ParameterForm, ReachabilityNote, StrategyForm
 from .pages import Page, _buttons, _matrix_rows
 from .theme import Theme
 from .tree import Node
@@ -94,7 +94,7 @@ def build_simulation(node: Node, data: dict, a: SimulationActions) -> Page:
     bind(page, doc.changed, lambda _k: refresh_summary())
     refresh_summary()
     page.section("Summary", summary)
-    page.section("Checks", IssueList(doc, ok_text="Parameters are valid."), EstimateNote(doc))
+    page.section("Checks", IssueList(doc, ok_text="Parameters are valid."), ReachabilityNote(doc, a.run_task), EstimateNote(doc))
 
     save = _button("Save", lambda: a.save(sid), icon="save")
     revert = _button("Revert", lambda: a.revert(sid), icon="undo")

@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from typing import Any, Callable
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QComboBox, QHBoxLayout, QLabel, QLineEdit, QPushButton, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QComboBox, QHBoxLayout, QLabel, QLineEdit, QPlainTextEdit, QPushButton, QVBoxLayout, QWidget
 
 from hdd.services import batch, hardware, matrices, results, simulations, tuning
 from hdd.services.catalog import method_label
@@ -378,8 +378,13 @@ def _build_run(node: Node, data: dict, actions: PageActions) -> Page:
     page = Page()
     kpi = data.get("kpi_summary")
     check = (kpi or {}).get("permutation_check") or {}
-    if kpi is None:
-        page.add(InlineMessage("warning", "This run has no metrics. It may have failed, or run metrics were not saved."))
+    failed = data.get("status") == "failed"
+    if failed:
+        page.add(InlineMessage("error", f"The run failed: {data.get('error')}"))
+    elif kpi is None and data.get("status") == "completed":
+        page.add(InlineMessage("info", "This run finished but did not save its metrics (see Outputs)."))
+    elif kpi is None:
+        page.add(InlineMessage("warning", "This run did not finish: it has neither metrics nor an error in its log."))
     elif check and not all(bool(v) for v in check.values() if isinstance(v, bool)):
         page.add(InlineMessage("error", "The permutation check failed for this run."))
     params = data.get("run_parameters") or {}
@@ -396,6 +401,14 @@ def _build_run(node: Node, data: dict, actions: PageActions) -> Page:
         _button("Open folder", lambda: actions.open_path(data["result_dir"]), icon="folder"),
         _button("Export bundle…", lambda: actions.export_run(data["result_dir"]), icon="export"),
     ))
+    if data.get("run_log"):
+        log = QPlainTextEdit(data["run_log"])
+        log.setReadOnly(True)
+        log.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
+        log.setFont(Theme.instance().mono_font())
+        log.setMinimumHeight(260)
+        log.moveCursor(log.textCursor().MoveOperation.End)
+        page.section("Log", log, expanded=failed)
     return page
 
 

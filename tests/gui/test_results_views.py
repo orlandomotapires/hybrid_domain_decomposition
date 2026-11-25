@@ -82,3 +82,27 @@ def test_batch_analysis_shows_methods_per_scale(qtbot, window):
     labels = [s.label for s in window.graphics.bands.series()]
     assert labels == ["METIS", "QA Emulated", "Original"]
     assert window.graphics.bands.series()[0].values[-1] == pytest.approx(4.0)
+
+
+def test_a_failed_run_shows_its_error_and_log(qtbot, window, populated):
+    from PySide6.QtWidgets import QPlainTextEdit
+
+    from hdd.studio.widgets import InlineMessage
+
+    root, _runs = populated
+    failed = root / "simulations/sim_a/results/run_20990101_000000_000000"
+    failed.mkdir(parents=True)
+    (failed / "run_log").write_text("[01 Jan 2099 00:00:00 -03 ERROR]  Simulation failed: Unable to coarsen graph.\n")
+    try:
+        window.reload()
+        qtbot.waitUntil(lambda: window.select_key("run:simulations/sim_a/results/run_20990101_000000_000000") is None
+                        and window.settings_panel.title.text().endswith("failed"), timeout=10000)
+        qtbot.waitUntil(lambda: bool(window.settings_panel.page().findChildren(QPlainTextEdit)), timeout=10000)
+        page = window.settings_panel.page()
+        messages = [m for m in page.findChildren(InlineMessage) if m.severity() == "error"]
+        assert any("Unable to coarsen graph." in label.text() for m in messages for label in m.findChildren(type(window.status_job)))
+        assert "Unable to coarsen graph." in page.findChildren(QPlainTextEdit)[0].toPlainText()
+    finally:
+        import shutil
+
+        shutil.rmtree(failed)

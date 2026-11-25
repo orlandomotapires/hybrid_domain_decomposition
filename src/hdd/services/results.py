@@ -126,6 +126,34 @@ def scan_runs(results_dir: Path) -> list[Path]:
     return sorted((d for d in results_dir.iterdir() if d.is_dir() and d.name.startswith("run_")), key=lambda p: p.name, reverse=True)
 
 
+_FAILURE_PREFIXES = ("Simulation failed: ",)
+
+
+def run_outcome(rdir: Path, has_metrics: bool) -> tuple[str, str | None]:
+    """``("completed" | "failed" | "incomplete", error)`` of a run folder, read from its metrics and log.
+
+    ``error`` is the first error the run logged, without the generic "Simulation failed:" prefix.
+    """
+    if has_metrics:
+        return "completed", None
+    log_path = rdir / "run_log"
+    if not log_path.exists():
+        return "incomplete", None
+    from hdd.services.jobs.parsing import parse_log_line
+
+    finished = False
+    for raw in log_path.read_text(encoding="utf-8", errors="ignore").splitlines():
+        entry = parse_log_line(raw)
+        if entry["level"] == "ERROR":
+            message = entry["message"].strip()
+            for prefix in _FAILURE_PREFIXES:
+                message = message.removeprefix(prefix)
+            return "failed", message or "The run failed."
+        if "Results saved in" in entry["message"] or "Completed Successfully" in entry["message"]:
+            finished = True
+    return ("completed" if finished else "incomplete"), None
+
+
 def list_runs(simulation_id: str) -> dict[str, Any]:
     simulation_id = _safe_id(simulation_id, "simulation id")
     sim_dir = workspace.simulations_dir() / simulation_id
@@ -142,6 +170,7 @@ def list_runs(simulation_id: str) -> dict[str, Any]:
             kpi = extract_kpi_summary(metrics) if metrics else None
         except Exception:
             kpi = None
+        status, error = run_outcome(rdir, bool(metrics))
         runs.append(
             {
                 "run_id": rdir.name,
@@ -153,6 +182,8 @@ def list_runs(simulation_id: str) -> dict[str, Any]:
                 "coarsening_strategy": cp.get("strategy"),
                 "coarsen_limits": [cp.get("coarsen_inferior_limit"), cp.get("coarsen_superior_limit")],
                 "kpi_summary": kpi,
+                "status": status,
+                "error": error,
                 "can_render_plots": partition_plots.can_plot(rdir),
             }
         )
@@ -164,9 +195,12 @@ def get_run_detail(result_dir: str) -> dict[str, Any]:
     run_metrics = _read_json(rdir / "run_metrics.json")
     metrics_txt = rdir / "run_metrics.txt"
     log_path = rdir / "run_log"
+    status, error = run_outcome(rdir, bool(run_metrics))
     return {
         "result_dir": result_dir,
         "run_id": rdir.name,
+        "status": status,
+        "error": error,
         "run_parameters": _read_json(rdir / "run_simulation_parameters.json") or {},
         "kpi_summary": extract_kpi_summary(run_metrics) if run_metrics else None,
         "curves": extract_curve_series(run_metrics) if run_metrics else [],

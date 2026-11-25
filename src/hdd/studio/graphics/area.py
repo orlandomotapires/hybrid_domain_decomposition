@@ -193,7 +193,10 @@ class GraphicsArea(QWidget):
         if detail.get("curves"):
             tabs.append("Locality curve")
         if not tabs:
-            self.clear("This run saved no plottable outputs. Enable the matrix, permutation and graph outputs to see plots.")
+            if detail.get("status") == "failed":
+                self.clear("The run failed before writing results. Its error is shown in the settings panel.")
+            else:
+                self.clear("This run saved no plottable outputs. Enable the matrix, permutation and graph outputs to see plots.")
             return
         self._set_tabs(tabs)
         self.fit_button.setVisible(True)

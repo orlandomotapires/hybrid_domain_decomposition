@@ -419,6 +419,7 @@ class CoarseningPreview(QWidget):
         if self.doc.errors():
             self._set_status("warning", "Fix the parameter errors to preview the coarsening.")
             self.table.set_rows([])
+            self.table.setVisible(False)
             self._on_levels(None)
             return
         params = dict(self.doc.params)
@@ -437,4 +438,53 @@ class CoarseningPreview(QWidget):
             [lv["level"], lv["nodes"], lv["edges"], fmt(lv["reduction_ratio"], 2) if lv["level"] else "—", "Yes" if lv["accepted"] else "No"]
             for lv in preview["levels"]
         ])
+        self.table.setVisible(True)
         self._on_levels(preview)
+
+
+def reachability_text(preview: dict[str, Any], params: dict[str, Any]) -> tuple[str, str]:
+    """(severity, sentence) saying whether the coarsening reaches its target range."""
+    cp = params.get("coarsening_parameters") or {}
+    low, high = cp.get("coarsen_inferior_limit"), cp.get("coarsen_superior_limit")
+    target = f"{low:,}–{high:,}" if isinstance(low, int) and isinstance(high, int) else f"at least {low:,}" if isinstance(low, int) else "the target"
+    if preview["reachable"]:
+        levels = preview["accepted_levels_count"] - 1
+        return "ok", f"Coarsening reaches {preview['final_coarse_nodes']:,} nodes in {levels} level{'s' if levels != 1 else ''} (target {target})."
+    return "error", (f"Runs will fail: the coarsening cannot reach {target} nodes. {preview['stop_reason']} "
+                     "Change the limits on the Coarsening page.")
+
+
+class ReachabilityNote(QWidget):
+    """Whether the saved or edited coarsening limits are reachable on the simulation's matrix."""
+
+    def __init__(self, doc: SimulationDocument, run_task: Callable) -> None:
+        super().__init__()
+        self.doc = doc
+        self._run_task = run_task
+        self._layout = QVBoxLayout(self)
+        self._layout.setContentsMargins(0, 0, 0, 0)
+        self._timer = QTimer(self)
+        self._timer.setSingleShot(True)
+        self._timer.setInterval(500)
+        self._timer.timeout.connect(self.run)
+        bind(self, doc.changed, lambda key: self._timer.start() if key == "" or key.startswith(
+            ("coarsening_parameters", "general_parameters", "partitioning_parameters.common", "config.input_matrix")) else None)
+        self.run()
+
+    def _show(self, severity: str | None, text: str = "") -> None:
+        while self._layout.count():
+            item = self._layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+        if severity:
+            self._layout.addWidget(InlineMessage(severity, text))
+
+    def run(self) -> None:
+        if self.doc.errors():
+            self._show(None)
+            return
+        params = dict(self.doc.params)
+        sim = self.doc.simulation_id
+        self._run_task(lambda: simulations.preview_coarsening(sim, params),
+                       lambda preview: self._show(*reachability_text(preview, params)),
+                       lambda exc: self._show("warning", f"The coarsening could not be checked: {exc}"), self)

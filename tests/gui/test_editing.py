@@ -276,3 +276,20 @@ def test_quitting_with_unsaved_changes_asks(qtbot, window, monkeypatch):
     window.close()
     assert window.isVisible()
     monkeypatch.undo()
+
+
+def test_simulation_page_warns_when_the_coarsening_cannot_reach_its_range(qtbot, window):
+    from hdd.studio.widgets import InlineMessage
+
+    window.select_key("simulation:sim_a")
+    qtbot.waitUntil(lambda: "sim_a" in window.docs and window.settings_panel.title.text() == "sim_a", timeout=10000)
+
+    def texts():
+        page = window.settings_panel.page()
+        return " ".join(label.text() for m in page.findChildren(InlineMessage) for label in m.findChildren(type(window.status_job)))
+
+    qtbot.waitUntil(lambda: "Coarsening reaches" in texts(), timeout=10000)
+    doc = window.docs["sim_a"]
+    doc.set_value(UPPER, 6000)
+    doc.set_value(LOWER, 5000)
+    qtbot.waitUntil(lambda: "Runs will fail" in texts(), timeout=10000)
