@@ -8,7 +8,7 @@ The coarse graph can be partitioned by three methods. Quantum methods split it b
 | Quantum annealing | Simulated annealing (`dwave-neal`) | D-Wave QPU through Leap |
 | QAOA | PennyLane | QLM QPU through QLMaaS (myQLM) |
 
-Choose the method and backend on a simulation's **Partitioning** page, or in its preset (`partitioning_parameters.partitioning_strategy` and the method's `simulated` flag). The coarse graph must fit the hardware: one qubit per coarse node for QAOA, a clique embedding for D-Wave. The app warns when the coarsening range is too large for the chosen backend, and a run on a local backend stops right after coarsening, with the reason, when the coarse graph is too large: 18 nodes for emulated QAOA and 3000 for simulated annealing (see `HDD_SIMULATED_QA_NODE_LIMIT` in [Command line](command-line.md#environment-variables)).
+Choose the method and backend on a simulation's **Partitioning** page, or in its preset (`partitioning_parameters.partitioning_strategy` and the method's `simulated` flag). The coarse graph must fit the hardware: one qubit per coarse node for QAOA, a clique embedding for D-Wave. The app warns when the coarsening range is too large for the chosen backend, and a run on a local backend stops right after coarsening, with the reason, when the coarse graph is too large: 18 nodes for emulated QAOA and 3000 for simulated annealing (see `HDD_SIMULATED_QA_NODE_LIMIT` in [Command line](command-line.md#environment-variables)). On hardware, a dropped connection while sampling on D-Wave or while waiting for a QLM result is retried up to three times (after 5 s and 30 s), and each retry is logged; job submissions to QLM are not retried, so a job is never sent twice.
 
 ## Check access
 

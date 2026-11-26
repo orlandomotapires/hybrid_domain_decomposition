@@ -166,7 +166,6 @@ def decompose_matrix(matrix, general_parameters, coarsening_parameters, partitio
         qpu_solver_name = strategy_partitioning_parameters.get("qpu_solver_name")
         qpu_region = strategy_partitioning_parameters.get("qpu_region")
         qpu_problem_label = strategy_partitioning_parameters.get("qpu_problem_label")
-        dense_qpu_too_large = False
 
         if simulated:
             log("INFO", "Running simulated quantum annealing for bipartitioning")
@@ -179,29 +178,29 @@ def decompose_matrix(matrix, general_parameters, coarsening_parameters, partitio
                 coarse_size = Gc.number_of_nodes()
                 log("VERBOSE", f"Solver {solver_name} largest dense QUBO clique capacity: {clique_capacity}")
                 log("VERBOSE", f"Current coarse dense QUBO size: {coarse_size}")
-                dense_qpu_too_large = coarse_size > clique_capacity
-                if dense_qpu_too_large:
-                    log(
-                        "WARNING",
-                        f"Coarse dense QUBO size {coarse_size} exceeds solver capacity {clique_capacity}; Leap submission will be skipped",
+                if coarse_size > clique_capacity:
+                    # Stop before any Leap submission: the dense QUBO cannot be embedded.
+                    raise ValueError(
+                        f"The coarse graph has {coarse_size} nodes, but solver {solver_name} can embed a dense "
+                        f"QUBO of at most {clique_capacity}. Coarsen further (lower coarsen_superior_limit) "
+                        "or set simulated=True. Nothing was submitted to Leap."
                     )
 
-            if not dense_qpu_too_large:
-                bipartitions_per_start = max(1, int(effective_k_target) - 1)
-                expected_submissions = max(1, num_starts) * bipartitions_per_start
-                expected_reads = expected_submissions * max(1, num_reads)
+            bipartitions_per_start = max(1, int(effective_k_target) - 1)
+            expected_submissions = max(1, num_starts) * bipartitions_per_start
+            expected_reads = expected_submissions * max(1, num_reads)
+            log(
+                "VERBOSE",
+                "Expected QPU problem submissions: "
+                f"{expected_submissions} (num_starts={num_starts} * bipartitions_per_start={bipartitions_per_start}); "
+                f"num_reads per submission: {num_reads}; total QPU reads: {expected_reads}",
+            )
+            if expected_submissions > 50:
                 log(
-                    "VERBOSE",
-                    "Expected QPU problem submissions: "
-                    f"{expected_submissions} (num_starts={num_starts} * bipartitions_per_start={bipartitions_per_start}); "
-                    f"num_reads per submission: {num_reads}; total QPU reads: {expected_reads}",
+                    "WARNING",
+                    "This run will submit many QPU problems. Dropped connections are retried, but "
+                    "reduce num_starts/num_reads or set simulated=True for a local run if Leap keeps failing.",
                 )
-                if expected_submissions > 50:
-                    log(
-                        "WARNING",
-                        "This run will submit many QPU problems. If Leap resets the connection, "
-                        "reduce num_starts/num_reads or set simulated=True for a local run.",
-                    )
 
         part_k_coarse = recursive_kway_anneal(
             Gc,
