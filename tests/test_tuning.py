@@ -79,7 +79,8 @@ class ObjectivesAndMetricsTest(unittest.TestCase):
         self.assertEqual(4, m["effective_k"])
         self.assertGreater(m["edge_cut"], 0)
         self.assertTrue(0 < m["edge_cut_fraction"] < 1)
-        self.assertGreaterEqual(m["imbalance"], 0)
+        # 10% tolerance (see _params); one node of slack for granularity.
+        self.assertLessEqual(m["imbalance"], 0.10 + 1 / 150)
         self.assertEqual(600, sum(m["part_sizes"]))
         self.assertIn("coarsening", m["timing"]["stage_durations_sec"])
 
