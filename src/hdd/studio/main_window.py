@@ -55,6 +55,14 @@ HELP_TOPIC_FOR_NODE = {
 THEME_LABELS = {"system": "Follow system", "light": "Light", "dark": "Dark"}
 
 
+def _short_path(path: Path) -> str:
+    """``path`` with the home folder written as ``~``."""
+    try:
+        return "~/" + Path(path).relative_to(Path.home()).as_posix()
+    except ValueError:
+        return str(path)
+
+
 class DockTitleBar(QWidget):
     """Flat title bar for a dock: name on the left, float and close on the right."""
 
@@ -435,7 +443,8 @@ class MainWindow(QMainWindow):
             self.status_percent.setVisible(running and show_job)
         count = len(self.ctx.jobs.running_jobs())
         self.status_running.setText(f"{count} job running" if count == 1 else f"{count} jobs running")
-        self.status_workspace.setText(str(self.ctx.root))
+        self.status_workspace.setText(_short_path(self.ctx.root))
+        self.status_workspace.setToolTip(str(self.ctx.root))
         self.act_stop.setEnabled(running)
 
     # ---------------------------------------------------------------- project
