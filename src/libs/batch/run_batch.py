@@ -402,8 +402,14 @@ def _finalize_async_case(
     entry["pid"] = None
     output_path: Path = active_async["output_path"]
 
+    payload: dict[str, Any] | None = None
     if output_path.exists():
-        payload = _load_json(output_path)
+        try:
+            payload = _load_json(output_path)
+        except (OSError, ValueError) as exc:
+            payload = {"status": "failed", "error": {"type": type(exc).__name__,
+                                                     "message": f"Unreadable worker output: {exc}", "traceback": None}}
+    if payload is not None:
         if payload.get("status") == "completed":
             entry["status"] = "completed"
             entry["result_dir"] = payload.get("result_dir")
@@ -520,8 +526,11 @@ def _build_batch_summary(manifest: dict[str, Any]) -> list[dict[str, Any]]:
         if isinstance(result_dir, str) and result_dir:
             metrics_path = workspace.root() / result_dir / "run_metrics.json"
             if metrics_path.exists():
-                run_metrics = _load_json(metrics_path)
-                row.update(_extract_summary_metrics(run_metrics))
+                try:  # one unreadable file must not cost the summary of every other case
+                    row.update(_extract_summary_metrics(_load_json(metrics_path)))
+                except (OSError, ValueError, TypeError, KeyError) as exc:
+                    row["error_type"] = row["error_type"] or type(exc).__name__
+                    row["error_message"] = row["error_message"] or f"Unreadable {metrics_path.name}: {exc}"
 
         summary_rows.append(row)
 
@@ -554,7 +563,41 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
+_CURRENT_BATCH: dict[str, Any] = {}
+_UNFINISHED = ("pending", "running", "running_async")
+
+
 def main(argv: list[str] | None = None) -> int:
+    try:
+        return _main(argv)
+    except BaseException as exc:  # cancelled (SIGTERM -> SystemExit), Ctrl+C or a crash
+        _close_interrupted_batch(exc)
+        raise
+    finally:
+        _CURRENT_BATCH.clear()
+
+
+def _close_interrupted_batch(exc: BaseException) -> None:
+    """Mark the cases that did not finish and write the summary, so the batch folder is consistent."""
+    if not _CURRENT_BATCH:
+        return
+    manifest = _CURRENT_BATCH["manifest"]
+    reason = "cancelled" if isinstance(exc, (SystemExit, KeyboardInterrupt)) else "failed"
+    now = datetime.now().isoformat()
+    for entry in manifest.get("cases", []):
+        if entry.get("status") in _UNFINISHED:
+            entry["status"] = reason
+            entry["finished_at"] = now
+            entry["pid"] = None
+    manifest["interrupted"] = reason
+    try:
+        _finalize_batch(_CURRENT_BATCH["batch_dir"], _CURRENT_BATCH["manifest_path"], manifest)
+        print(f"Batch {reason}: unfinished cases marked in {_CURRENT_BATCH['manifest_path'].name}")
+    except Exception as finalize_error:  # never hide the original reason
+        print(f"Could not finalize the interrupted batch: {finalize_error}")
+
+
+def _main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     cases = build_cases()
 
@@ -583,6 +626,8 @@ def main(argv: list[str] | None = None) -> int:
         "log_file": str((batch_dir / "batch.log").relative_to(workspace.root())),
         "cases": [],
     }
+    # Seen by main() if the batch is interrupted (cancelled), to close the manifest properly.
+    _CURRENT_BATCH.update(batch_dir=batch_dir, manifest_path=manifest_path, manifest=manifest)
     active_async: dict[str, Any] | None = None
     deferred_async_records: list[dict[str, Any]] = []
     stop_requested = False
@@ -689,6 +734,7 @@ def main(argv: list[str] | None = None) -> int:
         if stop_requested and active_async is None:
             break
 
+    _CURRENT_BATCH.clear()
     _finalize_batch(batch_dir, manifest_path, manifest)
     print(f"Batch manifest: {manifest_path.relative_to(workspace.root())}")
     print(f"Batch summary: {(batch_dir / 'batch_summary.json').relative_to(workspace.root())}")

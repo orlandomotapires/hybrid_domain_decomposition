@@ -35,5 +35,34 @@ class SafeLaunchTest(unittest.TestCase):
         self.assertIn("simulation_dir", out.stdout)
 
 
+class TerminationTest(unittest.TestCase):
+    def test_sigterm_unwinds_and_reports_the_exit_code(self) -> None:
+        import os
+        import signal
+        from unittest.mock import patch
+
+        from libs.runtime import job_entry
+
+        cleaned, emitted = [], []
+
+        def run(args):
+            try:
+                os.kill(os.getpid(), signal.SIGTERM)
+                return 0
+            finally:
+                cleaned.append(True)  # finally blocks run, so the batch can close its manifest
+
+        previous = signal.getsignal(signal.SIGTERM)
+        try:
+            with patch.object(job_entry, "_run", run), \
+                    patch.object(job_entry.events, "emit", lambda kind, **data: emitted.append((kind, data))):
+                code = job_entry.main(["single", "simulations/x"])
+        finally:
+            signal.signal(signal.SIGTERM, previous)
+        self.assertEqual(143, code)
+        self.assertEqual([True], cleaned)
+        self.assertIn(("exit", {"code": 143}), emitted)
+
+
 if __name__ == "__main__":
     unittest.main()
