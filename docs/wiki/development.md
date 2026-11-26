@@ -76,7 +76,7 @@ pip install -e ".[gui,dev]"
 QT_QPA_PLATFORM=offscreen python -m pytest
 ```
 
-`pyproject.toml` puts `src/` and the repository root on the path. `tests/gui/` drives the real window headless with pytest-qt; `tests/jobs/` runs jobs with scripted fake processes plus one real METIS run. CI (`.github/workflows/ci.yml`) runs the whole suite on every push.
+`pyproject.toml` puts `src/` and the repository root on the path. `tests/gui/` drives the real window headless with pytest-qt; `tests/jobs/` runs jobs with scripted fake processes plus one real METIS run. CI (`.github/workflows/ci.yml`) runs the whole suite on every push, on Python 3.10 (the oldest supported), 3.12 and 3.14.
 
 ## Documentation
 
