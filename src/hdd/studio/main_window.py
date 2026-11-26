@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QProgressBar,
     QScrollArea,
+    QSizePolicy,
     QTabWidget,
     QToolBar,
     QToolButton,
@@ -300,6 +301,11 @@ class MainWindow(QMainWindow):
             action.triggered.connect(lambda _checked=False, m=mode: self.set_theme(m))
             self.theme_group.addAction(action)
             self.theme_actions[mode] = action
+        self.act_toggle_theme = QAction("Switch light/dark theme", self)
+        self.act_toggle_theme.setShortcut(QKeySequence("Ctrl+Shift+L"))
+        self.act_toggle_theme.triggered.connect(self.toggle_theme)
+        self._update_theme_toggle()
+        self._theme.changed.connect(self._update_theme_toggle)  # also when following the system
 
     def _build_menus(self) -> None:
         bar = self.menuBar()
@@ -358,6 +364,10 @@ class MainWindow(QMainWindow):
         bar.addActions([self.act_validate, self.act_run, self.act_stop])
         bar.addSeparator()
         bar.addActions([self.act_compare, self.act_import_matrix, self.act_reload])
+        spacer = QWidget()
+        spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        bar.addWidget(spacer)
+        bar.addAction(self.act_toggle_theme)
         for action in (self.act_run, self.act_stop):
             bar.widgetForAction(action).setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         self.addToolBar(bar)
@@ -1365,6 +1375,17 @@ class MainWindow(QMainWindow):
         self._theme.apply(mode)
         self._settings.set_theme_mode(mode)
         self.theme_actions[mode].setChecked(True)
+        self._update_theme_toggle()
+
+    def toggle_theme(self) -> None:
+        """Switch between light and dark (leaves "follow system")."""
+        self.set_theme("light" if self._theme.tokens.is_dark else "dark")
+
+    def _update_theme_toggle(self) -> None:
+        # The button shows where it goes: a moon in light mode, a sun in dark mode.
+        dark = self._theme.tokens.is_dark
+        self.act_toggle_theme.setIcon(self._theme.icon("theme_light" if dark else "theme_dark"))
+        self.act_toggle_theme.setToolTip(f"Switch to the {'light' if dark else 'dark'} theme (Ctrl+Shift+L)")
 
     def show_gallery(self) -> None:
         from .gallery import Gallery
