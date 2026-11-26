@@ -143,15 +143,26 @@ def __getattr__(name: str) -> Any:
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
-def _apply_common_defaults(parameters: dict[str, Any], coarsening: CoarseningPreset) -> dict[str, Any]:
-    updated = _clone_json_like(parameters)
+def case_parameters(configuration: dict[str, Any], case: BatchCase) -> dict[str, Any]:
+    """Validated parameters of one case of a parsed configuration. Pure: raises ValueError when invalid."""
+    base = configuration.get("base_parameters")
+    if base is None:
+        raise ValueError("the batch configuration has no base_parameters")
+    parameters = validate_and_normalize_simulation_parameters(_clone_json_like(base))
+    parameters = _apply_common_defaults(parameters, case.coarsening, configuration.get("common_defaults") or {})
+    return validate_and_normalize_simulation_parameters(_apply_algorithm_preset(parameters, case))
 
-    updated["general_parameters"].update(_clone_json_like(_setting("COMMON_DEFAULTS").get("general_parameters", {})))
-    updated["coarsening_parameters"].update(_clone_json_like(_setting("COMMON_DEFAULTS").get("coarsening_parameters", {})))
-    updated["partitioning_parameters"]["common"].update(_clone_json_like(_setting("COMMON_DEFAULTS").get("partitioning_common", {})))
-    updated.setdefault("uncoarsening_parameters", {}).update(
-        _clone_json_like(_setting("COMMON_DEFAULTS").get("uncoarsening_parameters", {}))
-    )
+
+def _apply_common_defaults(
+    parameters: dict[str, Any], coarsening: CoarseningPreset, common_defaults: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    updated = _clone_json_like(parameters)
+    defaults = _setting("COMMON_DEFAULTS") if common_defaults is None else common_defaults
+
+    updated["general_parameters"].update(_clone_json_like(defaults.get("general_parameters", {})))
+    updated["coarsening_parameters"].update(_clone_json_like(defaults.get("coarsening_parameters", {})))
+    updated["partitioning_parameters"]["common"].update(_clone_json_like(defaults.get("partitioning_common", {})))
+    updated.setdefault("uncoarsening_parameters", {}).update(_clone_json_like(defaults.get("uncoarsening_parameters", {})))
     updated["coarsening_parameters"].update(
         {
             "coarsen_inferior_limit": int(coarsening.coarsen_inferior_limit),

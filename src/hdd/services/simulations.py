@@ -15,7 +15,7 @@ from libs.graph_prep import build_pipeline_graph
 from libs.tuning.feasibility import coarsening_dry_run
 from libs.multilevel_scheme.partitioning.capacity import qpu_workload
 from libs.runtime import workspace
-from libs.runtime.defaults import DEFAULT_SIMULATION_PARAMETERS
+from libs.runtime.defaults import DEFAULT_SIMULATION_PARAMETERS, unknown_parameter_keys
 from libs.runtime.matrix_library import list_matrix_ids
 from libs.runtime.utils import (
     AVAILABLE_SAVE_OUTPUTS,
@@ -338,6 +338,7 @@ def validate_parameters(params_payload: dict[str, Any]) -> dict[str, Any]:
             "valid": True,
             "normalized_parameters": normalized,
             "estimates": quantum_estimates(normalized),
+            "unknown_keys": unknown_parameter_keys(normalized),
         }
     except Exception as exc:
         return {

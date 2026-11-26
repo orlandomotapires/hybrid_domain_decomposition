@@ -58,6 +58,34 @@ DEFAULT_SIMULATION_PARAMETERS: dict[str, Any] = {
 }
 
 
+# Keys a parameter file may set that have no default (optional settings).
+OPTIONAL_KEYS: dict[tuple[str, ...], set[str]] = {
+    ("coarsening_parameters",): {"max_node_weight"},
+    ("partitioning_parameters", "strategies", QA): {"qpu_solver_name", "qpu_region", "qpu_problem_label"},
+    ("partitioning_parameters", "strategies", QAOA): {"qlm_qpu_name", "qlm_job_timeout_seconds"},
+}
+
+
+def unknown_parameter_keys(parameters: dict[str, Any]) -> list[str]:
+    """Dotted paths of keys the pipeline does not know (most often a typo that silently keeps a default)."""
+    unknown: list[str] = []
+
+    def walk(given: Any, known: Any, path: tuple[str, ...]) -> None:
+        if not isinstance(given, dict) or not isinstance(known, dict):
+            return
+        allowed = set(known) | OPTIONAL_KEYS.get(path, set())
+        for key, value in given.items():
+            if key not in allowed:
+                unknown.append(".".join((*path, str(key))))
+            elif isinstance(known.get(key), dict) and known.get(key):
+                walk(value, known[key], (*path, key))
+            elif path[-1:] == ("strategies",):
+                walk(value, known.get(key, {}), (*path, key))
+
+    walk(parameters, DEFAULT_SIMULATION_PARAMETERS, ())
+    return unknown
+
+
 def default_parameters() -> dict[str, Any]:
     """A fresh, mutable copy of the defaults."""
     return copy.deepcopy(DEFAULT_SIMULATION_PARAMETERS)

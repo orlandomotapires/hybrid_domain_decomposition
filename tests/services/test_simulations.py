@@ -135,9 +135,28 @@ class SimulationsServiceTest(unittest.TestCase):
     def test_validate_parameters_reports_instead_of_failing(self) -> None:
         params = self.new_simulation("val")["simulation_parameters"]
         ok = simulations.validate_parameters(params)
-        self.assertEqual({"valid", "normalized_parameters", "estimates"}, set(ok))
+        self.assertEqual({"valid", "normalized_parameters", "estimates", "unknown_keys"}, set(ok))
         self.assertTrue(ok["valid"])
+        self.assertEqual([], ok["unknown_keys"])
         self.assertEqual({"valid", "error"}, set(simulations.validate_parameters({})))
+
+    def test_typos_in_parameter_names_are_reported(self) -> None:
+        params = self.new_simulation("typo")["simulation_parameters"]
+        params["coarsening_parameters"]["coarsen_ratoi"] = 0.5
+        params["partitioning_parameters"]["strategies"]["quantum_annealing"]["num_read"] = 3
+        self.assertEqual(
+            ["coarsening_parameters.coarsen_ratoi", "partitioning_parameters.strategies.quantum_annealing.num_read"],
+            simulations.validate_parameters(params)["unknown_keys"],
+        )
+
+    def test_negative_seed_and_lambda_are_rejected(self) -> None:
+        params = self.new_simulation("bounds")["simulation_parameters"]
+        params["general_parameters"]["seed"] = -1
+        self.assertFalse(simulations.validate_parameters(params)["valid"])
+        params["general_parameters"]["seed"] = 1
+        params["partitioning_parameters"]["partitioning_strategy"] = "quantum_annealing"
+        params["partitioning_parameters"]["strategies"]["quantum_annealing"]["qubo_balance_lambda"] = -2.0
+        self.assertIn("qubo_balance_lambda", simulations.validate_parameters(params)["error"])
 
     def test_quantum_estimates_follow_the_strategy(self) -> None:
         params = self.new_simulation("est")["simulation_parameters"]

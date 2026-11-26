@@ -7,6 +7,7 @@ from typing import Any
 
 from libs.domain_decomposition import decompose_matrix
 from libs.runtime import workspace
+from libs.runtime.defaults import unknown_parameter_keys
 from libs.runtime.log import log, set_log_file
 from libs.profiling.matrix_metrics import collect_metrics
 from libs.runtime.utils import (
@@ -117,6 +118,9 @@ def run_simulation(
 		)
 		with simulation_parameters_path.open("r", encoding="utf-8") as f:
 			simulation_parameters = validate_and_normalize_simulation_parameters(json.load(f))
+	unknown = unknown_parameter_keys(simulation_parameters)
+	if unknown:
+		log("WARNING", f"Ignoring unknown parameters (check for typos): {', '.join(unknown)}")
 
 	# The library matrix to partition and permute
 	matrix_path = resolve_simulation_matrix(simulation_config)

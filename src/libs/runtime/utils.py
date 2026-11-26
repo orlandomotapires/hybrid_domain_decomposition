@@ -333,6 +333,8 @@ def validate_and_normalize_simulation_parameters(params: dict) -> dict:
     if dof_per_node <= 0:
         raise ValueError("general_parameters.dof_per_node must be > 0")
     seed = _coerce_int(gp.get("seed"), "general_parameters.seed")
+    if not 0 <= seed < 2**32:  # numpy's seed range
+        raise ValueError("general_parameters.seed must be between 0 and 4294967295")
     gp_out = dict(gp)
     gp_out.update({"dof_per_node": dof_per_node, "seed": seed})
 
@@ -456,6 +458,8 @@ def validate_and_normalize_simulation_parameters(params: dict) -> dict:
             _value_or_default("qubo_balance_lambda", qa_defaults["qubo_balance_lambda"]),
             "partitioning_parameters.strategies.quantum_annealing.qubo_balance_lambda",
         )
+        if strat_out["qubo_balance_lambda"] < 0.0:
+            raise ValueError("partitioning_parameters.strategies.quantum_annealing.qubo_balance_lambda must be >= 0")
         strat_out["num_starts"] = _coerce_int(
             _value_or_default("num_starts", qa_defaults["num_starts"]),
             "partitioning_parameters.strategies.quantum_annealing.num_starts",
@@ -515,6 +519,10 @@ def validate_and_normalize_simulation_parameters(params: dict) -> dict:
             _value_or_default("qubo_balance_lambda", qaoa_defaults["qubo_balance_lambda"]),
             "partitioning_parameters.strategies.quantum_approximation_optimizer.qubo_balance_lambda",
         )
+        if strat_out["qubo_balance_lambda"] < 0.0:
+            raise ValueError(
+                "partitioning_parameters.strategies.quantum_approximation_optimizer.qubo_balance_lambda must be >= 0"
+            )
         strat_out["num_starts"] = _coerce_int(
             _value_or_default("num_starts", qaoa_defaults["num_starts"]),
             "partitioning_parameters.strategies.quantum_approximation_optimizer.num_starts",

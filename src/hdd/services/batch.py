@@ -27,12 +27,35 @@ def validate_configuration(config: dict[str, Any]) -> None:
     missing = sorted(set(REQUIRED_KEYS) - set(config))
     if missing:
         raise InvalidInput(f"Missing required batch configuration keys: {', '.join(missing)}")
-    from libs.batch.run_batch import parse_batch_configuration
+    from libs.batch.run_batch import case_parameters, expand_cases, parse_batch_configuration
 
     try:
-        parse_batch_configuration(config)
+        parsed = parse_batch_configuration(config)
     except (KeyError, ValueError, TypeError) as exc:
         raise InvalidInput(f"Invalid batch configuration: {exc!r}") from exc
+
+    # Catch at save time what would otherwise fail case by case, hours into the batch.
+    problems: list[str] = []
+    sizes = {preset.key for preset in parsed["coarsening_presets"]}
+    for preset in parsed["algorithm_presets"]:
+        for size in sorted(set(preset.allowed_sizes) - sizes):
+            problems.append(f"Algorithm preset {preset.key!r} allows size {size!r}, which no coarsening preset defines")
+    presets = {preset.key for preset in parsed["algorithm_presets"]}
+    for key in sorted(set(parsed["async_remote_case_keys"]) - presets):
+        problems.append(f"async_remote_case_keys names {key!r}, which no algorithm preset defines")
+    if parsed["base_parameters"] is not None:
+        checked: set[tuple[str, str]] = set()
+        for case in expand_cases(parsed):
+            pair = (case.algorithm.key, case.coarsening.key)
+            if pair in checked:
+                continue  # the parameters do not depend on the matrix
+            checked.add(pair)
+            try:
+                case_parameters(parsed, case)
+            except (KeyError, ValueError, TypeError) as exc:
+                problems.append(f"Preset {case.algorithm.key!r} with size {case.coarsening.key!r}: {exc}")
+    if problems:
+        raise InvalidInput("Invalid batch configuration:\n" + "\n".join(problems))
 
 
 def load_configuration() -> dict[str, Any]:
