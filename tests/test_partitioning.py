@@ -1,8 +1,11 @@
 """Coarse partitioning: recursive k-way bipartition, QUBO algebra and the quantum backends (simulated)."""
+import os
 import unittest
+from unittest.mock import patch
 
 import networkx as nx
 
+from libs.multilevel_scheme.partitioning.capacity import local_capacity_error
 from libs.multilevel_scheme.partitioning.partitioning import metis_ufactor
 from libs.multilevel_scheme.partitioning.utils.metrics import (
     balance_violation,
@@ -69,6 +72,40 @@ class RecursiveKwayTest(unittest.TestCase):
         )
 
         self.assertEqual(6, len(set(part.values())))
+
+
+class LocalCapacityTest(unittest.TestCase):
+    def _params(self, strategy: str, **block):
+        from tests.test_tuning import _params
+
+        params = _params()
+        params["partitioning_parameters"]["partitioning_strategy"] = strategy
+        params["partitioning_parameters"]["strategies"][strategy] = {"simulated": True, **block}
+        return params
+
+    def test_oversized_coarse_graph_fails_before_qaoa_emulation(self) -> None:
+        from libs.domain_decomposition import decompose_matrix
+        from tests.test_tuning import _grid_laplacian
+
+        p = self._params("quantum_approximation_optimizer", circuit_depth=1, num_steps=1, num_shots=1,
+                         num_starts=1, qubo_balance_lambda=1.0, balance_violation_lambda=1.0, adam_learning_rate=0.1)
+        with patch("libs.domain_decomposition.recursive_kway_qaoa") as qaoa:
+            with self.assertRaisesRegex(ValueError, "QAOA statevector emulation limit of 18"):
+                decompose_matrix(_grid_laplacian(), p["general_parameters"], p["coarsening_parameters"],
+                                 p["partitioning_parameters"], p["uncoarsening_parameters"])
+        qaoa.assert_not_called()
+
+    def test_simulated_annealing_limit_is_configurable(self) -> None:
+        pp = self._params("quantum_annealing")["partitioning_parameters"]
+        self.assertIsNone(local_capacity_error(pp, 2500))  # the thesis' "Big" scale
+        self.assertIn("HDD_SIMULATED_QA_NODE_LIMIT", local_capacity_error(pp, 3001))
+        with patch.dict(os.environ, {"HDD_SIMULATED_QA_NODE_LIMIT": "5000"}):
+            self.assertIsNone(local_capacity_error(pp, 4000))
+
+    def test_remote_backends_are_not_checked_here(self) -> None:
+        pp = self._params("quantum_annealing")["partitioning_parameters"]
+        pp["strategies"]["quantum_annealing"]["simulated"] = False
+        self.assertIsNone(local_capacity_error(pp, 10_000))
 
 
 if __name__ == "__main__":

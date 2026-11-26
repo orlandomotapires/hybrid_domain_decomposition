@@ -4,6 +4,7 @@ from libs.runtime.utils import matrix_to_graph
 from libs.permutation import permute_matrix
 from libs.graph_prep import set_edge_weight_attr, set_node_vweight_diag
 from libs.multilevel_scheme.coarsening.coarsening import coarsen_chain
+from libs.multilevel_scheme.partitioning.capacity import local_capacity_error
 from libs.multilevel_scheme.partitioning.partitioning import (
     partition_graph_metis,
     recursive_kway_anneal,
@@ -126,6 +127,10 @@ def decompose_matrix(matrix, general_parameters, coarsening_parameters, partitio
     _close_stage("coarsening")
 
     Gc = graphs[-1]
+    # Fail fast with a clear reason instead of running a local quantum emulator out of memory.
+    capacity_error = local_capacity_error(partitioning_parameters, Gc.number_of_nodes())
+    if capacity_error:
+        raise ValueError(capacity_error)
     effective_k_target = _clamp_partition_count(k_target, Gc.number_of_nodes())
     if effective_k_target != k_target:
         log(

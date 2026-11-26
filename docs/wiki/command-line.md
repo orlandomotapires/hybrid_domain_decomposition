@@ -74,3 +74,4 @@ Needs myQLM and QLM credentials; see [Quantum backends](quantum-backends.md). `-
 | `HDD_PYTHON` | The Python `run.sh` tries first |
 | `HDD_HISTORY_PATH` | Where the tuning run history is written (default `tuning/history.jsonl`) |
 | `HDD_DISABLE_HISTORY=1` | Do not append runs to the history |
+| `HDD_SIMULATED_QA_NODE_LIMIT` | Largest coarse graph simulated annealing accepts (default 3000; its dense QUBO grows with the square of the node count) |

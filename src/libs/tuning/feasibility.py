@@ -6,40 +6,18 @@ Checks the partitioning backend's qubit/clique capacity and dry-runs the real
 
 from __future__ import annotations
 
-import re
 from typing import Any
 
 import networkx as nx
 
 from libs.multilevel_scheme.coarsening.coarsening import coarsen_chain
-
-DWAVE_CLIQUE_LIMIT = 175
-QAOA_EMULATED_QUBIT_LIMIT = 18
-QLM_DEFAULT_QUBITS = 10
-
-
-def qlm_qubit_limit(qpu_name: str | None) -> int:
-    m = re.search(r"(\d+)QPU|QPU(\d+)", qpu_name or "", re.IGNORECASE)
-    if m:
-        n = int(m.group(1) or m.group(2))
-        if n > 0:
-            return n
-    return QLM_DEFAULT_QUBITS
-
-
-def backend_capacity(partitioning_parameters: dict[str, Any]) -> tuple[int | None, str | None]:
-    """Largest coarse graph the partitioning backend accepts, or (None, None) when unbounded."""
-    strategy = partitioning_parameters.get("partitioning_strategy")
-    sp = (partitioning_parameters.get("strategies") or {}).get(strategy) or {}
-    simulated = sp.get("simulated", True)
-    if strategy == "quantum_annealing" and not simulated:
-        return DWAVE_CLIQUE_LIMIT, "D-Wave clique embedding"
-    if strategy == "quantum_approximation_optimizer":
-        if simulated:
-            return QAOA_EMULATED_QUBIT_LIMIT, "QAOA statevector emulation"
-        limit = qlm_qubit_limit(sp.get("qlm_qpu_name"))
-        return limit, f"QLM QPU ({limit} qubits)"
-    return None, None
+from libs.multilevel_scheme.partitioning.capacity import (  # noqa: F401  (re-exported for callers)
+    DWAVE_CLIQUE_LIMIT,
+    QAOA_EMULATED_QUBIT_LIMIT,
+    QLM_DEFAULT_QUBITS,
+    backend_capacity,
+    qlm_qubit_limit,
+)
 
 
 def resolve_max_node_weight(G: nx.Graph, coarsening_parameters: dict[str, Any], k_target: int) -> float | None:

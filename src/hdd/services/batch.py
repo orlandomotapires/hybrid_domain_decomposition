@@ -12,7 +12,7 @@ from typing import Any
 from libs.runtime import workspace
 from libs.runtime.defaults import strategy_defaults
 from libs.runtime.utils import write_json
-from libs.tuning.feasibility import DWAVE_CLIQUE_LIMIT, QAOA_EMULATED_QUBIT_LIMIT, qlm_qubit_limit
+from libs.multilevel_scheme.partitioning.capacity import backend_capacity
 
 from .errors import InvalidInput, NotFound
 
@@ -90,16 +90,8 @@ def is_remote_hardware(strategy: str, params: dict[str, Any] | None) -> bool:
 
 def capacity_for(strategy: str, params: dict[str, Any] | None) -> dict[str, Any] | None:
     """Largest coarse graph the backend accepts (one qubit per coarse node), or None when unbounded."""
-    params = params or {}
-    simulated = params.get("simulated", True)
-    if strategy == "quantum_annealing" and not simulated:
-        return {"limit": DWAVE_CLIQUE_LIMIT, "what": "D-Wave clique embedding"}
-    if strategy == "quantum_approximation_optimizer":
-        if simulated:
-            return {"limit": QAOA_EMULATED_QUBIT_LIMIT, "what": "statevector emulation"}
-        limit = qlm_qubit_limit(params.get("qlm_qpu_name"))
-        return {"limit": limit, "what": f"QLM QPU ({limit} qubits)"}
-    return None
+    limit, what = backend_capacity({"partitioning_strategy": strategy, "strategies": {strategy: params or {}}})
+    return None if limit is None else {"limit": limit, "what": what}
 
 
 def qpu_load(strategy: str, params: dict[str, Any] | None, k_target: int) -> dict[str, Any] | None:

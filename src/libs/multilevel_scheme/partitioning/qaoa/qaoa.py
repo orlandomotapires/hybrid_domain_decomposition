@@ -21,9 +21,7 @@ from libs.multilevel_scheme.partitioning.utils import (
     qubo_energy,
     qubo_to_ising,
 )
-
-
-LOCAL_PYLINALG_QUBIT_SAFETY_LIMIT = 24
+from libs.multilevel_scheme.partitioning.capacity import QAOA_EMULATED_QUBIT_LIMIT
 
 
 def _build_cost_observable(h: np.ndarray, J: np.ndarray):
@@ -136,7 +134,7 @@ def _qaoa_bipartition_on_pennylane(
     seed: int | None,
 ) -> tuple[dict[Any, int], float]:
     n = len(nodes)
-    if n > LOCAL_PYLINALG_QUBIT_SAFETY_LIMIT:
+    if n > QAOA_EMULATED_QUBIT_LIMIT:
         raise ValueError(
             f"QAOA bipartition is too large to simulate locally with PennyLane (n={n}). "
             "Coarsen more, set simulated=False to use a QLM backend, or use a different method."
