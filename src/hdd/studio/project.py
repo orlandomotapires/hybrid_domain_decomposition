@@ -6,8 +6,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from hdd.services import batch, matrices, results, simulations, tuning
-from libs.runtime import workspace
+from hdd.services import batch, matrices, results, simulations, tuning, workspace
 
 
 @dataclass
@@ -50,5 +49,5 @@ def load_snapshot(jobs: Any = None) -> ProjectSnapshot:
         snap.runs[sim_id] = results.list_runs(sim_id)["runs"]
         snap.studies[sim_id] = studies_by_sim.get(sim_id, [])
     snap.batch_runs = batch.list_batch_runs()["batch_runs"]
-    snap.has_batch_config = workspace.batch_config_path().exists()
+    snap.has_batch_config = workspace.has_batch_config()
     return snap

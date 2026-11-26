@@ -25,9 +25,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from hdd.services import batch, matrices, results, simulations, tuning
+from hdd.services import batch, matrices, results, simulations, tuning, workspace
 from hdd.services.errors import ServiceError
-from libs.runtime import workspace
 
 from . import APP_NAME, batch_page, diagnostics, pages, sim_pages
 from .batch_doc import BatchDocument
@@ -1292,11 +1291,11 @@ class MainWindow(QMainWindow):
         if not path:
             return
         folder = Path(path)
-        if any(folder.iterdir()) and not (folder / workspace.STATE_DIR_NAME).exists():
+        if any(folder.iterdir()) and not workspace.is_workspace(folder):
             answer = QMessageBox.question(self, "New workspace", f"{folder} is not empty. Create the workspace folders inside it anyway?")
             if answer != QMessageBox.StandardButton.Yes:
                 return
-        workspace.init(folder)
+        workspace.create_workspace(folder)
         self.open_workspace(folder)
 
     def open_workspace(self, root: Path) -> bool:

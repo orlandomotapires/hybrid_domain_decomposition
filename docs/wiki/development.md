@@ -23,7 +23,7 @@ hdd.studio  ──►  hdd.services  ──►  libs
 ```
 
 - `libs` imports neither `hdd` nor any UI toolkit.
-- `hdd.services` imports only `libs` and the standard library. It returns plain JSON-shaped data and raises `ServiceError` subclasses (`InvalidInput`, `NotFound`, `Conflict`) whose message is fit to show the user.
+- `hdd.services` imports only `libs`, the standard library and the numeric libraries (`numpy`, `scipy`, `networkx`). It returns plain JSON-shaped data and raises `ServiceError` subclasses (`InvalidInput`, `NotFound`, `Conflict`) whose message is fit to show the user.
 - `hdd.studio` talks only to `hdd.services`. Anything that can take more than a few milliseconds runs on a worker thread (`TaskRunner`).
 - Importing the services or opening the app does not load the quantum stack (PennyLane, D-Wave, Optuna); those modules are imported when needed.
 - Only `libs/runtime/workspace.py` decides where project data lives.

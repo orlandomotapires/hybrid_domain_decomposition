@@ -46,7 +46,7 @@ def create_application(argv: list[str] | None = None) -> QApplication:
 
 def resolve_workspace(requested: Path | None, remembered: str | None) -> Path:
     """The folder to open: the requested one, else the last one opened, else the default workspace."""
-    from libs.runtime import workspace
+    from hdd.services import workspace
 
     if requested is not None:
         return requested.expanduser().resolve()

@@ -8,9 +8,8 @@ from typing import Any
 
 from PySide6.QtCore import QObject, QTimer, Signal
 
-from hdd.services import simulations
+from hdd.services import simulations, workspace
 from hdd.services.jobs import JobManager
-from libs.runtime import workspace
 
 from .tasks import TaskRunner
 
@@ -57,7 +56,7 @@ class JobsBridge(QObject):
 class AppContext(QObject):
     def __init__(self, root: Path, parent: QObject | None = None) -> None:
         super().__init__(parent)
-        self.root = workspace.set_root(root)
+        self.root = workspace.open_workspace(root)
         self.jobs = JobManager(self.root)
         self.bridge = JobsBridge(self.jobs, self)
         self.tasks = TaskRunner(self)
