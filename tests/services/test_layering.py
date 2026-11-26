@@ -67,6 +67,23 @@ class DesktopImportCostTest(unittest.TestCase):
         out = subprocess.run([sys.executable, "-c", code], env=env, capture_output=True, text=True, check=True)
         self.assertEqual("[]", out.stdout.strip())
 
+    def test_loading_a_project_and_the_hardware_probe_module_stay_light(self) -> None:
+        # What the window does at runtime: read the whole project tree (studies included) and
+        # import the D-Wave access module a probe uses.
+        code = (
+            "import sys, json, tempfile, pathlib, scipy.io, scipy.sparse as sp; "
+            "from libs.runtime import workspace; "
+            "root = workspace.init(pathlib.Path(tempfile.mkdtemp())); workspace.set_root(root); "
+            "lib = root / 'matrices' / 'm'; lib.mkdir(); scipy.io.mmwrite(str(lib / 'm.mtx'), sp.identity(4).tocsr()); "
+            "(lib / 'matrix.json').write_text(json.dumps({'name': 'm', 'file': 'm.mtx'})); "
+            "from hdd.studio.project import load_snapshot; load_snapshot(); "
+            "import libs.multilevel_scheme.partitioning.qa.dwave_access; "
+            "print(sorted(m for m in ('pennylane', 'neal', 'optuna', 'matplotlib.pyplot') if m in sys.modules))"
+        )
+        env = {"PYTHONPATH": str(SRC), "PATH": "", "QT_QPA_PLATFORM": "offscreen"}
+        out = subprocess.run([sys.executable, "-c", code], env=env, capture_output=True, text=True)
+        self.assertEqual("[]", out.stdout.strip(), out.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -4,9 +4,6 @@ from datetime import datetime
 import json
 from pathlib import Path
 from typing import Any
-import matplotlib
-
-matplotlib.use("Agg")
 
 from libs.domain_decomposition import decompose_matrix
 from libs.runtime import workspace
