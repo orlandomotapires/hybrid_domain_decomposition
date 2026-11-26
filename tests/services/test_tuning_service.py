@@ -17,8 +17,9 @@ class FakeJobs:
     def __init__(self) -> None:
         self.jobs: list[dict] = []
 
-    def list_jobs(self) -> list[dict]:
-        return list(self.jobs)
+    def list_jobs(self, limit: int | None = 40) -> list[dict]:
+        newest_first = list(reversed(self.jobs))
+        return newest_first if limit is None else newest_first[:limit]
 
     def start_tuning_study(self, *, study_dir: Path, title: str, demonstrator_id: str | None = None) -> dict:
         job = {"job_id": f"job_{len(self.jobs)}", "job_type": "tuning", "status": "running", "study_dir": workspace.rel(study_dir), "title": title}
@@ -74,6 +75,15 @@ class TuningServiceTest(unittest.TestCase):
             tuning.apply_study("sim_a", study_id)
         self.jobs.jobs[1]["status"] = "completed"
         self.assertEqual({"deleted": study_id}, tuning.delete_study("sim_a", study_id, self.jobs))
+
+    def test_running_study_is_found_behind_many_newer_jobs(self) -> None:
+        created = tuning.create_study("sim_a", {"objectives": ["edge_cut"], "n_trials": 3}, jobs=self.jobs)
+        study_id = created["study"]["id"]
+        self.jobs.jobs.extend({"job_id": f"run_{i}", "job_type": "single", "status": "completed"} for i in range(45))
+        with self.assertRaises(Conflict):
+            tuning.delete_study("sim_a", study_id, self.jobs)
+        with self.assertRaises(Conflict):
+            tuning.resume_study("sim_a", study_id, self.jobs)
 
     def test_study_ids_are_checked(self) -> None:
         with self.assertRaises(InvalidInput):
