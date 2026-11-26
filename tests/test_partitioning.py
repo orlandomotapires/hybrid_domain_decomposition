@@ -74,6 +74,42 @@ class RecursiveKwayTest(unittest.TestCase):
         self.assertEqual(6, len(set(part.values())))
 
 
+class MetisWeightsTest(unittest.TestCase):
+    def test_ratios_survive_a_wide_weight_range(self) -> None:
+        from libs.multilevel_scheme.partitioning.partitioning import _weights_to_metis_ints
+
+        # FEM diagonals can span many orders of magnitude; the heavy values must stay distinct.
+        weights = _weights_to_metis_ints([1e-9, 1.0, 2.0, 100.0, 200.0])
+        self.assertEqual(1, weights[0])
+        self.assertLess(weights[1], weights[2])
+        self.assertLess(weights[3], weights[4])
+        self.assertAlmostEqual(2.0, weights[4] / weights[3], places=3)
+
+    def test_totals_stay_within_32_bit_integers(self) -> None:
+        from libs.multilevel_scheme.partitioning.partitioning import _weights_to_metis_ints
+
+        self.assertLess(sum(_weights_to_metis_ints([5.0] * 5000)), 2**31)
+
+
+class MatrixValuesTest(unittest.TestCase):
+    def test_nan_and_inf_entries_are_rejected_on_load(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        import scipy.io
+        import scipy.sparse as sp
+
+        from libs.runtime.utils import load_mtx
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "bad.mtx"
+            A = sp.identity(3, format="csr")
+            A.data[1] = float("nan")
+            scipy.io.mmwrite(str(path), A)
+            with self.assertRaisesRegex(ValueError, "NaN or infinite"):
+                load_mtx(path)
+
+
 class LocalCapacityTest(unittest.TestCase):
     def _params(self, strategy: str, **block):
         from tests.test_tuning import _params

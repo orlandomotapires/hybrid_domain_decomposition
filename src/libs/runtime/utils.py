@@ -114,7 +114,12 @@ def load_mtx(path, label=None):
             "Only Matrix Market .mtx files are supported."
         )
 
-    return _as_csr_matrix(mmread(matrix_path))
+    matrix = _as_csr_matrix(mmread(matrix_path))
+    # NaN or Inf would only fail much later, as an opaque error inside METIS or the coarsening.
+    if matrix.nnz and not np.isfinite(matrix.data).all():
+        bad = int(np.count_nonzero(~np.isfinite(matrix.data)))
+        raise ValueError(f"Matrix {matrix_name} has {bad} entries that are NaN or infinite; fix the .mtx file")
+    return matrix
 
 
 def resolve_simulation_matrix(simulation_config: dict[str, Any]) -> Path:
