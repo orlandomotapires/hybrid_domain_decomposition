@@ -89,6 +89,12 @@ SCRIPTS = {
                      {event("exit", code=0)!r}]:
             print(line, flush=True)
     """,
+    # A batch whose progress event lacks its fields: must not stop the follower.
+    "malformed_event": f"""
+        print({event("batch_case", total=2)!r}, flush=True)
+        print("[10:00:00 INFO] still going", flush=True)
+        print({event("exit", code=0)!r}, flush=True)
+    """,
     "flood": """
         for i in range(%d):
             print(f"[10:00:00 INFO] line {i}")
@@ -368,6 +374,37 @@ class JobManagerTest(unittest.TestCase):
         finally:
             bystander.kill()
             bystander.wait()
+
+    def test_a_malformed_event_does_not_stop_the_follower(self) -> None:
+        self.fake.next["batch"] = "malformed_event"
+        job_id = self.manager.start_batch_study()["job_id"]
+        wait_for(self.finished(job_id))
+        job = self.manager.get_job(job_id)
+        self.assertEqual("completed", job["status"])
+        messages = [e["message"] for e in job["logs"]]
+        self.assertTrue(any("malformed progress event" in m for m in messages))
+        self.assertIn("still going", messages)
+
+    def test_a_crashed_follower_finishes_the_job(self) -> None:
+        self.fake.next["single"] = "sleep"
+        with patch.object(JobManager, "_follow_log", side_effect=RuntimeError("disk gone")):
+            job = self.manager.start_single_simulation("simulations/sim_a")
+            wait_for(self.finished(job["job_id"]))
+        try:
+            lost = self.manager.get_job(job["job_id"])
+            self.assertEqual("failed", lost["status"])
+            self.assertIn("lost track", lost["error_message"])
+            self.assertIn("disk gone", lost["error_message"])
+        finally:
+            os.killpg(job["pid"], 9)
+
+    def test_an_unreadable_record_does_not_block_the_workspace(self) -> None:
+        self._write_record("sim_bad", job_id="sim_bad", status="completed", started_epoch="yesterday")
+        self._write_record("sim_good", job_id="sim_good", status="completed")
+        reopened = JobManager(self.root, command_factory=self.fake)
+        ids = [j["job_id"] for j in reopened.list_jobs(None)]
+        self.assertIn("sim_good", ids)
+        self.assertNotIn("sim_bad", ids)
 
     def test_running_jobs_cannot_be_deleted(self) -> None:
         self.fake.next["single"] = "sleep"

@@ -16,6 +16,7 @@ note the change and let their own thread pull the state with :meth:`get_job`.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import shutil
 import signal
@@ -40,7 +41,9 @@ Listener = Callable[[str, str], None]
 CommandFactory = Callable[[str, list[str]], list[str]]
 EVENTS = ("added", "changed", "finished", "removed")
 MAX_LOG_ENTRIES = 50_000
-INTERRUPTED_MESSAGE = "The job ended while the Studio was closed and did not report a result."
+_log = logging.getLogger("hdd.jobs")
+
+INTERRUPTED_MESSAGE ="The job ended while the Studio was closed and did not report a result."
 NO_RESULT_MESSAGE = "The job ended without reporting a result (it may have been killed)."
 POLL_SEC = 0.1
 # Fields written to a job record (everything else is runtime state).
@@ -247,8 +250,15 @@ class JobManager:
             return
         try:
             self.store.save(job.to_record())
-        except OSError:
-            pass
+        except (OSError, ValueError) as exc:
+            # The job goes on, but without a record the next session cannot follow or settle it.
+            _log.error("Could not save the record of job %s: %s", job.job_id, exc)
+            with job._lock:
+                if not job.telemetry.get("record_error"):
+                    job.telemetry["record_error"] = str(exc)
+                    job.append_log({"timestamp": datetime.now().strftime("%H:%M:%S"), "level": "WARNING",
+                                    "message": f"Could not save the job record ({exc}); the job will not be "
+                                               "followed after the Studio restarts."})
 
     def _inside_workspace(self, value: Any) -> str | None:
         """``value`` if it is a workspace-relative path that stays inside the workspace, else None."""
@@ -273,17 +283,25 @@ class JobManager:
 
     def _load_records(self) -> None:
         for record in self.store.load_all():
-            job = SimulationJob.from_record(self._sanitize_record(record))
-            self._jobs[job.job_id] = job
-            if job.status != "running":
-                continue
-            # The job was running when the Studio last closed: rebuild its state from its log.
-            job.logs, job.logs_dropped, job.telemetry, job._logs_loaded = [], 0, {}, True
-            job.exit_reported = None
-            if job.log_path and _pid_alive(job.pid, job.pid_start):
-                self._start_follower(job, self._replay(job))
-            else:
-                self._follow(job, 0, settle=True)
+            try:
+                self._load_record(record)
+            except Exception:  # one bad record must not keep the workspace from opening
+                _log.exception("Skipping unreadable job record %r", record.get("job_id"))
+                self._jobs.pop(str(record.get("job_id")), None)
+
+    def _load_record(self, record: dict[str, Any]) -> None:
+        job = SimulationJob.from_record(self._sanitize_record(record))
+        job.to_dict(include_logs=False)  # fail here, not later in the UI, on wrongly typed fields
+        self._jobs[job.job_id] = job
+        if job.status != "running":
+            return
+        # The job was running when the Studio last closed: rebuild its state from its log.
+        job.logs, job.logs_dropped, job.telemetry, job._logs_loaded = [], 0, {}, True
+        job.exit_reported = None
+        if job.log_path and _pid_alive(job.pid, job.pid_start):
+            self._start_follower(job, self._replay(job))
+        else:
+            self._follow(job, 0, settle=True)
 
     def _replay(self, job: SimulationJob) -> int:
         """Apply the complete lines already in the job's log; return the offset to follow from."""
@@ -595,8 +613,33 @@ class JobManager:
     def _follow(self, job: SimulationJob, position: int, settle: bool = False) -> None:
         """Apply the job's log from ``position`` on until its process ends (or the manager closes).
 
-        ``settle`` reads a job whose process is already gone, to rebuild its final state.
+        ``settle`` reads a job whose process is already gone, to rebuild its final state. Whatever
+        goes wrong, the job reaches a final state: a dead follower must not leave it "running".
         """
+        try:
+            self._follow_log(job, position, settle)
+        except Exception as exc:
+            _log.exception("Lost track of job %s", job.job_id)
+            self._lose(job, exc)
+
+    def _lose(self, job: SimulationJob, exc: Exception) -> None:
+        with job._lock:
+            if job.status != "running":
+                return
+            pid = job.pid
+            job.status = "failed"
+            job.error_message = f"The Studio lost track of this job ({exc})."
+            if pid and (job._process is None or job._process.poll() is None):
+                job.error_message += f" Its process ({pid}) may still be running."
+            now = time.time()
+            job.close_stage(now)
+            job.finished_epoch = now
+            job.finished_at = datetime.fromtimestamp(now).isoformat()
+            job.append_log({"timestamp": datetime.now().strftime("%H:%M:%S"), "level": "ERROR", "message": job.error_message})
+        self._save(job)
+        self._notify("finished", job.job_id)
+
+    def _follow_log(self, job: SimulationJob, position: int, settle: bool) -> None:
         path = self.root / job.log_path if job.log_path else None
         buffer = b""
         handle = path.open("rb") if path is not None and path.exists() else None
@@ -678,8 +721,13 @@ class JobManager:
         event = job_events.parse(line)
         with job._lock:
             if event is not None:
-                self._apply_event(job, event)
-                return
+                try:
+                    self._apply_event(job, event)
+                    return
+                except (KeyError, TypeError, ValueError) as exc:
+                    # A malformed event must not stop the follower; keep the line for the user.
+                    _log.warning("Ignoring malformed event of job %s: %s (%s)", job.job_id, line, exc)
+                    line = f"[{datetime.now():%H:%M:%S} WARNING] Ignored a malformed progress event: {line}"
             entry = _parse_log_line(line)
             job.append_log(entry)
             parsing.update_telemetry(job.telemetry, entry["message"])
