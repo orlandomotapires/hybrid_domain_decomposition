@@ -10,15 +10,16 @@ from statistics import median
 from typing import Any
 
 from libs.runtime import workspace
+from libs.runtime.defaults import strategy_defaults
 from libs.runtime.utils import write_json
 from libs.tuning.feasibility import DWAVE_CLIQUE_LIMIT, QAOA_EMULATED_QUBIT_LIMIT, qlm_qubit_limit
 
 from .errors import InvalidInput, NotFound
 
 REQUIRED_KEYS = ("algorithm_presets", "coarsening_presets", "common_defaults", "matrices")
-# Defaults of src/libs/runtime/utils.py used when a preset omits a parameter.
-QA_DEFAULTS = {"num_starts": 5, "num_reads": 5}
-QAOA_DEFAULTS = {"num_starts": 12, "num_steps": 12, "num_shots": 5}
+# Values the pipeline uses when a preset omits a parameter.
+QA_DEFAULTS = strategy_defaults("quantum_annealing")
+QAOA_DEFAULTS = strategy_defaults("quantum_approximation_optimizer")
 _BATCH_ID_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
 
 

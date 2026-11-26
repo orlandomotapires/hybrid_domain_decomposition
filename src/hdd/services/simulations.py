@@ -13,6 +13,7 @@ from typing import Any
 from libs.graph_prep import build_pipeline_graph, default_max_node_weight
 from libs.multilevel_scheme.coarsening.coarsening import coarsen_chain
 from libs.runtime import workspace
+from libs.runtime.defaults import DEFAULT_SIMULATION_PARAMETERS
 from libs.runtime.matrix_library import list_matrix_ids
 from libs.runtime.utils import (
     AVAILABLE_SAVE_OUTPUTS,
@@ -27,48 +28,6 @@ from libs.runtime.utils import (
 from .errors import Conflict, InvalidInput, NotFound
 from .matrix_files import simulation_matrix_info
 
-DEFAULT_SIMULATION_PARAMETERS: dict[str, Any] = {
-    "general_parameters": {"dof_per_node": 1, "seed": 42},
-    "coarsening_parameters": {
-        "coarsen_inferior_limit": 100,
-        "coarsen_superior_limit": 175,
-        "max_levels": 15,
-        "weight": "weight",
-        "strategy": "modified",
-        "coarsen_ratio": 0.85,
-    },
-    "partitioning_parameters": {
-        "partitioning_strategy": "metis_partitioning",
-        "common": {"k_target": 4, "balance_tolerance": 2.0},
-        "strategies": {
-            "metis_partitioning": {},
-            "quantum_annealing": {
-                "qubo_balance_lambda": 2.0,
-                "num_starts": 20,
-                "num_reads": 20,
-                "balance_violation_lambda": 5.0,
-                "simulated": True,
-            },
-            "quantum_approximation_optimizer": {
-                "qubo_balance_lambda": 2.0,
-                "num_starts": 5,
-                "num_steps": 5,
-                "num_shots": 10,
-                "balance_violation_lambda": 5.0,
-                "circuit_depth": 1,
-                "adam_learning_rate": 0.1,
-                "simulated": True,
-            },
-        },
-    },
-    "uncoarsening_parameters": {
-        "refine_objective": "cut_balance",
-        "refine_balance_lambda": 1.0,
-        "refine_max_passes_per_level": 50,
-        "refine_max_moves_per_pass": 5000,
-        "validate_node_weights": True,
-    },
-}
 
 
 def default_parameters_for(matrix_id: str | None) -> dict[str, Any]:
