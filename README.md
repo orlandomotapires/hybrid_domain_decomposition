@@ -8,6 +8,14 @@ Reorders any square sparse matrix (`.mtx`) into $A' = P A P^\top$ by partitionin
 
 ![The same matrix before and after reordering: scattered nonzeros become six diagonal blocks](docs/wiki/images/reordering.png)
 
+## Thesis
+
+This is the software behind my bachelor's thesis, *Hybrid Quantum-Classical Graph Partitioning Algorithm for Domain Decomposition* (Universidade Senai Cimatec, 2026), carried out at the Fraunhofer Institute for Production Technology IPT. [Read the thesis (PDF, 4.6 MB)](https://orlandomotapires.github.io/assets/pdf/Hybrid_Quantum_Classical_Graph_Partitioning_Algorithm_for_Domain_Decomposition.pdf).
+
+On the first of two ANSYS blade models, the best run cut the worst-case number of solver iterations by about 64%. On the denser second model, the cut was 1.2%.
+
+The blade matrices are not in this repository. To try the pipeline without them, use **File → Generate demo matrix…** in the desktop app, or import any square `.mtx` matrix, for example one from the [SuiteSparse Matrix Collection](https://sparse.tamu.edu/). See the [matrix library](docs/wiki/matrix-library.md).
+
 ## Install
 
 ```sh
