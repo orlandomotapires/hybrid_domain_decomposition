@@ -32,7 +32,10 @@ from typing import Any, Callable
 from libs.runtime import events as job_events
 from libs.runtime import workspace
 
-from .. import catalog
+from libs.runtime.atomic import atomic_write_json
+
+from .. import catalog, results
+from ..errors import Conflict
 from . import commands, parsing
 from .parsing import _parse_log_line
 from .store import JobStore
@@ -45,6 +48,7 @@ _log = logging.getLogger("hdd.jobs")
 
 INTERRUPTED_MESSAGE ="The job ended while the Studio was closed and did not report a result."
 NO_RESULT_MESSAGE = "The job ended without reporting a result (it may have been killed)."
+DISMISSED_FILE = "dismissed_runs.json"  # in .hdd/: run folders removed from the jobs list
 POLL_SEC = 0.1
 # Fields written to a job record (everything else is runtime state).
 _RECORD_EXCLUDE = {"logs", "parameters_override"}
@@ -335,13 +339,37 @@ class JobManager:
             if path is None or not path.exists():
                 return
             stamp = datetime.fromtimestamp(job.started_epoch).strftime("%H:%M:%S")
-            for raw in path.read_text(encoding="utf-8", errors="replace").splitlines():
+            try:
+                text = path.read_text(encoding="utf-8", errors="replace")
+            except OSError as exc:  # deleted or unreadable since it was listed
+                job.append_log({"timestamp": stamp, "level": "WARNING", "message": f"The job's log could not be read: {exc}"})
+                return
+            for raw in text.splitlines():
                 if raw.strip() and job_events.parse(raw) is None:
                     job.append_log(_parse_log_line(raw, default_hms=stamp))
+
+    def _dismissed_path(self) -> Path:
+        return self.store.directory.parent / DISMISSED_FILE
+
+    def _dismissed(self) -> set[str]:
+        """Run folders the user removed from the list (keeping the files): not listed again."""
+        try:
+            data = json.loads(self._dismissed_path().read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return set()
+        return {str(item) for item in data} if isinstance(data, list) else set()
+
+    def _dismiss(self, result_dir: str) -> None:
+        dismissed = self._dismissed() | {result_dir}
+        try:
+            atomic_write_json(self._dismissed_path(), sorted(dismissed))
+        except OSError as exc:
+            _log.warning("Could not record the removed run %s: %s", result_dir, exc)
 
     def _load_historical_runs(self) -> None:
         dem_root = self.root / "simulations"
         recorded = {j.result_dir for j in self._jobs.values() if j.result_dir}
+        dismissed = self._dismissed()
         if not dem_root.exists():
             return
         for dem_dir in sorted(dem_root.iterdir()):
@@ -351,96 +379,88 @@ class JobManager:
             for run_dir in sorted(results_dir.iterdir()):
                 if not run_dir.is_dir() or not run_dir.name.startswith("run_"):
                     continue
-                job_id = f"hist_{dem_dir.name}_{run_dir.name}"
                 rel_res = f"simulations/{dem_dir.name}/results/{run_dir.name}"
-                if rel_res in recorded:
-                    continue  # already known from its job record
-                strategy_str = ""
-                telemetry: dict[str, Any] = {}
-                run_meta = _run_meta_from_params(None)
+                if rel_res in recorded or rel_res in dismissed:
+                    continue  # known from its job record, or removed from the list by the user
+                try:
+                    job = self._historical_job(dem_dir, run_dir, rel_res)
+                except OSError as exc:  # the folder went away or cannot be read: skip it
+                    _log.warning("Skipping run folder %s: %s", rel_res, exc)
+                    continue
+                self._jobs[job.job_id] = job
 
-                params_file = run_dir / "run_simulation_parameters.json"
-                if params_file.exists():
-                    try:
-                        p = json.loads(params_file.read_text(encoding="utf-8"))
-                        run_meta = _run_meta_from_params(p)
-                        strat = p.get("partitioning_parameters", {}).get("partitioning_strategy", "")
-                        if strat:
-                            strategy_str = f" ({catalog.method_label(strat, run_meta['simulated'], short=True)})"
-                        k_t = p.get("partitioning_parameters", {}).get("common", {}).get("k_target")
-                        if k_t is not None:
-                            telemetry["coarse_parts"] = int(k_t)
-                    except Exception:
-                        pass
+    def _historical_job(self, dem_dir: Path, run_dir: Path, rel_res: str) -> SimulationJob:
+        """A finished job rebuilt from a run folder; its log is read only when someone asks for it."""
+        strategy_str = ""
+        telemetry: dict[str, Any] = {}
+        run_meta = _run_meta_from_params(None)
 
-                metrics_file = run_dir / "run_metrics.json"
-                if metrics_file.exists():
-                    try:
-                        m = json.loads(metrics_file.read_text(encoding="utf-8"))
-                        k_m = m.get("matrix", {})
-                        fg = k_m.get("fine_graph_partition", {})
-                        cg = k_m.get("coarse_graph_partition", {})
-                        if fg.get("num_nodes") is not None:
-                            telemetry["initial_nodes"] = int(fg["num_nodes"])
-                            telemetry["initial_edges"] = int(fg.get("num_edges", 0))
-                        if cg.get("num_nodes") is not None:
-                            telemetry["coarse_nodes"] = int(cg["num_nodes"])
-                            telemetry["coarse_edges"] = int(cg.get("num_edges", 0))
-                        if cg.get("num_parts") is not None:
-                            telemetry["coarse_parts"] = int(cg["num_parts"])
-                    except Exception:
-                        pass
+        params_file = run_dir / "run_simulation_parameters.json"
+        if params_file.exists():
+            try:
+                p = json.loads(params_file.read_text(encoding="utf-8"))
+                run_meta = _run_meta_from_params(p)
+                strat = p.get("partitioning_parameters", {}).get("partitioning_strategy", "")
+                if strat:
+                    strategy_str = f" ({catalog.method_label(strat, run_meta['simulated'], short=True)})"
+                k_t = p.get("partitioning_parameters", {}).get("common", {}).get("k_target")
+                if k_t is not None:
+                    telemetry["coarse_parts"] = int(k_t)
+            except (OSError, ValueError, TypeError, AttributeError):
+                pass  # an unreadable parameters file only costs the title's method label
 
-                mtime = run_dir.stat().st_mtime
-                created_iso = datetime.fromtimestamp(mtime).isoformat()
-                default_hms = datetime.fromtimestamp(mtime).strftime("%H:%M:%S")
+        metrics_file = run_dir / "run_metrics.json"
+        if metrics_file.exists():
+            try:
+                k_m = json.loads(metrics_file.read_text(encoding="utf-8")).get("matrix", {})
+                fg = k_m.get("fine_graph_partition", {})
+                cg = k_m.get("coarse_graph_partition", {})
+                if fg.get("num_nodes") is not None:
+                    telemetry["initial_nodes"] = int(fg["num_nodes"])
+                    telemetry["initial_edges"] = int(fg.get("num_edges", 0))
+                if cg.get("num_nodes") is not None:
+                    telemetry["coarse_nodes"] = int(cg["num_nodes"])
+                    telemetry["coarse_edges"] = int(cg.get("num_edges", 0))
+                if cg.get("num_parts") is not None:
+                    telemetry["coarse_parts"] = int(cg["num_parts"])
+            except (OSError, ValueError, TypeError, AttributeError):
+                pass
 
-                parsed_logs: list[dict[str, str]] = []
-                has_error_log = False
-                run_log_file = run_dir / "run_log"
-                if run_log_file.exists():
-                    try:
-                        for raw_l in run_log_file.read_text(encoding="utf-8", errors="replace").splitlines():
-                            if not raw_l.strip():
-                                continue
-                            entry = _parse_log_line(raw_l, default_hms=default_hms)
-                            parsed_logs.append(entry)
-                            if entry["level"] == "ERROR":
-                                has_error_log = True
-                            parsing.update_telemetry(telemetry, entry["message"])
-                    except Exception:
-                        pass
+        mtime = run_dir.stat().st_mtime
+        created_iso = datetime.fromtimestamp(mtime).isoformat()
+        default_hms = datetime.fromtimestamp(mtime).strftime("%H:%M:%S")
 
-                if not parsed_logs:
-                    parsed_logs = [
-                        {
-                            "timestamp": default_hms,
-                            "level": "INFO",
-                            "message": f"Loaded historical run from {rel_res}",
-                        }
-                    ]
-
-                status_val = "failed" if (has_error_log and not metrics_file.exists()) else "completed"
-                job = SimulationJob(
-                    job_id=job_id,
-                    job_type="single",
-                    title=f"{dem_dir.name}{strategy_str}",
-                    demonstrator_dir=f"simulations/{dem_dir.name}",
-                    status=status_val,
-                    current_stage="permutation" if status_val == "completed" else "initialization",
-                    stage_progress=100 if status_val == "completed" else 15,
-                    created_at=created_iso,
-                    finished_at=created_iso,
-                    started_epoch=mtime,
-                    finished_epoch=mtime,
-                    result_dir=rel_res if status_val == "completed" else None,
-                    exit_code=0 if status_val == "completed" else 1,
-                    telemetry=telemetry,
-                    logs=parsed_logs,
-                    demonstrator_id=dem_dir.name,
-                    **run_meta,
-                )
-                self._jobs[job_id] = job
+        # The same rule as the project tree (results.run_outcome): a run without metrics that
+        # never logged its result was cut short, even if it logged no error (an OOM kill).
+        outcome, error = results.run_outcome(run_dir, metrics_file.exists())
+        completed = outcome == "completed"
+        run_log = run_dir / "run_log"
+        job = SimulationJob(
+            job_id=f"hist_{dem_dir.name}_{run_dir.name}",
+            job_type="single",
+            title=f"{dem_dir.name}{strategy_str}",
+            demonstrator_dir=f"simulations/{dem_dir.name}",
+            status="completed" if completed else "failed",
+            current_stage="permutation" if completed else "initialization",
+            stage_progress=100 if completed else 15,
+            created_at=created_iso,
+            finished_at=created_iso,
+            started_epoch=mtime,
+            finished_epoch=mtime,
+            result_dir=rel_res,
+            exit_code=0 if completed else 1,
+            error_message=None if completed else (error or NO_RESULT_MESSAGE),
+            telemetry=telemetry,
+            logs=[] if run_log.exists() else [
+                {"timestamp": default_hms, "level": "INFO", "message": f"Loaded historical run from {rel_res}"}
+            ],
+            demonstrator_id=dem_dir.name,
+            **run_meta,
+        )
+        if run_log.exists():
+            job.log_path = f"{rel_res}/run_log"
+            job._logs_loaded = False  # read on first request, not for every run at startup
+        return job
 
     # ---------------------------------------------------------------- queries
     def list_jobs(self, limit: int | None = 40) -> list[dict[str, Any]]:
@@ -471,14 +491,21 @@ class JobManager:
                 return False
             del self._jobs[job_id]
         self.store.delete(job_id)
+        if job.result_dir and not delete_files:
+            self._dismiss(job.result_dir)  # its run folder must not come back as a historical job
         if delete_files and job.result_dir:
             target = (self.root / job.result_dir).resolve()
             try:
                 target.relative_to((self.root / "simulations").resolve())
+            except ValueError:
+                pass  # only run folders under simulations/ are ever deleted
+            else:
                 if target.is_dir() and target.name.startswith("run_"):
-                    shutil.rmtree(target)
-            except Exception:
-                pass
+                    try:
+                        shutil.rmtree(target)
+                    except OSError as exc:
+                        self._notify("removed", job_id)
+                        raise Conflict(f"The job was removed, but its files could not be deleted: {exc}") from exc
         self._notify("removed", job_id)
         return True
 

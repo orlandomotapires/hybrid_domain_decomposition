@@ -13,7 +13,7 @@ from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
 from hdd.services.jobs import JobManager
-from hdd.services.jobs.manager import INTERRUPTED_MESSAGE, MAX_LOG_ENTRIES, _pid_alive
+from hdd.services.jobs.manager import INTERRUPTED_MESSAGE, MAX_LOG_ENTRIES, NO_RESULT_MESSAGE, _pid_alive
 from libs.runtime import workspace
 from tests.test_workspace import make_workspace
 
@@ -374,6 +374,36 @@ class JobManagerTest(unittest.TestCase):
         finally:
             bystander.kill()
             bystander.wait()
+
+    def _run_folder(self, name: str, log: str, metrics: bool = False) -> Path:
+        run = self.root / "simulations" / "sim_a" / "results" / name
+        run.mkdir(parents=True)
+        (run / "run_log").write_text(log)
+        if metrics:
+            (run / "run_metrics.json").write_text("{}")
+        return run
+
+    def test_a_killed_run_folder_is_listed_as_failed(self) -> None:
+        self._run_folder("run_killed", "[10:00:00 INFO] Coarsening Heavy Edge Matching\n")  # no metrics, no result
+        self._run_folder("run_ok", "[10:00:00 INFO] Simulation Completed Successfully\n", metrics=True)
+        reopened = JobManager(self.root, command_factory=self.fake)
+        killed = reopened.get_job("hist_sim_a_run_killed")
+        self.assertEqual(("failed", NO_RESULT_MESSAGE), (killed["status"], killed["error_message"]))
+        self.assertEqual("completed", reopened.get_job("hist_sim_a_run_ok")["status"])
+
+    def test_historical_logs_are_read_on_demand(self) -> None:
+        self._run_folder("run_ok", "[10:00:00 INFO] Simulation Completed Successfully\n", metrics=True)
+        reopened = JobManager(self.root, command_factory=self.fake)
+        self.assertEqual(0, reopened.list_jobs(None)[0]["log_count"])
+        self.assertEqual("Simulation Completed Successfully", reopened.get_job("hist_sim_a_run_ok")["logs"][-1]["message"])
+
+    def test_a_run_removed_from_the_list_does_not_come_back(self) -> None:
+        run = self._run_folder("run_ok", "[10:00:00 INFO] Simulation Completed Successfully\n", metrics=True)
+        first = JobManager(self.root, command_factory=self.fake)
+        self.assertTrue(first.delete_job("hist_sim_a_run_ok"))
+        self.assertTrue(run.exists())  # the files stay
+        reopened = JobManager(self.root, command_factory=self.fake)
+        self.assertIsNone(reopened.get_job("hist_sim_a_run_ok"))
 
     def test_symlinked_result_folders_are_kept(self) -> None:
         elsewhere = Path(self.tmp.name) / "other_disk"
