@@ -260,14 +260,21 @@ class JobManager:
                                     "message": f"Could not save the job record ({exc}); the job will not be "
                                                "followed after the Studio restarts."})
 
-    def _inside_workspace(self, value: Any) -> str | None:
-        """``value`` if it is a workspace-relative path that stays inside the workspace, else None."""
+    def _inside_workspace(self, value: Any, *, follow_links: bool) -> str | None:
+        """``value`` if it is a relative path that stays inside the workspace, else None.
+
+        Paths the Studio only reads or shows are checked lexically, so folders symlinked to
+        another disk keep working. A path it writes to (the log) must also resolve inside.
+        """
         if not isinstance(value, str) or not value or Path(value).is_absolute():
             return None
-        try:
-            (self.root / value).resolve().relative_to(self.root)
-        except (ValueError, OSError):
+        if os.path.normpath(value).split(os.sep)[0] == os.pardir:
             return None
+        if follow_links:
+            try:
+                (self.root / value).resolve().relative_to(self.root)
+            except (ValueError, OSError):
+                return None
         return value
 
     def _sanitize_record(self, record: dict[str, Any]) -> dict[str, Any]:
@@ -275,7 +282,10 @@ class JobManager:
         record = dict(record)
         for key in _RECORD_PATH_FIELDS:
             if record.get(key) is not None:
-                record[key] = self._inside_workspace(record[key])
+                safe = self._inside_workspace(record[key], follow_links=key == "log_path")
+                if safe is None:
+                    _log.warning("Job %s: ignoring %s %r (outside the workspace)", record.get("job_id"), key, record[key])
+                record[key] = safe
         for key in ("pid", "pid_start"):
             value = record.get(key)
             record[key] = value if isinstance(value, int) and not isinstance(value, bool) and value > 0 else None
@@ -562,32 +572,34 @@ class JobManager:
             if proc.poll() is None:
                 _signal_group(proc.pid, signal.SIGTERM)
                 self._after_grace(lambda: proc.poll() is None and _signal_group(proc.pid, signal.SIGKILL))
-        elif job.pid_start is None:
-            # Followed again after a restart, and the process start time is unknown: the pid may
-            # belong to an unrelated process by now, so it is never signalled.
-            unverified = _pid_alive(job.pid)
-        elif _pid_alive(job.pid, job.pid_start):  # followed again after a restart: not our child
+        elif _pid_verified(job.pid, job.pid_start):  # followed again after a restart: not our child
             pid, start = job.pid, job.pid_start
             _signal_group(pid, signal.SIGTERM)
-            self._after_grace(lambda: _pid_alive(pid, start) and _signal_group(pid, signal.SIGKILL))
+            self._after_grace(lambda: _pid_verified(pid, start) and _signal_group(pid, signal.SIGKILL))
+        elif _pid_alive(job.pid, job.pid_start):
+            # Followed again after a restart, but the process cannot be proven to be this job (no
+            # start time, or no /proc): the pid may belong to an unrelated process by now, so it
+            # is never signalled, and the job stays "running" until that process ends.
+            unverified = True
         changed = False
         with job._lock:
-            if job.status == "running":
+            stamp = datetime.now().strftime("%H:%M:%S")
+            if unverified and job.status == "running":
+                job.append_log({"timestamp": stamp, "level": "WARNING", "message": (
+                    f"Process {job.pid} could not be verified as this job, so it was not stopped. "
+                    "Stop it from a terminal if it is this job; the job is followed until it ends.")})
+                changed = True
+            elif job.status == "running":
                 now = time.time()
                 job.close_stage(now)
                 job.status = "cancelled"
                 job.finished_epoch = now
                 job.finished_at = datetime.now().isoformat()
-                stamp = datetime.now().strftime("%H:%M:%S")
                 job.append_log({"timestamp": stamp, "level": "WARNING", "message": "Job cancelled by user."})
-                if unverified:
-                    job.append_log({"timestamp": stamp, "level": "WARNING", "message": (
-                        f"Process {job.pid} could not be verified as this job, so it was not stopped. "
-                        "If the job is still running, stop it from a terminal.")})
                 changed = True
         if changed:
             self._save(job)
-            self._notify("finished", job_id)
+            self._notify("changed" if unverified else "finished", job_id)
         return job.to_dict(include_logs=True)
 
     def _after_grace(self, fn: Callable[[], Any]) -> None:
@@ -808,9 +820,15 @@ def _pid_alive(pid: int | None, start: int | None = None) -> bool:
         if start is not None and int(fields_after[19]) != start:
             return False
     except (OSError, ValueError, IndexError):
-        # Unknown identity: alive if we never had a start time, not ours if we did.
-        return start is None
+        pass  # no /proc: the process exists, which is all that can be said
     return True
+
+
+def _pid_verified(pid: int | None, start: int | None) -> bool:
+    """Whether ``pid`` is alive and provably the process started at ``start`` (safe to signal)."""
+    if not pid or start is None:
+        return False
+    return _process_start(pid) == start and _pid_alive(pid, start)
 
 
 def _signal_group(pid: int, sig: int) -> bool:

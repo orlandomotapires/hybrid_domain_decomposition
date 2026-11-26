@@ -246,6 +246,19 @@ class LegacyToleranceTest(unittest.TestCase):
         self.assertAlmostEqual(8.0, _tolerance(json.loads((study / tuner.BEST).read_text())))
         self.assertAlmostEqual(8.0, _tolerance(json.loads((study / tuner.PENDING).read_text())["3"]["parameters"]))
         self.assertAlmostEqual(8.0, _tolerance(tuner.load_trials(study)[0]["parameters"]))
+        self.assertFalse((study / tuner.MIGRATION_JOURNAL).exists())
+
+    def test_an_interrupted_migration_does_not_convert_twice(self) -> None:
+        from libs.tuning import tuner
+
+        study = self.root / "study_2"
+        study.mkdir()
+        (study / tuner.STUDY_CONFIG).write_text(json.dumps({"search_space": {}}))
+        # best_parameters.json was converted (0.005 -> 0.5) before the previous migration stopped.
+        (study / tuner.BEST).write_text(json.dumps({"partitioning_parameters": {"common": {"balance_tolerance": 0.5}}}))
+        (study / tuner.MIGRATION_JOURNAL).write_text(json.dumps({"done": [tuner.BEST]}))
+        tuner.migrate_legacy_study(study)
+        self.assertAlmostEqual(0.5, _tolerance(json.loads((study / tuner.BEST).read_text())))
 
 
 if __name__ == "__main__":

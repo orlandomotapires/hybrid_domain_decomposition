@@ -366,7 +366,7 @@ class JobManagerTest(unittest.TestCase):
             (self.root / workspace.STATE_DIR_NAME / "jobs" / "sim_y.log").write_text("")
             reopened = JobManager(self.root, command_factory=self.fake, kill_grace_sec=0.1)
             cancelled = reopened.cancel_job("sim_y")
-            self.assertEqual("cancelled", cancelled["status"])
+            self.assertEqual("running", cancelled["status"])  # not stopped, so not reported as stopped
             self.assertIn("could not be verified", cancelled["logs"][-1]["message"])
             time.sleep(0.3)
             self.assertIsNone(bystander.poll())
@@ -374,6 +374,14 @@ class JobManagerTest(unittest.TestCase):
         finally:
             bystander.kill()
             bystander.wait()
+
+    def test_symlinked_result_folders_are_kept(self) -> None:
+        elsewhere = Path(self.tmp.name) / "other_disk"
+        (elsewhere / "run_1").mkdir(parents=True)
+        (self.root / "simulations" / "linked").symlink_to(elsewhere)
+        self._write_record("sim_z", job_id="sim_z", status="completed", result_dir="simulations/linked/run_1")
+        reopened = JobManager(self.root, command_factory=self.fake)
+        self.assertEqual("simulations/linked/run_1", reopened.get_job("sim_z")["result_dir"])
 
     def test_a_malformed_event_does_not_stop_the_follower(self) -> None:
         self.fake.next["batch"] = "malformed_event"

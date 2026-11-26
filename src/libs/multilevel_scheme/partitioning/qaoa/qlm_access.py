@@ -8,10 +8,8 @@ from time import perf_counter, sleep
 from typing import Any
 
 from libs.runtime.log import log
-from libs.runtime.retry import call_with_retries
+from libs.runtime.retry import call_with_retries, is_transient_network_error
 
-# Network trouble while talking to QLMaaS (requests' errors derive from OSError).
-QLM_TRANSIENT_ERRORS: tuple[type[BaseException], ...] = (TimeoutError, ConnectionError, OSError)
 MAX_CONSECUTIVE_POLL_FAILURES = 3
 
 
@@ -228,11 +226,11 @@ def _wait_for_qlm_async_result(
 				timeout_seconds=api_call_timeout,
 				func=async_result.get_status,
 			)
-		except QLM_TRANSIENT_ERRORS as exc:
+		except Exception as exc:
 			# Polling is read-only: a dropped connection or a slow reply is retried, up to a limit,
 			# so a three-hour wait is not lost to one network blip.
 			poll_failures += 1
-			if poll_failures > MAX_CONSECUTIVE_POLL_FAILURES:
+			if not is_transient_network_error(exc) or poll_failures > MAX_CONSECUTIVE_POLL_FAILURES:
 				raise
 			log("WARNING", f"Polling {job_label} failed ({type(exc).__name__}: {exc}); "
 			               f"retrying ({poll_failures} of {MAX_CONSECUTIVE_POLL_FAILURES})"
@@ -258,7 +256,10 @@ def _wait_for_qlm_async_result(
 					timeout_seconds=min(300.0, max(10.0, deadline - perf_counter())),
 					func=async_result.get_result,
 				),
-				retry_on=QLM_TRANSIENT_ERRORS,
+				retry_on=(Exception,),
+				retry_if=is_transient_network_error,
+				deadline=deadline,  # perf_counter time; retries never wait past the job's timeout
+				clock=perf_counter,
 				what=f"Retrieving the {job_label} result" + (f" (job_id={job_id})" if job_id is not None else ""),
 			)
 			log("VERBOSE", f"Received {job_label} result from QLM in {perf_counter() - total_started:.2f}s")

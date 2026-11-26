@@ -57,12 +57,13 @@ def installed(tmp_path, monkeypatch, qapp):
 
 
 def test_thread_crash_reaches_the_log_file_and_the_user(qtbot, installed):
-    shown = []
-    diagnostics.set_reporter(shown.append)
+    shown, threads = [], []
+    diagnostics.set_reporter(lambda text: (shown.append(text), threads.append(threading.current_thread())))
     worker = threading.Thread(target=_boom, name="follower")
     worker.start()
     worker.join()
     qtbot.waitUntil(lambda: bool(shown))
     assert "boom" in shown[0] and str(installed) in shown[0]
+    assert threads[0] is threading.main_thread()  # widgets may only be touched from the GUI thread
     text = installed.read_text(encoding="utf-8")
     assert "Uncaught exception in thread follower" in text and "RuntimeError: boom" in text

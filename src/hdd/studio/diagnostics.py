@@ -15,7 +15,7 @@ import threading
 from pathlib import Path
 from typing import Callable
 
-from PySide6.QtCore import QObject, QStandardPaths, QtMsgType, Signal, qInstallMessageHandler
+from PySide6.QtCore import QObject, QStandardPaths, Qt, QtMsgType, Signal, Slot, qInstallMessageHandler
 
 LOGGER = logging.getLogger("hdd")
 _FORMAT = "%(asctime)s %(levelname)s %(name)s [%(threadName)s] %(message)s"
@@ -24,9 +24,18 @@ _state: dict[str, object] = {"installed": False, "log_file": None}
 
 
 class _Relay(QObject):
-    """Carries a message from any thread to the GUI thread."""
+    """Carries a message from any thread to the GUI thread (the relay lives there)."""
 
     message = Signal(str)
+
+    def __init__(self) -> None:
+        super().__init__()
+        # Queued, to a slot of this object: always runs in the relay's (GUI) thread.
+        self.message.connect(self.deliver, Qt.ConnectionType.QueuedConnection)
+
+    @Slot(str)
+    def deliver(self, text: str) -> None:
+        _deliver(text)
 
 
 _relay: _Relay | None = None
@@ -70,7 +79,6 @@ def install(log_dir: Path | None = None) -> Path | None:
     LOGGER.setLevel(logging.INFO)
 
     _relay = _Relay()
-    _relay.message.connect(_deliver)
     sys.excepthook = _excepthook
     threading.excepthook = _thread_excepthook
     qInstallMessageHandler(_qt_message)

@@ -17,23 +17,31 @@ The job lifecycle, path-traversal guards on service IDs and the exact P A Pᵀ t
 are the quantum partitioning path (untested, one crash on a normal path), parameter semantics defined in
 several places that disagree, and errors that never reach the user because the GUI has no logging.
 
-| # | Severity | Finding | Area |
-|---|---|---|---|
-| 1 | Critical | Recursive k-way splits a single-node block and crashes (QA/QAOA) | pipeline |
-| 2 | High | `balance_tolerance` changes meaning at 1.0; METIS ignores it | pipeline |
-| 3 | High | Default parameters defined 4–5 times and disagree | config |
-| 4 | High | Running tuning study invisible after 40 newer jobs | jobs/tuning |
-| 5 | High | Opening a shared workspace can execute code from it | security |
-| 6 | High | Job records trusted without validation | security |
-| 7 | High | GUI has no logging and no exception hooks | observability |
-| 8 | High | Crashed follower thread leaves job "running" forever | jobs |
-| 9 | High | Coarse problem size not checked before QAOA / simulated QA | pipeline |
-| 10 | High | Remote QPU calls never retried; "skipped" log is false | quantum |
-| 11 | High | Layering test does not guard `hdd.studio` | architecture |
-| 12 | High | Core algorithms have no tests | testing |
-| 13 | High | CI only tests Python 3.12 | CI |
-| 14–28 | Medium | see below | |
-| 29–34 | Low | see below | |
+| # | Severity | Finding | Area | Status |
+|---|---|---|---|---|
+| 1 | Critical | Recursive k-way splits a single-node block and crashes (QA/QAOA) | pipeline | Fixed |
+| 35 | Critical | Emulated QAOA never trained its angles (found while fixing #12) | pipeline | Fixed |
+| 2 | High | `balance_tolerance` changes meaning at 1.0; METIS ignores it | pipeline | Fixed |
+| 3 | High | Default parameters defined 4–5 times and disagree | config | Fixed |
+| 4 | High | Running tuning study invisible after 40 newer jobs | jobs/tuning | Fixed |
+| 5 | High | Opening a shared workspace can execute code from it | security | Fixed |
+| 6 | High | Job records trusted without validation | security | Fixed |
+| 7 | High | GUI has no logging and no exception hooks | observability | Fixed |
+| 8 | High | Crashed follower thread leaves job "running" forever | jobs | Fixed |
+| 9 | High | Coarse problem size not checked before QAOA / simulated QA | pipeline | Fixed |
+| 10 | High | Remote QPU calls never retried; "skipped" log is false | quantum | Fixed |
+| 11 | High | Layering test does not guard `hdd.studio` | architecture | Fixed |
+| 12 | High | Core algorithms have no tests | testing | Fixed |
+| 13 | High | CI only tests Python 3.12 | CI | Fixed |
+| 14–28 | Medium | see below | | Open (14, 20, 21 partly addressed) |
+| 29–34 | Low | see below | | Open |
+
+The fixes are on branch `fix/review-critical-high`, one commit per finding. Decisions taken with the
+owner: `balance_tolerance` is a percentage everywhere (old ratio values in tuning history and studies
+are converted on read), and the Studio's defaults are the single source of default parameters.
+Partly addressed Medium items: job records now use a unique temporary file (#14); cancelling an
+unverified process and failed record saves are reported (#20); batch planning reuses the pipeline's
+capacity limits (#21).
 
 ---
 
@@ -51,6 +59,16 @@ several places that disagree, and errors that never reach the user because the G
   On a real QPU/QLM run the crash can come after many paid submissions.
 - **Fix:** choose the heaviest block among blocks with ≥ 2 nodes. Add a regression test with k = coarse node
   count and skewed vertex weights.
+
+### 35. Emulated QAOA never trained its angles — verified, found while writing the tests for #12
+
+- **Where:** `src/libs/multilevel_scheme/partitioning/qaoa/qaoa.py` (`_qaoa_bipartition_on_pennylane`).
+- **Problem:** the initial angles were a plain numpy array. PennyLane treats those as non-trainable, so
+  `AdamOptimizer.step` returned them unchanged ("Attempted to differentiate a function with no trainable
+  parameters"): emulated QAOA sampled from its random starting angles and `num_steps` had no effect. QLM
+  runs (SciPy COBYLA) were not affected.
+- **Fix:** make the angles a trainable `pennylane.numpy` array; a test checks every optimizer step moves
+  them. Results of emulated QAOA runs change, including any produced before this fix.
 
 ## High
 

@@ -5,7 +5,7 @@ from typing import Any, Mapping, NoReturn, Sequence
 
 import numpy as np
 
-from libs.runtime.retry import call_with_retries
+from libs.runtime.retry import call_with_retries, is_transient_network_error
 
 
 @lru_cache(maxsize=1)
@@ -245,6 +245,7 @@ def sample_qubo_on_dwave_qpu(
 		best = call_with_retries(
 			_sample_once,
 			retry_on=qpu_connection_errors,
+			retry_if=is_transient_network_error,  # not 400/401/403: those fail the same way again
 			what=f"D-Wave submission{f' {qpu_problem_label}' if qpu_problem_label else ''}",
 		)
 	except handled_errors as exc:

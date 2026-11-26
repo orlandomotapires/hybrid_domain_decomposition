@@ -60,6 +60,7 @@ STOP_FILE = "STOP"
 PENDING = "pending_suggestions.json"
 # Unit of balance_tolerance in this study's files. Studies without it predate the percent-only rule.
 TOLERANCE_UNIT = "percent"
+MIGRATION_JOURNAL = ".tolerance_migration.json"
 
 
 # --------------------------------------------------------------------------- configuration
@@ -202,31 +203,47 @@ def migrate_legacy_study(study_dir: str | Path) -> bool:
     config = _read_json(study_dir / STUDY_CONFIG)
     if not isinstance(config, dict) or config.get("tolerance_unit") == TOLERANCE_UNIT:
         return False
+    # Each file is converted once: the journal lists the ones already done, so a migration that
+    # was interrupted resumes instead of converting a value twice (0.01 -> 1.0 -> 100.0).
+    journal_path = study_dir / MIGRATION_JOURNAL
+    journal = _read_json(journal_path, {}) or {}
+    done = set(journal.get("done") or [])
+
+    def mark(name: str) -> None:
+        done.add(name)
+        _write_json(journal_path, {"done": sorted(done)})
+
+    if BEST not in done:
+        best = _read_json(study_dir / BEST)
+        if isinstance(best, dict):
+            _legacy_tolerance_to_percent(best)
+            _write_json(study_dir / BEST, best)
+        mark(BEST)
+    if PENDING not in done:
+        pending = _read_json(study_dir / PENDING)
+        if isinstance(pending, dict):
+            for item in pending.values():
+                if isinstance(item, dict):
+                    _legacy_tolerance_to_percent(item.get("parameters"))
+            _write_json(study_dir / PENDING, pending)
+        mark(PENDING)
+    if TRIALS not in done:
+        trials = load_trials(study_dir)
+        if trials:
+            for row in trials:
+                _legacy_tolerance_to_percent(row.get("parameters"))
+            tmp = study_dir / (TRIALS + ".tmp")
+            tmp.write_text("".join(json.dumps(row, default=float) + "\n" for row in trials), encoding="utf-8")
+            tmp.replace(study_dir / TRIALS)
+        mark(TRIALS)
+
     entry = (config.get("search_space") or {}).get("balance_tolerance")
     if isinstance(entry, dict) and "high" in entry and float(entry["high"]) <= 1.0:
         entry["low"], entry["high"] = float(entry["low"]) * 100.0, float(entry["high"]) * 100.0
     _legacy_tolerance_to_percent(config.get("base_parameters"))
-
-    best = _read_json(study_dir / BEST)
-    if isinstance(best, dict):
-        _legacy_tolerance_to_percent(best)
-        _write_json(study_dir / BEST, best)
-    pending = _read_json(study_dir / PENDING)
-    if isinstance(pending, dict):
-        for item in pending.values():
-            if isinstance(item, dict):
-                _legacy_tolerance_to_percent(item.get("parameters"))
-        _write_json(study_dir / PENDING, pending)
-    trials = load_trials(study_dir)
-    if trials:
-        for row in trials:
-            _legacy_tolerance_to_percent(row.get("parameters"))
-        tmp = study_dir / (TRIALS + ".tmp")
-        tmp.write_text("".join(json.dumps(row, default=float) + "\n" for row in trials), encoding="utf-8")
-        tmp.replace(study_dir / TRIALS)
-
     config["tolerance_unit"] = TOLERANCE_UNIT
-    _write_json(study_dir / STUDY_CONFIG, config)  # last: an interrupted migration runs again
+    _write_json(study_dir / STUDY_CONFIG, config)  # the config is converted in one write, last
+    journal_path.unlink(missing_ok=True)
     return True
 
 

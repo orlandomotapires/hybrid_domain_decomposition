@@ -63,7 +63,14 @@ def decompose_matrix(matrix, general_parameters, coarsening_parameters, partitio
     strategy_partitioning_parameters = strategies_partitioning_parameters.get(partitioning_strategy)
 
     k_target = int(common_partitioning_parameters.get("k_target"))
-    balance_tolerance = float(common_partitioning_parameters.get("balance_tolerance"))		
+    balance_tolerance = float(common_partitioning_parameters.get("balance_tolerance"))
+    if 0.0 < balance_tolerance <= 1.0:
+        log(
+            "WARNING",
+            f"balance_tolerance={balance_tolerance:g} means ±{balance_tolerance:g}%. Parameter files written "
+            "before November 2026 used values up to 1.0 as fractions (0.1 = 10%); "
+            f"if this file is one of them, use {balance_tolerance * 100:g} instead.",
+        )
 
     # Uncoarsening parameters
     refine_objective = str(uncoarsening_parameters.get("refine_objective"))
