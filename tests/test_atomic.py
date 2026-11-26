@@ -36,5 +36,38 @@ class AtomicWriteTest(unittest.TestCase):
         self.assertEqual({"new": True}, json.loads(self.path.read_text()))
 
 
+class AppendLineTest(unittest.TestCase):
+    def test_a_line_cut_short_by_a_crash_does_not_swallow_the_next_one(self) -> None:
+        from libs.runtime.atomic import append_line
+
+        with TemporaryDirectory() as tmp:
+            path = Path(tmp) / "history.jsonl"
+            path.write_text('{"a": 1}\n{"b": ')  # a writer died mid-line
+            append_line(path, json.dumps({"c": 3}))
+            lines = path.read_text().splitlines()
+        self.assertEqual({"c": 3}, json.loads(lines[-1]))
+
+    def test_concurrent_appends_keep_every_line_whole(self) -> None:
+        import multiprocessing
+
+        with TemporaryDirectory() as tmp:
+            path = Path(tmp) / "trials.jsonl"
+            ctx = multiprocessing.get_context("spawn")
+            procs = [ctx.Process(target=_append_many, args=(str(path), n)) for n in range(4)]
+            for p in procs:
+                p.start()
+            for p in procs:
+                p.join(60)
+            rows = [json.loads(line) for line in path.read_text().splitlines()]
+        self.assertEqual(4 * 50, len(rows))
+
+
+def _append_many(path: str, writer: int) -> None:
+    from libs.runtime.atomic import append_line
+
+    for i in range(50):  # large lines: more than one buffer each
+        append_line(path, json.dumps({"writer": writer, "i": i, "pad": "x" * 20000}))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -27,7 +27,7 @@ from typing import Any
 
 from libs.multilevel_scheme.partitioning.utils.metrics import legacy_tolerance_percent
 from libs.runtime import events, workspace
-from libs.runtime.atomic import atomic_write_json, atomic_write_text
+from libs.runtime.atomic import append_line, atomic_write_json, atomic_write_text
 from libs.runtime.matrix_library import resolve_matrix
 from libs.runtime.utils import load_mtx, validate_and_normalize_simulation_parameters
 from libs.tuning import history as history_mod
@@ -250,8 +250,7 @@ def _load_config(study_dir: Path) -> dict[str, Any] | None:
 
 
 def _append_trial(study_dir: Path, row: dict[str, Any]) -> None:
-    with (study_dir / TRIALS).open("a", encoding="utf-8") as f:
-        f.write(json.dumps(row, default=float) + "\n")
+    append_line(study_dir / TRIALS, json.dumps(row, default=float))
 
 
 def _make_sampler(config: dict[str, Any]):

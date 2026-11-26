@@ -19,6 +19,7 @@ import numpy as np
 
 from libs.multilevel_scheme.partitioning.utils.metrics import legacy_tolerance_percent
 from libs.runtime import workspace
+from libs.runtime.atomic import append_line
 from libs.tuning.objectives import objective_values, read_run_metrics, weighted_score
 
 TOLERANCE_UNIT = "percent"
@@ -55,10 +56,8 @@ def record_run(
         "metrics": metrics,
         "tolerance_unit": TOLERANCE_UNIT,
     }
-    path = history_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a", encoding="utf-8") as f:
-        f.write(json.dumps(entry, default=float) + "\n")
+    # Batches, tuning studies and single runs may append at the same time.
+    append_line(history_path(), json.dumps(entry, default=float))
 
 
 def load_history(matrix_id: str | None = None) -> list[dict[str, Any]]:
