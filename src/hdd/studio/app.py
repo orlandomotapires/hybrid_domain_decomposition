@@ -63,6 +63,7 @@ def settle(app: QApplication, window=None, seconds: float = 0.6) -> None:
         time.sleep(0.02)
     if window is not None:
         window.ctx.tasks.wait(10000)
+        window.ctx.tasks.drain()
     app.processEvents()
     app.processEvents()
 

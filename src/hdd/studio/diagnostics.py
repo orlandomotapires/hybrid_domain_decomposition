@@ -10,12 +10,13 @@ from __future__ import annotations
 
 import logging
 import logging.handlers
+import queue
 import sys
 import threading
 from pathlib import Path
 from typing import Callable
 
-from PySide6.QtCore import QObject, QStandardPaths, Qt, QtMsgType, Signal, Slot, qInstallMessageHandler
+from PySide6.QtCore import QObject, QStandardPaths, QtMsgType, QTimer, qInstallMessageHandler
 
 LOGGER = logging.getLogger("hdd")
 _FORMAT = "%(asctime)s %(levelname)s %(name)s [%(threadName)s] %(message)s"
@@ -24,18 +25,30 @@ _state: dict[str, object] = {"installed": False, "log_file": None}
 
 
 class _Relay(QObject):
-    """Carries a message from any thread to the GUI thread (the relay lives there)."""
+    """Carries messages from any thread to the GUI thread, where the relay lives.
 
-    message = Signal(str)
+    Other threads only append to a queue; a timer on the GUI thread hands them on. (A Qt signal
+    emitted from another thread can deadlock with the GUI thread: see ``tasks.py``.)
+    """
 
-    def __init__(self) -> None:
+    def __init__(self, interval_ms: int = 100) -> None:
         super().__init__()
-        # Queued, to a slot of this object: always runs in the relay's (GUI) thread.
-        self.message.connect(self.deliver, Qt.ConnectionType.QueuedConnection)
+        self._messages: queue.SimpleQueue[str] = queue.SimpleQueue()
+        self._timer = QTimer(self)
+        self._timer.setInterval(interval_ms)
+        self._timer.timeout.connect(self.drain)
+        self._timer.start()
 
-    @Slot(str)
-    def deliver(self, text: str) -> None:
-        _deliver(text)
+    def post(self, text: str) -> None:  # any thread
+        self._messages.put(text)
+
+    def drain(self) -> None:
+        while True:
+            try:
+                text = self._messages.get_nowait()
+            except queue.Empty:
+                return
+            _deliver(text)
 
 
 _relay: _Relay | None = None
@@ -102,7 +115,7 @@ def report_exception(exc: BaseException, context: str, traceback_text: str | Non
     if log_file() is not None:
         summary += f" (details in {log_file()})"
     if _relay is not None:
-        _relay.message.emit(summary)  # queued to the GUI thread when called from elsewhere
+        _relay.post(summary)  # shown from the GUI thread
 
 
 def _deliver(text: str) -> None:
