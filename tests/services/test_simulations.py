@@ -102,6 +102,19 @@ class SimulationsServiceTest(unittest.TestCase):
         with self.assertRaises(InvalidInput):
             simulations.save_config("cfg", {**config, "parameters_file_path": "does_not_exist.json"})
 
+    def test_disk_errors_are_not_reported_as_invalid_input(self) -> None:
+        params = self.new_simulation("disk")["simulation_parameters"]
+        with patch("hdd.services.simulations.write_json", side_effect=PermissionError("read-only")):
+            with self.assertRaises(PermissionError):
+                simulations.save_parameters("disk", params)
+
+    def test_saving_over_an_unreadable_parameters_file_keeps_a_copy(self) -> None:
+        params = self.new_simulation("broken")["simulation_parameters"]
+        data = workspace.simulations_dir() / "broken" / "data"
+        (data / "simulation_parameters.json").write_text("{not json")
+        simulations.save_parameters("broken", params)
+        self.assertEqual("{not json", (data / "simulation_parameters.json.unreadable").read_text())
+
     def test_preset_lifecycle(self) -> None:
         params = self.new_simulation("presets")["simulation_parameters"]
         saved = simulations.save_preset("presets", "my preset", params, False)

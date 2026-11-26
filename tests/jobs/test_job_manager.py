@@ -436,6 +436,14 @@ class JobManagerTest(unittest.TestCase):
         finally:
             os.killpg(job["pid"], 9)
 
+    def test_a_corrupt_record_is_set_aside(self) -> None:
+        jobs_dir = self.root / workspace.STATE_DIR_NAME / "jobs"
+        jobs_dir.mkdir(parents=True, exist_ok=True)
+        (jobs_dir / "sim_cut.json").write_text('{"schema": 1, "job_id": "sim_')
+        JobManager(self.root, command_factory=self.fake)
+        self.assertFalse((jobs_dir / "sim_cut.json").exists())
+        self.assertTrue((jobs_dir / "sim_cut.json.corrupt").exists())
+
     def test_an_unreadable_record_does_not_block_the_workspace(self) -> None:
         self._write_record("sim_bad", job_id="sim_bad", status="completed", started_epoch="yesterday")
         self._write_record("sim_good", job_id="sim_good", status="completed")

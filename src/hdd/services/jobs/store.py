@@ -7,11 +7,14 @@ name and must not be able to point outside this directory.
 from __future__ import annotations
 
 import json
+import logging
 import re
 from pathlib import Path
 from typing import Any
 
 from libs.runtime.atomic import atomic_write_json
+
+_log = logging.getLogger("hdd.jobs")
 
 SCHEMA = 1
 _JOB_ID_RE = re.compile(r"^[A-Za-z0-9_-][A-Za-z0-9_.-]*$")
@@ -45,12 +48,21 @@ class JobStore:
         if not self.directory.is_dir():
             return []
         records = []
+        for stale in self.directory.glob(".*.tmp"):  # left by a writer that crashed
+            stale.unlink(missing_ok=True)
         for path in sorted(self.directory.glob("*.json")):
             try:
                 record = json.loads(path.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError):
+            except (OSError, json.JSONDecodeError) as exc:
+                # Keep the file for inspection, out of the way of the next load.
+                _log.warning("Unreadable job record %s (%s); renamed to %s.corrupt", path.name, exc, path.name)
+                try:
+                    path.replace(path.with_name(path.name + ".corrupt"))
+                except OSError:
+                    pass
                 continue
             if not isinstance(record, dict) or record.get("schema") != SCHEMA:
+                _log.info("Ignoring job record %s with an unknown format", path.name)
                 continue
             # The id names the record's own file; anything else is a stray or a crafted record.
             if valid_job_id(record.get("job_id")) and path.stem == record["job_id"]:

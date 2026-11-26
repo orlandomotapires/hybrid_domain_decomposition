@@ -31,6 +31,17 @@ from .matrix_files import simulation_matrix_info
 
 _log = logging.getLogger("hdd.services")
 
+# Errors that mean the user's files or request are wrong. Anything else (a full disk, a permission
+# problem, a bug) is not "invalid input": it propagates and is logged with its traceback.
+_INPUT_ERRORS = (ValueError, KeyError, TypeError, FileNotFoundError)
+
+
+def _input_error(exc: Exception) -> Exception:
+    # A missing file here is one the simulation's own config points to: the config is wrong.
+    if isinstance(exc, KeyError):
+        return InvalidInput(f"Missing value: {exc.args[0] if exc.args else exc}")
+    return InvalidInput(str(exc))
+
 
 
 def default_parameters_for(matrix_id: str | None) -> dict[str, Any]:
@@ -47,7 +58,8 @@ def default_parameters_for(matrix_id: str | None) -> dict[str, Any]:
         from libs.tuning.auto_select import auto_select_parameters
 
         selection = auto_select_parameters(matrix_id, parameters)
-    except Exception:
+    except Exception:  # the generic defaults still make a valid simulation
+        _log.warning("Auto-selection failed for matrix %s; using the default parameters", matrix_id, exc_info=True)
         return parameters
     return selection["parameters"] if selection.get("feasible") else parameters
 
@@ -184,8 +196,8 @@ def get_simulation(simulation_id: str) -> dict[str, Any]:
         raise NotFound(f"Simulation {simulation_id!r} not found")
     try:
         return inspect_simulation(simulation_dir)
-    except Exception as exc:
-        raise InvalidInput(str(exc)) from exc
+    except _INPUT_ERRORS as exc:
+        raise _input_error(exc) from exc
 
 
 def create_simulation(name: str | None = None, clone_from: str | None = None, matrix: str | None = None) -> dict[str, Any]:
@@ -232,8 +244,8 @@ def save_config(simulation_id: str, config_payload: dict[str, Any]) -> dict[str,
         resolve_parameters_file_path(data_dir, normalized["parameters_file_path"])
         write_json(data_dir / "simulation_config.json", normalized)
         return inspect_simulation(simulation_dir)
-    except Exception as exc:
-        raise InvalidInput(str(exc)) from exc
+    except _INPUT_ERRORS as exc:
+        raise _input_error(exc) from exc
 
 
 def save_parameters(simulation_id: str, params_payload: dict[str, Any]) -> dict[str, Any]:
@@ -272,8 +284,8 @@ def save_parameters(simulation_id: str, params_payload: dict[str, Any]) -> dict[
 
         write_json(params_path, normalized)
         return inspect_simulation(simulation_dir)
-    except Exception as exc:
-        raise InvalidInput(str(exc)) from exc
+    except _INPUT_ERRORS as exc:
+        raise _input_error(exc) from exc
 
 
 def load_preset(simulation_id: str, preset_file: str) -> dict[str, Any]:
@@ -288,8 +300,8 @@ def load_preset(simulation_id: str, preset_file: str) -> dict[str, Any]:
             "parameters": normalized,
             "estimates": quantum_estimates(normalized),
         }
-    except Exception as exc:
-        raise InvalidInput(str(exc)) from exc
+    except _INPUT_ERRORS as exc:
+        raise _input_error(exc) from exc
 
 
 def save_preset(simulation_id: str, filename: str, parameters: dict[str, Any], set_active: bool = True) -> dict[str, Any]:
@@ -319,8 +331,8 @@ def save_preset(simulation_id: str, filename: str, parameters: dict[str, Any], s
             write_json(config_path, sim_config)
 
         return inspect_simulation(simulation_dir)
-    except Exception as exc:
-        raise InvalidInput(str(exc)) from exc
+    except _INPUT_ERRORS as exc:
+        raise _input_error(exc) from exc
 
 
 def validate_parameters(params_payload: dict[str, Any]) -> dict[str, Any]:
@@ -488,7 +500,7 @@ def preview_coarsening(simulation_id: str, params_payload: dict[str, Any]) -> di
             "elapsed_ms": elapsed_ms,
             "levels": levels,
         }
-    except Exception as exc:
-        raise InvalidInput(str(exc)) from exc
+    except _INPUT_ERRORS as exc:
+        raise _input_error(exc) from exc
 
 
