@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import json
+import logging
 import re
 import shutil
 import time
@@ -27,6 +28,8 @@ from libs.runtime.utils import (
 
 from .errors import Conflict, InvalidInput, NotFound
 from .matrix_files import simulation_matrix_info
+
+_log = logging.getLogger("hdd.services")
 
 
 
@@ -248,8 +251,12 @@ def save_parameters(simulation_id: str, params_payload: dict[str, Any]) -> dict[
         if params_path.exists():
             try:
                 existing_params = json.loads(params_path.read_text(encoding="utf-8"))
-            except Exception:
-                pass
+            except (OSError, json.JSONDecodeError) as exc:
+                # The other strategies' settings cannot be carried over; keep the old file aside
+                # instead of overwriting it silently.
+                backup = params_path.with_name(params_path.name + ".unreadable")
+                shutil.copy2(params_path, backup)
+                _log.warning("%s was unreadable (%s); kept a copy as %s", params_path, exc, backup.name)
 
         normalized = validate_and_normalize_simulation_parameters(params_payload)
 

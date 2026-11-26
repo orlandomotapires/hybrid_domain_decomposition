@@ -11,6 +11,7 @@ import numpy as np
 from scipy import sparse
 
 from libs.profiling.matrix_metrics import _sparsity_metrics
+from libs.runtime.atomic import atomic_write_json
 from libs.runtime.matrix_library import load_matrix_meta
 from libs.graph_prep import build_pipeline_graph  # noqa: F401  (re-exported)
 from libs.runtime.utils import load_mtx, matrix_to_graph
@@ -99,7 +100,7 @@ def compute_matrix_features(matrix_id: str, dof_per_node: int = 1, *, use_cache:
         raise ValueError(f"Matrix size {A.shape[0]} is not divisible by dof_per_node={dof_per_node}")
     cache.setdefault("graph", {})[key] = _graph_features(build_pipeline_graph(A, int(dof_per_node)))
     try:
-        cache_path.write_text(json.dumps(cache, indent=2), encoding="utf-8")
+        atomic_write_json(cache_path, cache)
     except OSError:
         pass
     return _assemble(matrix_id, cache, key)

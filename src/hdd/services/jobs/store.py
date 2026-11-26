@@ -7,11 +7,11 @@ name and must not be able to point outside this directory.
 from __future__ import annotations
 
 import json
-import os
 import re
-import tempfile
 from pathlib import Path
 from typing import Any
+
+from libs.runtime.atomic import atomic_write_json
 
 SCHEMA = 1
 _JOB_ID_RE = re.compile(r"^[A-Za-z0-9_-][A-Za-z0-9_.-]*$")
@@ -38,17 +38,8 @@ class JobStore:
 
     def save(self, record: dict[str, Any]) -> None:
         """Write atomically, so a crash never leaves a half-written record."""
-        path = self.record_path(record["job_id"])
-        self.directory.mkdir(parents=True, exist_ok=True)
-        # A unique temporary file: the UI thread and a follower thread may save the same job at once.
-        fd, tmp = tempfile.mkstemp(dir=self.directory, prefix=f".{path.name}.", suffix=".tmp")
-        try:
-            with os.fdopen(fd, "w", encoding="utf-8") as handle:
-                json.dump({"schema": SCHEMA, **record}, handle, indent=2)
-            os.replace(tmp, path)
-        except BaseException:
-            Path(tmp).unlink(missing_ok=True)
-            raise
+        # Unique temporary file: the UI thread and a follower thread may save the same job at once.
+        atomic_write_json(self.record_path(record["job_id"]), {"schema": SCHEMA, **record})
 
     def load_all(self) -> list[dict[str, Any]]:
         if not self.directory.is_dir():

@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from libs.runtime import workspace
+from libs.runtime.atomic import atomic_write_text
 
 MATRIX_META_FILE = "matrix.json"
 
@@ -88,5 +89,5 @@ def write_matrix_meta(
     if description:
         payload["description"] = description
     meta_path = directory / MATRIX_META_FILE
-    meta_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    atomic_write_text(meta_path, json.dumps(payload, indent=2) + "\n")
     return meta_path

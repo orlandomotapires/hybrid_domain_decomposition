@@ -10,6 +10,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+from libs.runtime.atomic import atomic_write_json
 from libs.runtime.defaults import common_defaults, strategy_defaults
 
 AVAILABLE_SAVE_OUTPUTS = {
@@ -123,9 +124,8 @@ def resolve_simulation_matrix(simulation_config: dict[str, Any]) -> Path:
     return resolve_matrix(str(simulation_config["input_matrix"]))
 
 def write_json(path: Path, obj: Any) -> None:
-	path.parent.mkdir(parents=True, exist_ok=True)
-	with path.open("w", encoding="utf-8") as f:
-		json.dump(obj, f, indent=2, sort_keys=True)
+	"""Write ``obj`` as JSON atomically: readers see the old file or the new one, never a part."""
+	atomic_write_json(path, obj, indent=2, sort_keys=True)
 
 def write_results_table_text(path: Path, data: dict[str, Any]) -> None:
     def _format_value(v: Any) -> str:
