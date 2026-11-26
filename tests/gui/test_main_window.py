@@ -175,3 +175,13 @@ def test_theme_choice_is_remembered(window, theme, settings):
     window.set_theme("dark")
     assert theme.tokens.is_dark
     assert settings.theme_mode() == "dark"
+
+
+def test_toolbar_toggles_light_and_dark(window, theme, settings):
+    window.set_theme("light")
+    window.act_toggle_theme.trigger()
+    assert theme.tokens.is_dark and settings.theme_mode() == "dark"
+    assert "light" in window.act_toggle_theme.toolTip()
+    window.act_toggle_theme.trigger()
+    assert not theme.tokens.is_dark and settings.theme_mode() == "light"
+    assert window.act_toggle_theme in window.toolbar.actions()

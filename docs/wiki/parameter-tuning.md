@@ -31,7 +31,10 @@ Each parameter is fixed (kept at the simulation's value) or free (explored withi
 - **Tuning → New study…** (or **New study…** on a simulation's Tuning page) opens a dialog for objectives, sampler, number of trials, runs per trial and the parameters to explore, and starts the study as a job.
 - A study's page shows its settings, the best values and every trial; the plot shows the Pareto front of the first two objectives, or the best score per trial. **Stop after this trial**, **Resume**, **Apply best parameters** (writes them into the simulation) and **Delete** are on the same page.
 
-![A Pareto study](images/tuning-study.png)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="images/tuning-study-dark.png">
+  <img src="images/tuning-study.png" alt="A Pareto study">
+</picture>
 
 ## Command line
 

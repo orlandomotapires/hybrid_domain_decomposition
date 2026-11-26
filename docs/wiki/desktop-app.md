@@ -2,7 +2,10 @@
 
 HDD Studio is a native Qt 6 app. Start it with `./run.sh` (or from the application menu, see [Installation](installation.md)). It opens the last workspace you used; `./run.sh --desktop --workspace DIR` opens another one, and `--theme light|dark|system` overrides the theme for one session.
 
-![A simulation with its latest run](images/simulation.png)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="images/simulation-dark.png">
+  <img src="images/simulation.png" alt="A simulation with its latest run">
+</picture>
 
 ## The window
 
@@ -12,7 +15,7 @@ HDD Studio is a native Qt 6 app. Start it with `./run.sh` (or from the applicati
 - **Console, Jobs, Problems** (bottom): the live log of the followed job, every job with its state and progress, and the validation errors of open simulations. Double-click a problem to jump to its field.
 - **Help** (right, opened with F1): the documentation, opened at the parameter that has the focus.
 
-Every panel can be moved, floated, tabbed or closed; **View → Reset layout** restores the default, and the layout is remembered between sessions. **View → Theme** switches between light, dark and the system setting.
+Every panel can be moved, floated, tabbed or closed; **View → Reset layout** restores the default, and the layout is remembered between sessions. The sun/moon button at the right end of the tool bar (Ctrl+Shift+L) switches between the light and dark themes; **View → Theme** also offers following the system setting.
 
 ## Pages
 
@@ -33,11 +36,17 @@ Every panel can be moved, floated, tabbed or closed; **View → Reset layout** r
 
 Editing the coarsening limits: the preview recomputes every level as you type, and says so when a range cannot be reached.
 
-![The coarsening preview following edits to the limits](images/coarsening-preview.gif)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="images/coarsening-preview-dark.gif">
+  <img src="images/coarsening-preview.gif" alt="The coarsening preview following edits to the limits">
+</picture>
 
 Comparing two runs of a simulation: their locality curves overlaid, their KPIs side by side.
 
-![Two runs compared](images/compare-runs.png)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="images/compare-runs-dark.png">
+  <img src="images/compare-runs.png" alt="Two runs compared">
+</picture>
 
 ## Editing
 
@@ -45,7 +54,10 @@ Parameter edits are kept in memory until you save (**Ctrl+S**). The header shows
 
 ## Jobs
 
-![Running a simulation: live log, then the finished run](images/run-simulation.gif)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="images/run-simulation-dark.gif">
+  <img src="images/run-simulation.gif" alt="Running a simulation: live log, then the finished run">
+</picture>
 
 Simulations, batches and tuning studies run as separate processes, so the window stays responsive and a job can be stopped at any time (**Shift+F5** stops the job shown in the console). Each job keeps a record and a log in `<workspace>/.hdd/jobs/` (a batch's log is `batch/runs/<batch>/batch.log`).
 
@@ -53,7 +65,10 @@ Jobs keep running when you quit: the app asks whether to keep them running (the 
 
 The status bar shows the followed job's stage and progress: pipeline stage for a simulation, cases for a batch, trials for a tuning study.
 
-![A failed run explains why](images/run-failed.png)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="images/run-failed-dark.png">
+  <img src="images/run-failed.png" alt="A failed run explains why">
+</picture>
 
 ## Shortcuts
 
@@ -68,9 +83,19 @@ The status bar shows the followed job's stage and progress: pipeline stage for a
 | Ctrl+Shift+N | New simulation |
 | Ctrl+N / Ctrl+O | New / open workspace |
 | Ctrl+R | Reload the workspace from disk |
+| Ctrl+Shift+L | Switch between the light and dark themes |
 
-![Help panel](images/help.png)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="images/help-dark.png">
+  <img src="images/help.png" alt="Help panel">
+</picture>
 
-The dark theme uses the same layout and colours for data:
+## Dark theme
 
-![Dark theme](images/run-dark.png)
+The dark theme keeps the layout and the colours of the data; only the surfaces change. The pictures on this page follow your GitHub theme; here are the dark captures for everyone:
+
+![A run in the dark theme](images/run-dark.png)
+
+![Running a simulation in the dark theme](images/run-simulation-dark.gif)
+
+![The coarsening preview in the dark theme](images/coarsening-preview-dark.gif)

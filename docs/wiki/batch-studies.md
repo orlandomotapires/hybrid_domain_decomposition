@@ -6,7 +6,10 @@ A batch runs every combination of matrices × partitioning methods × coarsening
 
 The configuration is `batch/batch_configuration.json`. Edit it in the desktop app (**Batch → Configuration** in the project tree) or by hand.
 
-![Batch configuration in the desktop app](images/batch-configuration.png)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="images/batch-configuration-dark.png">
+  <img src="images/batch-configuration.png" alt="Batch configuration in the desktop app">
+</picture>
 
 | Key | Meaning |
 | --- | --- |
@@ -49,4 +52,7 @@ Each batch writes `batch/runs/batch_<timestamp>/`:
 
 In the app, select the batch under **Batch → Runs**: the page lists the cases and, for a chosen matrix and coarsening scale, plots each method's band concentration against the original ordering.
 
-![Batch run analysis](images/batch-run.png)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="images/batch-run-dark.png">
+  <img src="images/batch-run.png" alt="Batch run analysis">
+</picture>

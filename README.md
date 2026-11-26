@@ -42,7 +42,16 @@ packaging/linux/install-launcher.sh      # add HDD Studio to the application men
 
 Running a simulation from the desktop app: the log streams in the console, then the run opens with its reordered matrix and locality curve.
 
-![Running a simulation in HDD Studio](docs/wiki/images/run-simulation.gif)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/wiki/images/run-simulation-dark.gif">
+  <img src="docs/wiki/images/run-simulation.gif" alt="Running a simulation in HDD Studio">
+</picture>
+
+The app has a light and a dark theme: switch with the sun/moon button at the right of the tool bar (Ctrl+Shift+L). On GitHub the pictures follow your theme; both are shown here:
+
+| Light | Dark |
+| --- | --- |
+| ![HDD Studio in the light theme](docs/wiki/images/simulation.png) | ![HDD Studio in the dark theme](docs/wiki/images/simulation-dark.png) |
 
 ## Test
 
