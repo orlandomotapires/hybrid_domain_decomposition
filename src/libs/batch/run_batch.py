@@ -5,7 +5,6 @@ from __future__ import annotations
 import argparse
 from contextlib import redirect_stderr, redirect_stdout
 from dataclasses import dataclass
-import importlib.util
 from datetime import datetime
 import json
 import os
@@ -19,6 +18,7 @@ from typing import Any
 
 
 from libs.runtime import events, workspace
+from libs.runtime.launch import child_environment, module_command
 from libs.runtime.matrix_library import resolve_matrix
 from libs.runtime.runtime import run_simulation
 from libs.runtime.utils import (
@@ -236,15 +236,11 @@ def _launch_nohup(case_count: int) -> int:
     batch_dir = _resolve_batch_dir()
     log_path = batch_dir / "batch.log"
     child_args = [arg for arg in sys.argv[1:] if arg != "--nohup"]
-    child_env = dict(os.environ)
-    child_env["HDD_BATCH_DIR"] = str(batch_dir.relative_to(workspace.root()))
-    # The child runs with ``-m``; make sure it finds this package wherever it is installed.
-    package_root = str(Path(importlib.util.find_spec("libs").submodule_search_locations[0]).parent)
-    child_env["PYTHONPATH"] = os.pathsep.join(p for p in (package_root, child_env.get("PYTHONPATH")) if p)
+    child_env = child_environment({"HDD_BATCH_DIR": str(batch_dir.relative_to(workspace.root()))})
 
     with log_path.open("a", encoding="utf-8") as log_handle:
         process = subprocess.Popen(
-            [sys.executable, "-m", "libs.batch.run_batch", *child_args],
+            module_command("libs.batch.run_batch", child_args, unbuffered=False),
             cwd=str(workspace.root()),
             stdin=subprocess.DEVNULL,
             stdout=log_handle,
