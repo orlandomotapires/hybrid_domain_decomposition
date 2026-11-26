@@ -42,6 +42,14 @@ class PlanTest(unittest.TestCase):
         self.assertEqual("m1__metis__big", cases[0]["case_key"])
         self.assertTrue(next(c for c in cases if c["algorithm"] == "qaoa_hw")["is_async"])
 
+    def test_a_repeated_matrix_runs_once_as_in_the_batch_runner(self) -> None:
+        from libs.batch.run_batch import expand_cases, parse_batch_configuration
+
+        repeated = config(matrices=[{"key": "m1"}, {"key": "m1"}], base_parameters={})
+        planned = [c["case_key"] for c in batch.dry_run_cases(repeated)]
+        self.assertEqual([c.case_key for c in expand_cases(parse_batch_configuration(repeated))], planned)
+        self.assertEqual(len(planned), len(set(planned)))
+
     def test_qpu_load_and_capacity(self) -> None:
         plan = batch.plan(config())
         by_key = {c["case_key"]: c for c in plan["cases"]}

@@ -17,6 +17,7 @@ import traceback
 from typing import Any
 
 
+from libs.batch.cases import case_key, unique_matrix_keys
 from libs.runtime import events, workspace
 from libs.runtime.launch import child_environment, module_command
 from libs.runtime.matrix_library import resolve_matrix
@@ -56,7 +57,7 @@ class BatchCase:
 
     @property
     def case_key(self) -> str:
-        return f"{self.geometry.key}__{self.algorithm.key}__{self.coarsening.key}"
+        return case_key(self.geometry.key, self.algorithm.key, self.coarsening.key)
 
 
 def _clone_json_like(value: Any) -> Any:
@@ -70,12 +71,9 @@ def _load_json(path: Path) -> dict[str, Any]:
 
 def _load_matrices(configuration: dict[str, Any]) -> tuple[Geometry, ...]:
     """Library matrices to run (``"matrices": [{"key": "<matrix_id>"}]``), de-duplicated in order."""
-    seen: list[str] = []
-    for entry in configuration.get("matrices", []):
-        key = str(entry["key"])
-        if key not in seen:
-            seen.append(key)
-    return tuple(Geometry(key=key) for key in seen)
+    if any(not isinstance(entry, dict) or "key" not in entry for entry in configuration.get("matrices", [])):
+        raise KeyError("every entry of 'matrices' needs a 'key'")
+    return tuple(Geometry(key=key) for key in unique_matrix_keys(configuration))
 
 
 def _load_batch_configuration() -> dict[str, Any]:
@@ -194,15 +192,20 @@ def _apply_algorithm_preset(parameters: dict[str, Any], case: BatchCase) -> dict
     return updated
 
 
-def build_cases() -> list[BatchCase]:
+def expand_cases(configuration: dict[str, Any]) -> list[BatchCase]:
+    """Cases of a parsed configuration (see ``parse_batch_configuration``), in run order."""
     cases: list[BatchCase] = []
-    for geometry in _setting("GEOMETRIES"):
-        for algorithm in _setting("DEFAULT_ALGORITHM_PRESETS"):
-            for coarsening in _setting("DEFAULT_COARSENING_PRESETS"):
+    for geometry in configuration["geometries"]:
+        for algorithm in configuration["algorithm_presets"]:
+            for coarsening in configuration["coarsening_presets"]:
                 if coarsening.key not in algorithm.allowed_sizes:
                     continue
                 cases.append(BatchCase(geometry, coarsening, algorithm))
     return cases
+
+
+def build_cases() -> list[BatchCase]:
+    return expand_cases(batch_configuration())
 
 
 def _build_case_parameters(case: BatchCase, base_parameters: dict[str, Any]) -> dict[str, Any]:

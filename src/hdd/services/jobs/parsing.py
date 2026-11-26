@@ -9,12 +9,13 @@ import re
 from datetime import datetime
 from typing import Any
 
+from libs.runtime import events
+
+from ..catalog import STAGE_LABELS
+
+# The pipeline names its stages (libs.runtime.events); the catalog labels them for the UI.
 PIPELINE_STAGES = [
-    {"id": "initialization", "label": "Graph Construction", "index": 0},
-    {"id": "coarsening", "label": "Multilevel Coarsening (HEM)", "index": 1},
-    {"id": "partitioning", "label": "Coarse Partitioning", "index": 2},
-    {"id": "uncoarsening", "label": "Uncoarsening & Refinement", "index": 3},
-    {"id": "permutation", "label": "Matrix Permutation & Profiling", "index": 4},
+    {"id": stage, "label": STAGE_LABELS[stage], "index": index} for index, stage in enumerate(events.STAGES)
 ]
 
 _INITIAL_GRAPH_RE = re.compile(r"Graph G with (\d+) nodes and (\d+) edges")

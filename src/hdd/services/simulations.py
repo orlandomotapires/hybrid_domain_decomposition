@@ -11,8 +11,9 @@ import time
 from pathlib import Path
 from typing import Any
 
-from libs.graph_prep import build_pipeline_graph, default_max_node_weight
-from libs.multilevel_scheme.coarsening.coarsening import coarsen_chain
+from libs.graph_prep import build_pipeline_graph
+from libs.tuning.feasibility import coarsening_dry_run
+from libs.multilevel_scheme.partitioning.capacity import qpu_workload
 from libs.runtime import workspace
 from libs.runtime.defaults import DEFAULT_SIMULATION_PARAMETERS
 from libs.runtime.matrix_library import list_matrix_ids
@@ -93,28 +94,23 @@ def quantum_estimates(normalized_params: dict[str, Any]) -> dict[str, Any]:
         "warnings": [],
     }
 
+    workload = qpu_workload(strategy, strat_block, k_target)
     if strategy == "quantum_annealing":
-        num_starts = int(strat_block.get("num_starts", 1))
-        num_reads = int(strat_block.get("num_reads", 1))
         simulated = bool(strat_block.get("simulated", True))
-        expected_submissions = max(1, num_starts) * bipartitions_per_start
-        expected_reads = expected_submissions * max(1, num_reads)
+        expected_submissions = workload["submissions"]
         estimates["simulated"] = simulated
         estimates["expected_qpu_submissions"] = expected_submissions
-        estimates["expected_qpu_reads"] = expected_reads
+        estimates["expected_qpu_reads"] = workload["samples"]
         if not simulated and expected_submissions > 50:
             estimates["warnings"].append(
                 f"High QPU submission count ({expected_submissions}). Reduce num_starts/k_target or use simulated=true for pilot runs."
             )
     elif strategy == "quantum_approximation_optimizer":
-        num_starts = int(strat_block.get("num_starts", 1))
-        num_steps = int(strat_block.get("num_steps", 1))
-        num_shots = int(strat_block.get("num_shots", 1))
         simulated = bool(strat_block.get("simulated", True))
-        expected_jobs = max(1, num_starts) * bipartitions_per_start * (max(1, num_steps) + 1)
+        expected_jobs = workload["submissions"]
         estimates["simulated"] = simulated
         estimates["expected_qlm_jobs"] = expected_jobs
-        estimates["total_circuit_shots"] = expected_jobs * max(1, num_shots)
+        estimates["total_circuit_shots"] = workload["samples"]
         if not simulated and expected_jobs > 100:
             estimates["warnings"].append(
                 f"High remote QLM job count ({expected_jobs}). Consider reducing num_starts/num_steps or coarsening further."
@@ -418,9 +414,11 @@ def preview_coarsening(simulation_id: str, params_payload: dict[str, Any]) -> di
     try:
         raw_config = json.loads((data_dir / "simulation_config.json").read_text(encoding="utf-8"))
         sim_config = validate_and_normalize_simulation_config(raw_config)
-        # Preview the matrix being edited (may be unsaved) when the client sends it.
-        preview_matrix = params_payload.pop("_matrix", None) if isinstance(params_payload, dict) else None
-        normalized = validate_and_normalize_simulation_parameters(params_payload)
+        # Preview the matrix being edited (may be unsaved) when the client sends it. The caller's
+        # dict is left untouched.
+        payload = dict(params_payload) if isinstance(params_payload, dict) else params_payload
+        preview_matrix = payload.pop("_matrix", None) if isinstance(payload, dict) else None
+        normalized = validate_and_normalize_simulation_parameters(payload)
 
         matrix_path = resolve_simulation_matrix({"input_matrix": preview_matrix} if preview_matrix else sim_config)
         A = load_mtx(matrix_path, label="matrix")
@@ -434,11 +432,8 @@ def preview_coarsening(simulation_id: str, params_payload: dict[str, Any]) -> di
         weight_attr = str(cp.get("weight", "weight"))
         inferior_limit = int(cp["coarsen_inferior_limit"])
         superior_limit = None if cp.get("coarsen_superior_limit") is None else int(cp["coarsen_superior_limit"])
-        k_target = int(normalized["partitioning_parameters"]["common"]["k_target"])
-        # The same weighted graph and supernode cap the run uses, coarsened by the run's own algorithm.
+        # The same weighted graph the run uses; the coarsening is the pipeline's own dry run.
         G0 = build_pipeline_graph(A, dof_per_node, weight_attr)
-        max_node_weight = cp.get("max_node_weight")
-        max_node_weight = float(max_node_weight) if max_node_weight is not None else default_max_node_weight(G0, k_target)
 
         def _level_info(g, lvl: int, prev_n: int | None, accepted: bool) -> dict[str, Any]:
             n = g.number_of_nodes()
@@ -462,21 +457,7 @@ def preview_coarsening(simulation_id: str, params_payload: dict[str, Any]) -> di
             if reason:
                 stops.append(f"Level {len(levels) - 1}: {reason}.")
 
-        try:
-            coarsen_chain(
-                G0,
-                trial_seed=int(normalized["general_parameters"]["seed"]),
-                coarsen_inferior_limit=inferior_limit,
-                coarsen_superior_limit=superior_limit,
-                max_levels=int(cp["max_levels"]),
-                weight=weight_attr,
-                strategy=str(cp["strategy"]),
-                coarsen_ratio=float(cp["coarsen_ratio"]),
-                max_node_weight=max_node_weight,
-                on_level=on_level,
-            )
-        except ValueError:
-            pass  # unreachable range: reported below from the levels themselves
+        coarsening_dry_run(G0, normalized, on_level=on_level)  # an unreachable range shows in the levels
 
         accepted_levels = [lv for lv in levels if lv["accepted"]]
         final_nodes = accepted_levels[-1]["nodes"]

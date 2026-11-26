@@ -10,6 +10,7 @@ from typing import Any
 
 import networkx as nx
 
+from libs.graph_prep import default_max_node_weight
 from libs.multilevel_scheme.coarsening.coarsening import coarsen_chain
 from libs.multilevel_scheme.partitioning.capacity import (  # noqa: F401  (re-exported for callers)
     DWAVE_CLIQUE_LIMIT,
@@ -22,16 +23,14 @@ from libs.multilevel_scheme.partitioning.capacity import (  # noqa: F401  (re-ex
 
 def resolve_max_node_weight(G: nx.Graph, coarsening_parameters: dict[str, Any], k_target: int) -> float | None:
     mnw = coarsening_parameters.get("max_node_weight")
-    if mnw is not None:
-        return float(mnw)
-    if int(k_target) > 1:
-        total = sum(float(G.nodes[u].get("vweight", 1.0)) for u in G.nodes())
-        return 1.5 * total / float(k_target)
-    return None
+    return float(mnw) if mnw is not None else default_max_node_weight(G, k_target)
 
 
-def coarsening_dry_run(G: nx.Graph, parameters: dict[str, Any]) -> dict[str, Any]:
-    """Run only the coarsening stage. Returns reachability, coarse size and levels."""
+def coarsening_dry_run(G: nx.Graph, parameters: dict[str, Any], *, on_level=None) -> dict[str, Any]:
+    """Run only the coarsening stage, exactly as the pipeline does. Returns reachability, coarse size and levels.
+
+    ``on_level(graph, accepted, reason)`` is called for every level tried (see ``coarsen_chain``).
+    """
     cp = parameters["coarsening_parameters"]
     k = int(parameters["partitioning_parameters"]["common"]["k_target"])
     superior = cp.get("coarsen_superior_limit")
@@ -46,6 +45,7 @@ def coarsening_dry_run(G: nx.Graph, parameters: dict[str, Any]) -> dict[str, Any
             strategy=str(cp["strategy"]),
             coarsen_ratio=float(cp["coarsen_ratio"]),
             max_node_weight=resolve_max_node_weight(G, cp, k),
+            on_level=on_level,
         )
     except ValueError as exc:
         return {"reachable": False, "reason": str(exc)}
