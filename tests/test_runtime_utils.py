@@ -65,7 +65,7 @@ class RuntimeUtilsTest(unittest.TestCase):
             },
             "partitioning_parameters": {
                 "partitioning_strategy": "metis_partitioning",
-                "common": {"k_target": 2, "balance_tolerance": 0.1},
+                "common": {"k_target": 2, "balance_tolerance": 10.0},
                 "strategies": {"metis_partitioning": {}},
             },
             "uncoarsening_parameters": {

@@ -150,7 +150,7 @@ PARTITIONING_SPECS = (
                        ("quantum_approximation_optimizer", "QAOA"))),
     ParamSpec(("partitioning_parameters", "common", "k_target"), "Number of parts (k)", "int", 1, 4096),
     ParamSpec(("partitioning_parameters", "common", "balance_tolerance"), "Balance tolerance", "float", 0.0, 100.0, decimals=3, step=0.01,
-              help="Allowed relative imbalance between part weights."),
+              help="Allowed imbalance between part weights, in percent of the ideal part weight (2.0 = ±2%)."),
 )
 
 QA_SPECS = (

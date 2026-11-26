@@ -63,6 +63,7 @@ def study_dir(simulation: str, study_id: str) -> Path:
     path = simulation_dir(simulation) / "tuning" / study_id
     if not (path / _tuner().STUDY_CONFIG).exists():
         raise NotFound(f"Study {study_id!r} not found")
+    _tuner().migrate_legacy_study(path)
     return path
 
 

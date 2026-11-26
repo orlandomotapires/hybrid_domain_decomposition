@@ -25,6 +25,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from libs.multilevel_scheme.partitioning.utils.metrics import legacy_tolerance_percent
 from libs.runtime import events, workspace
 from libs.runtime.matrix_library import resolve_matrix
 from libs.runtime.utils import load_mtx, validate_and_normalize_simulation_parameters
@@ -57,6 +58,8 @@ TRIALS = "trials.jsonl"
 BEST = "best_parameters.json"
 STOP_FILE = "STOP"
 PENDING = "pending_suggestions.json"
+# Unit of balance_tolerance in this study's files. Studies without it predate the percent-only rule.
+TOLERANCE_UNIT = "percent"
 
 
 # --------------------------------------------------------------------------- configuration
@@ -118,6 +121,7 @@ def normalize_study_config(raw: dict[str, Any]) -> dict[str, Any]:
         "repeats": repeats,
         "seed": int(raw.get("seed") if raw.get("seed") is not None else 0),
         "search_space": space,
+        "tolerance_unit": TOLERANCE_UNIT,
         "warm_start": {
             "base": bool(warm.get("base", True)),
             "auto": bool(warm.get("auto", True)),
@@ -179,6 +183,56 @@ def load_trials(study_dir: Path) -> list[dict[str, Any]]:
             except json.JSONDecodeError:
                 continue
     return rows
+
+
+def _legacy_tolerance_to_percent(params: Any) -> None:
+    common = ((params or {}).get("partitioning_parameters") or {}).get("common") if isinstance(params, dict) else None
+    if isinstance(common, dict) and isinstance(common.get("balance_tolerance"), (int, float)):
+        common["balance_tolerance"] = legacy_tolerance_percent(common["balance_tolerance"])
+
+
+def migrate_legacy_study(study_dir: str | Path) -> bool:
+    """Rewrite a study created before ``balance_tolerance`` became percent-only. Idempotent.
+
+    Converts the search range, the base parameters, the best and pending parameter sets and the
+    trial log. Trials already stored in Optuna's database keep their old values, so the sampler
+    learns less from them, but every run from now on uses the correct unit.
+    """
+    study_dir = Path(study_dir)
+    config = _read_json(study_dir / STUDY_CONFIG)
+    if not isinstance(config, dict) or config.get("tolerance_unit") == TOLERANCE_UNIT:
+        return False
+    entry = (config.get("search_space") or {}).get("balance_tolerance")
+    if isinstance(entry, dict) and "high" in entry and float(entry["high"]) <= 1.0:
+        entry["low"], entry["high"] = float(entry["low"]) * 100.0, float(entry["high"]) * 100.0
+    _legacy_tolerance_to_percent(config.get("base_parameters"))
+
+    best = _read_json(study_dir / BEST)
+    if isinstance(best, dict):
+        _legacy_tolerance_to_percent(best)
+        _write_json(study_dir / BEST, best)
+    pending = _read_json(study_dir / PENDING)
+    if isinstance(pending, dict):
+        for item in pending.values():
+            if isinstance(item, dict):
+                _legacy_tolerance_to_percent(item.get("parameters"))
+        _write_json(study_dir / PENDING, pending)
+    trials = load_trials(study_dir)
+    if trials:
+        for row in trials:
+            _legacy_tolerance_to_percent(row.get("parameters"))
+        tmp = study_dir / (TRIALS + ".tmp")
+        tmp.write_text("".join(json.dumps(row, default=float) + "\n" for row in trials), encoding="utf-8")
+        tmp.replace(study_dir / TRIALS)
+
+    config["tolerance_unit"] = TOLERANCE_UNIT
+    _write_json(study_dir / STUDY_CONFIG, config)  # last: an interrupted migration runs again
+    return True
+
+
+def _load_config(study_dir: Path) -> dict[str, Any] | None:
+    migrate_legacy_study(study_dir)
+    return _read_json(study_dir / STUDY_CONFIG)
 
 
 def _append_trial(study_dir: Path, row: dict[str, Any]) -> None:
@@ -446,7 +500,7 @@ def import_history(study, config: dict[str, Any]) -> int:
 
 def run_study(study_dir: str | Path) -> dict[str, Any]:
     study_dir = Path(study_dir)
-    config = _read_json(study_dir / STUDY_CONFIG)
+    config = _load_config(study_dir)
     if not config:
         raise FileNotFoundError(f"{study_dir / STUDY_CONFIG} not found")
     ctx = _Context(study_dir, config)
@@ -531,7 +585,7 @@ def run_study(study_dir: str | Path) -> dict[str, Any]:
 def suggest_next(study_dir: str | Path) -> dict[str, Any]:
     """Ask the study for one candidate without running it (the user runs it from the Studio)."""
     study_dir = Path(study_dir)
-    config = _read_json(study_dir / STUDY_CONFIG)
+    config = _load_config(study_dir)
     ctx = _Context(study_dir, config)
     study = open_study(study_dir, config)
     _warm_start(study, ctx)
@@ -562,7 +616,7 @@ def suggest_next(study_dir: str | Path) -> dict[str, Any]:
 def report_run(study_dir: str | Path, trial_number: int, run_dir: str | Path) -> dict[str, Any]:
     """Score a finished run of a suggested trial and tell the study."""
     study_dir = Path(study_dir)
-    config = _read_json(study_dir / STUDY_CONFIG)
+    config = _load_config(study_dir)
     pending = _read_json(study_dir / PENDING, {}) or {}
     entry = pending.pop(str(trial_number), None)
     if entry is None:

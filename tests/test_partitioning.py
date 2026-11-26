@@ -3,7 +3,37 @@ import unittest
 
 import networkx as nx
 
+from libs.multilevel_scheme.partitioning.partitioning import metis_ufactor
+from libs.multilevel_scheme.partitioning.utils.metrics import (
+    balance_violation,
+    legacy_tolerance_percent,
+    tolerance_ratio,
+)
 from libs.multilevel_scheme.partitioning.utils.recursive import recursive_kway_via_bipartition
+
+
+class BalanceToleranceTest(unittest.TestCase):
+    def test_tolerance_is_always_a_percentage(self) -> None:
+        # No jump at 1.0: the old rule read 1.0 as 100% and 1.01 as 1.01%.
+        for percent, ratio in [(0, 0.0), (0.5, 0.005), (1.0, 0.01), (1.01, 0.0101), (2.0, 0.02), (100, 1.0)]:
+            self.assertAlmostEqual(ratio, tolerance_ratio(percent))
+        self.assertEqual(0.0, tolerance_ratio(-3))
+
+    def test_legacy_values_keep_their_old_meaning(self) -> None:
+        self.assertAlmostEqual(10.0, legacy_tolerance_percent(0.1))
+        self.assertAlmostEqual(100.0, legacy_tolerance_percent(1.0))
+        self.assertAlmostEqual(2.0, legacy_tolerance_percent(2.0))
+
+    def test_metis_ufactor_follows_tolerance(self) -> None:
+        self.assertEqual(20, metis_ufactor(2.0))
+        self.assertEqual(1, metis_ufactor(0.0))
+
+    def test_violation_uses_percent(self) -> None:
+        G = nx.empty_graph(2)
+        nx.set_node_attributes(G, {0: 1.015, 1: 0.985}, "vweight")  # ±1.5% around the ideal 1.0
+        part = {0: 0, 1: 1}
+        self.assertAlmostEqual(0.0, balance_violation(G, part, 2, balance_tolerance=2.0))
+        self.assertGreater(balance_violation(G, part, 2, balance_tolerance=1.0), 0.0)
 
 
 def _isolate_heaviest(G, target_weight, seed, simulated=True):

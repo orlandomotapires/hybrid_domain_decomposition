@@ -7,7 +7,7 @@ import numpy as np
 
 from libs.runtime import events
 
-from .metrics import balance_violation, cut_value
+from .metrics import balance_violation, cut_value, tolerance_ratio
 
 
 def _normalized_partition_score(
@@ -51,10 +51,7 @@ def choose_target_weight(
     if not balance_tolerance:
         return float(target)
 
-    tol = float(balance_tolerance)
-    if tol > 1.0:
-        tol = tol / 100.0
-    tol = max(0.0, tol)
+    tol = tolerance_ratio(balance_tolerance)
     delta = rng.uniform(-tol, tol) * float(total_weight)
     return float(np.clip(target + delta, 0.1 * total_weight, 0.9 * total_weight))
 

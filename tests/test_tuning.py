@@ -39,7 +39,7 @@ def _params(**coarsening) -> dict:
         "general_parameters": {"dof_per_node": 1, "seed": 0},
         "coarsening_parameters": cp,
         "partitioning_parameters": {"partitioning_strategy": "metis_partitioning",
-                                    "common": {"k_target": 4, "balance_tolerance": 0.1},
+                                    "common": {"k_target": 4, "balance_tolerance": 10.0},
                                     "strategies": {"metis_partitioning": {}}},
         "uncoarsening_parameters": {"refine_objective": "cut_balance", "refine_balance_lambda": 1.0,
                                     "refine_max_passes_per_level": 5, "refine_max_moves_per_pass": None,
@@ -192,6 +192,59 @@ class EndToEndTuningTest(unittest.TestCase):
         self.assertTrue(summary["pareto_front"])
         self.assertTrue((study_dir / "best_parameters.json").exists())
         self.assertEqual(summary["trials_ok"], len(load_history("grid")))
+
+
+def _tolerance(params: dict) -> float:
+    return params["partitioning_parameters"]["common"]["balance_tolerance"]
+
+
+class LegacyToleranceTest(unittest.TestCase):
+    """Files written when tolerances <= 1.0 meant a ratio are read back as percent."""
+
+    def setUp(self) -> None:
+        self.tmp = TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def test_history_rows_without_unit_are_converted(self) -> None:
+        from libs.tuning.history import load_history
+
+        path = self.root / "history.jsonl"
+        old = {"matrix_id": "m", "parameters": {"partitioning_parameters": {"common": {"balance_tolerance": 0.1}}}}
+        new = {"matrix_id": "m", "tolerance_unit": "percent",
+               "parameters": {"partitioning_parameters": {"common": {"balance_tolerance": 0.5}}}}
+        path.write_text(json.dumps(old) + "\n" + json.dumps(new) + "\n")
+        with patch.dict(os.environ, {"HDD_WORKSPACE": str(self.root), "HDD_HISTORY_PATH": str(path)}):
+            rows = load_history("m")
+        self.assertEqual([10.0, 0.5], [_tolerance(r["parameters"]) for r in rows])
+
+    def test_legacy_study_is_migrated_once(self) -> None:
+        from libs.tuning import tuner
+
+        study = self.root / "study_1"
+        study.mkdir()
+        params = {"partitioning_parameters": {"common": {"balance_tolerance": 0.08}}}
+        (study / tuner.STUDY_CONFIG).write_text(json.dumps({
+            "search_space": {"balance_tolerance": {"free": True, "low": 0.01, "high": 0.3}},
+            "base_parameters": {"partitioning_parameters": {"common": {"balance_tolerance": 2.0}}},
+        }))
+        (study / tuner.BEST).write_text(json.dumps(params))
+        (study / tuner.PENDING).write_text(json.dumps({"3": {"parameters": params}}))
+        (study / tuner.TRIALS).write_text(json.dumps({"number": 0, "parameters": params}) + "\n")
+
+        self.assertTrue(tuner.migrate_legacy_study(study))
+        self.assertFalse(tuner.migrate_legacy_study(study))
+
+        config = json.loads((study / tuner.STUDY_CONFIG).read_text())
+        self.assertEqual("percent", config["tolerance_unit"])
+        self.assertAlmostEqual(1.0, config["search_space"]["balance_tolerance"]["low"])
+        self.assertAlmostEqual(30.0, config["search_space"]["balance_tolerance"]["high"])
+        self.assertEqual(2.0, _tolerance(config["base_parameters"]))
+        self.assertAlmostEqual(8.0, _tolerance(json.loads((study / tuner.BEST).read_text())))
+        self.assertAlmostEqual(8.0, _tolerance(json.loads((study / tuner.PENDING).read_text())["3"]["parameters"]))
+        self.assertAlmostEqual(8.0, _tolerance(tuner.load_trials(study)[0]["parameters"]))
 
 
 if __name__ == "__main__":

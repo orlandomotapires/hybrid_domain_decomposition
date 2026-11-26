@@ -149,7 +149,7 @@ def decompose_matrix(matrix, general_parameters, coarsening_parameters, partitio
     part_k_coarse = 0
     if partitioning_strategy == 'metis_partitioning':
         log("INFO", "Multilevel Partitioning Scheme using METIS")
-        part_k_coarse = partition_graph_metis(Gc, nparts=effective_k_target)
+        part_k_coarse = partition_graph_metis(Gc, nparts=effective_k_target, balance_tolerance=balance_tolerance)
 
     elif partitioning_strategy == 'quantum_annealing':
 

@@ -47,11 +47,21 @@ def _graph_to_metis_csr(G: nx.Graph) -> tuple[List[int], List[int], List[int], L
     eweights = _weights_to_metis_ints(edge_weights_raw)
     return xadj, adjncy, vweights, eweights
 
+def metis_ufactor(balance_tolerance: float) -> int:
+    """METIS ``ufactor`` (allowed imbalance in 1/1000 units) for a tolerance in percent."""
+    return max(1, int(round(float(balance_tolerance) * 10.0)))
+
+
 def partition_graph_metis(
     G: nx.Graph,
     nparts: int = 2,
+    *,
+    balance_tolerance: float | None = None,
 ) -> Dict[Any, int]:
-    """Partition a graph directly with METIS and return node-to-part assignments."""
+    """Partition a graph directly with METIS and return node-to-part assignments.
+
+    ``balance_tolerance`` (percent) is passed to METIS as ``ufactor``; ``None`` keeps METIS' default.
+    """
 
     nodes = list(G.nodes())
     effective_parts = max(1, min(int(nparts), len(nodes)))
@@ -59,12 +69,14 @@ def partition_graph_metis(
         return {}
 
     xadj, adjncy, vweights, eweights = _graph_to_metis_csr(G)
+    options = None if balance_tolerance is None else pymetis.Options(ufactor=metis_ufactor(balance_tolerance))
     _, membership = pymetis.part_graph(
         effective_parts,
         xadj=xadj,
         adjncy=adjncy,
         vweights=vweights,
         eweights=eweights,
+        options=options,
     )
     return {nodes[i]: int(membership[i]) for i in range(len(nodes))}
 
