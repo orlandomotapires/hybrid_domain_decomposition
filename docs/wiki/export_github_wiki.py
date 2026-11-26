@@ -12,7 +12,8 @@ What changes on the way:
   (``how-it-works.md`` → ``How-it-works.md``, shown as "How it works").
 - Links between pages lose ``.md``, as wiki links do.
 - Images, including ones elsewhere in the repository such as the app icon, are
-  copied to ``images/`` and linked by their raw URL (also in ``<img src>`` tags);
+  copied to ``images/`` and linked by their raw URL (also in ``<img src>`` tags and in the
+  ``<source srcset>`` of ``<picture>`` elements that switch to a dark image in GitHub's dark theme);
   links to other repository files point to the file on GitHub.
 - A page's own ``# Title`` is dropped (the wiki shows the page name), except on Home.
 - ``_Sidebar.md`` lists every page; ``_Footer.md`` says where to edit the source.
@@ -31,7 +32,7 @@ BRANCH = "main"
 RAW_IMAGES = f"https://raw.githubusercontent.com/wiki/{REPO}/images/"
 REPO_FILES = f"https://github.com/{REPO}/blob/{BRANCH}/"
 LINK = re.compile(r"(!?)\[([^\]]*)\]\(([^)\s]+)\)")
-HTML_SRC = re.compile(r'(<img\b[^>]*\bsrc=")([^"]+)(")')
+HTML_SRC = re.compile(r'(<(?:img|source)\b[^>]*\b(?:src|srcset)=")([^"]+)(")')
 
 SIDEBAR = [
     ("Start here", ["installation", "how-it-works"]),

@@ -7,7 +7,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 WIKI = ROOT / "docs" / "wiki"
-LINK = re.compile(r"!?\[[^\]]*\]\(([^)\s]+)\)|<img\b[^>]*\bsrc=\"([^\"]+)\"")
+LINK = re.compile(r"!?\[[^\]]*\]\(([^)\s]+)\)|<img\b[^>]*\bsrc=\"([^\"]+)\"|<source\b[^>]*\bsrcset=\"([^\"]+)\"")
 FENCE = re.compile(r"```.*?```", re.DOTALL)
 
 
@@ -44,7 +44,7 @@ class WikiTest(unittest.TestCase):
     def test_links_point_to_existing_files_and_headings(self) -> None:
         broken = []
         for doc in _documents():
-            for target in (a or b for a, b in LINK.findall(FENCE.sub("", doc.read_text(encoding="utf-8")))):
+            for target in (next(filter(None, groups)) for groups in LINK.findall(FENCE.sub("", doc.read_text(encoding="utf-8")))):
                 if re.match(r"^[a-z]+:", target):
                     continue  # external
                 path_part, _, anchor = target.partition("#")
@@ -54,6 +54,15 @@ class WikiTest(unittest.TestCase):
                 elif anchor and resolved.suffix == ".md" and anchor not in _anchors(resolved):
                     broken.append(f"{doc.relative_to(ROOT)}: {target} (missing heading)")
         self.assertEqual([], broken)
+
+    def test_picture_sources_are_exported_like_images(self) -> None:
+        spec = importlib.util.spec_from_file_location("export_github_wiki", WIKI / "export_github_wiki.py")
+        exporter = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(exporter)
+        text = '<picture>\n  <source media="(prefers-color-scheme: dark)" srcset="images/a-dark.png">\n  <img src="images/a.png" alt="a">\n</picture>'
+        converted = exporter.convert(text, "desktop-app")
+        self.assertIn(f'srcset="{exporter.RAW_IMAGES}a-dark.png"', converted)
+        self.assertIn(f'src="{exporter.RAW_IMAGES}a.png"', converted)
 
     def test_every_wiki_page_is_linked_from_the_index(self) -> None:
         index = (WIKI / "README.md").read_text(encoding="utf-8")
