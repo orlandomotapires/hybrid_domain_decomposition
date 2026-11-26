@@ -45,6 +45,7 @@ NO_RESULT_MESSAGE = "The job ended without reporting a result (it may have been 
 POLL_SEC = 0.1
 # Fields written to a job record (everything else is runtime state).
 _RECORD_EXCLUDE = {"logs", "parameters_override"}
+_RECORD_PATH_FIELDS = ("log_path", "result_dir", "batch_dir", "study_dir", "demonstrator_dir")
 
 
 def _run_meta_from_params(params: dict[str, Any] | None) -> dict[str, Any]:
@@ -249,9 +250,30 @@ class JobManager:
         except OSError:
             pass
 
+    def _inside_workspace(self, value: Any) -> str | None:
+        """``value`` if it is a workspace-relative path that stays inside the workspace, else None."""
+        if not isinstance(value, str) or not value or Path(value).is_absolute():
+            return None
+        try:
+            (self.root / value).resolve().relative_to(self.root)
+        except (ValueError, OSError):
+            return None
+        return value
+
+    def _sanitize_record(self, record: dict[str, Any]) -> dict[str, Any]:
+        """Records come from the workspace, which may be someone else's: keep their paths inside it."""
+        record = dict(record)
+        for key in _RECORD_PATH_FIELDS:
+            if record.get(key) is not None:
+                record[key] = self._inside_workspace(record[key])
+        for key in ("pid", "pid_start"):
+            value = record.get(key)
+            record[key] = value if isinstance(value, int) and not isinstance(value, bool) and value > 0 else None
+        return record
+
     def _load_records(self) -> None:
         for record in self.store.load_all():
-            job = SimulationJob.from_record(record)
+            job = SimulationJob.from_record(self._sanitize_record(record))
             self._jobs[job.job_id] = job
             if job.status != "running":
                 continue
@@ -517,10 +539,15 @@ class JobManager:
         if job is None:
             return None
         proc = job._process
+        unverified = False
         if proc is not None:
             if proc.poll() is None:
                 _signal_group(proc.pid, signal.SIGTERM)
                 self._after_grace(lambda: proc.poll() is None and _signal_group(proc.pid, signal.SIGKILL))
+        elif job.pid_start is None:
+            # Followed again after a restart, and the process start time is unknown: the pid may
+            # belong to an unrelated process by now, so it is never signalled.
+            unverified = _pid_alive(job.pid)
         elif _pid_alive(job.pid, job.pid_start):  # followed again after a restart: not our child
             pid, start = job.pid, job.pid_start
             _signal_group(pid, signal.SIGTERM)
@@ -533,7 +560,12 @@ class JobManager:
                 job.status = "cancelled"
                 job.finished_epoch = now
                 job.finished_at = datetime.now().isoformat()
-                job.append_log({"timestamp": datetime.now().strftime("%H:%M:%S"), "level": "WARNING", "message": "Job cancelled by user."})
+                stamp = datetime.now().strftime("%H:%M:%S")
+                job.append_log({"timestamp": stamp, "level": "WARNING", "message": "Job cancelled by user."})
+                if unverified:
+                    job.append_log({"timestamp": stamp, "level": "WARNING", "message": (
+                        f"Process {job.pid} could not be verified as this job, so it was not stopped. "
+                        "If the job is still running, stop it from a terminal.")})
                 changed = True
         if changed:
             self._save(job)
@@ -728,16 +760,19 @@ def _pid_alive(pid: int | None, start: int | None = None) -> bool:
         if start is not None and int(fields_after[19]) != start:
             return False
     except (OSError, ValueError, IndexError):
-        pass
+        # Unknown identity: alive if we never had a start time, not ours if we did.
+        return start is None
     return True
 
 
-def _signal_group(pid: int, sig: int) -> None:
-    """Signal the job's process group (it leads its own session), else the process alone."""
+def _signal_group(pid: int, sig: int) -> bool:
+    """Signal the job's process group. Jobs lead their own session, so the group id is the pid.
+
+    No fallback to signalling the pid alone: if the group is gone, so is the job, and a bare pid
+    may already belong to another process.
+    """
     try:
         os.killpg(pid, sig)
-    except Exception:
-        try:
-            os.kill(pid, sig)
-        except Exception:
-            pass
+        return True
+    except OSError:
+        return False

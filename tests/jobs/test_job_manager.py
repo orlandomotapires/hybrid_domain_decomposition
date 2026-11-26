@@ -2,6 +2,7 @@
 
 import json
 import os
+import subprocess
 import sys
 import textwrap
 import threading
@@ -328,6 +329,45 @@ class JobManagerTest(unittest.TestCase):
         self.assertEqual("cancelled", reopened.cancel_job(job["job_id"])["status"])
         wait_for(lambda: reopened.get_job(job["job_id"])["pid"] is None)
         self.assertEqual("cancelled", reopened.get_job(job["job_id"])["status"])
+
+    def _write_record(self, name: str, **record) -> None:
+        jobs_dir = self.root / workspace.STATE_DIR_NAME / "jobs"
+        jobs_dir.mkdir(parents=True, exist_ok=True)
+        (jobs_dir / f"{name}.json").write_text(json.dumps({"schema": 1, "job_type": "single", "title": "t", **record}))
+
+    def test_crafted_job_ids_cannot_write_outside_the_jobs_folder(self) -> None:
+        target = Path(self.tmp.name) / "victim"
+        self._write_record("evil", job_id=f"../../../{target.name}", status="running")
+        reopened = JobManager(self.root, command_factory=self.fake)
+        self.assertFalse(target.with_suffix(".json").exists())
+        self.assertNotIn(f"../../../{target.name}", [j["job_id"] for j in reopened.list_jobs(None)])
+
+    def test_crafted_paths_are_dropped(self) -> None:
+        outside = Path(self.tmp.name) / "outside.log"
+        outside.write_text("keep\n")
+        self._write_record("sim_x", job_id="sim_x", status="running", log_path=str(outside),
+                           result_dir="../../elsewhere")
+        reopened = JobManager(self.root, command_factory=self.fake)
+        job = reopened.get_job("sim_x")
+        self.assertEqual("keep\n", outside.read_text())  # the settle note was not appended to it
+        self.assertIsNone(job["result_dir"])
+
+    def test_an_unverified_pid_is_never_signalled(self) -> None:
+        bystander = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"], start_new_session=True)
+        try:
+            self._write_record("sim_y", job_id="sim_y", status="running", pid=bystander.pid, pid_start=None,
+                               log_path=f"{workspace.STATE_DIR_NAME}/jobs/sim_y.log")
+            (self.root / workspace.STATE_DIR_NAME / "jobs" / "sim_y.log").write_text("")
+            reopened = JobManager(self.root, command_factory=self.fake, kill_grace_sec=0.1)
+            cancelled = reopened.cancel_job("sim_y")
+            self.assertEqual("cancelled", cancelled["status"])
+            self.assertIn("could not be verified", cancelled["logs"][-1]["message"])
+            time.sleep(0.3)
+            self.assertIsNone(bystander.poll())
+            reopened.close()
+        finally:
+            bystander.kill()
+            bystander.wait()
 
     def test_running_jobs_cannot_be_deleted(self) -> None:
         self.fake.next["single"] = "sleep"
