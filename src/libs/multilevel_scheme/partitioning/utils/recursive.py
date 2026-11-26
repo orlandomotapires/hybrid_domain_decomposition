@@ -96,7 +96,10 @@ def recursive_kway_via_bipartition(
         split_idx = 0
 
         while len(blocks) < int(k):
-            idx = max(range(len(blocks)), key=lambda i: block_weight(blocks[i]))
+            # A single node cannot be split, so pick the heaviest block that still has two or
+            # more nodes. One always exists: k <= number of nodes and len(blocks) < k.
+            splittable = [i for i, block in enumerate(blocks) if len(block) >= 2]
+            idx = max(splittable, key=lambda i: block_weight(blocks[i]))
             nodes = blocks[idx]
             G = Gc.subgraph(nodes).copy()
 
