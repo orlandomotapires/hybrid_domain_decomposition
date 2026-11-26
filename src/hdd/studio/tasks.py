@@ -15,6 +15,10 @@ from typing import Any, Callable
 import shiboken6
 from PySide6.QtCore import QObject, QRunnable, QThreadPool, Signal, Slot
 
+from hdd.services.errors import ServiceError
+
+from . import diagnostics
+
 
 class _Signals(QObject):
     done = Signal(int, object, object)  # token, result, error
@@ -72,8 +76,16 @@ class TaskRunner(QObject):
             return  # superseded by a newer request
         if error is None:
             on_result(result)
-        elif on_error is not None:
-            on_error(error)
+            return
+        trace = getattr(error, "__traceback_text__", None)
+        if on_error is None:
+            diagnostics.report_exception(error, "Background task failed", trace)
+            return
+        if not isinstance(error, ServiceError):
+            # Service errors are expected and carry a message for the user; anything else is a
+            # bug or an environment problem whose traceback must survive the error dialog.
+            diagnostics.LOGGER.error("Background task failed: %s\n%s", error, (trace or "").rstrip())
+        on_error(error)
 
     def wait(self, msecs: int = 30000) -> bool:
         return self._pool.waitForDone(msecs)

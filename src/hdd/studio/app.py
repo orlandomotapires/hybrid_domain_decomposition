@@ -110,6 +110,10 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(sys.argv[1:] if argv is None else argv)
     app = create_application()
 
+    from . import diagnostics
+
+    diagnostics.install()
+
     from .settings import Settings
     from .theme import Theme
 

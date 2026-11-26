@@ -29,7 +29,7 @@ from hdd.services import batch, matrices, results, simulations, tuning
 from hdd.services.errors import ServiceError
 from libs.runtime import workspace
 
-from . import APP_NAME, batch_page, pages, sim_pages
+from . import APP_NAME, batch_page, diagnostics, pages, sim_pages
 from .batch_doc import BatchDocument
 from .context import AppContext
 from .dialogs import CompareDialog, NewSimulationDialog, NewStudyDialog
@@ -195,6 +195,7 @@ class MainWindow(QMainWindow):
         self._build_toolbar()
         self._build_status_bar()
         self._connect_context()
+        diagnostics.set_reporter(lambda text: self.statusBar().showMessage(text, 15000))
 
         self.project.nodeSelected.connect(self._on_node_selected)
         self.jobs.jobSelected.connect(self._follow_job)
@@ -1436,4 +1437,5 @@ class MainWindow(QMainWindow):
             self.ctx.jobs.cancel_all()
         self.save_layout()
         self.ctx.close()
+        diagnostics.set_reporter(None)
         super().closeEvent(event)
