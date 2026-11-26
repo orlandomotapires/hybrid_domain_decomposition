@@ -171,7 +171,9 @@ def _qaoa_bipartition_on_pennylane(
         return qml.expval(Hc)
 
     rng = np.random.default_rng(seed)
-    params = rng.uniform(low=0.0, high=0.5, size=(2 * int(p),)).astype(float)
+    # The angles must be a trainable PennyLane array: with a plain numpy array the optimizer
+    # sees no trainable parameters and every step returns them unchanged.
+    params = qml.numpy.array(rng.uniform(low=0.0, high=0.5, size=(2 * int(p),)), requires_grad=True)
     opt = qml.AdamOptimizer(stepsize=float(lr))
     for _ in range(max(1, int(steps))):
         params = opt.step(cost_qnode, params)
