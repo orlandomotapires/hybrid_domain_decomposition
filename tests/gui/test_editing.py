@@ -218,9 +218,11 @@ def test_presets_save_load_activate_delete(qtbot, window, monkeypatch, root):
     assert doc.value(K) == 2 and doc.is_dirty()
     doc.revert()
     monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.Yes)
-    window.activate_preset("sim_a", "k2.json")
-    assert doc.active_preset == "k2.json" and doc.value(K) == 2
+    window.activate_preset("sim_a", "k2.json")  # runs off the GUI thread
+    qtbot.waitUntil(lambda: doc.active_preset == "k2.json", timeout=10000)
+    assert doc.value(K) == 2
     window.activate_preset("sim_a", "simulation_parameters.json")
+    qtbot.waitUntil(lambda: doc.active_preset == "simulation_parameters.json", timeout=10000)
     window.delete_preset("sim_a", "k2.json")
     assert not (root / "simulations/sim_a/data/k2.json").exists()
 
@@ -265,8 +267,8 @@ def test_new_rename_and_delete_simulation(qtbot, window, monkeypatch, root):
     window.rename_simulation("fresh")
     qtbot.waitUntil(lambda: (root / "simulations/renamed").is_dir())
     monkeypatch.setattr(QMessageBox, "warning", lambda *a, **k: QMessageBox.StandardButton.Yes)
-    window.delete_simulation("renamed")
-    assert not (root / "simulations/renamed").exists()
+    window.delete_simulation("renamed")  # runs off the GUI thread
+    qtbot.waitUntil(lambda: not (root / "simulations/renamed").exists(), timeout=10000)
 
 
 def test_quitting_with_unsaved_changes_asks(qtbot, window, monkeypatch):

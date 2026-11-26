@@ -686,6 +686,8 @@ class JobManager:
             if handle is not None:
                 handle.seek(position)
             while True:
+                if not settle and self._closed.is_set():
+                    return  # checked every round: a job that logs nonstop must not keep a closed manager reading
                 chunk = handle.read(65536) if handle is not None else b""
                 if chunk:
                     buffer += chunk

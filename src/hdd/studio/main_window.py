@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 from PySide6.QtCore import QSize, Qt, QTimer, QUrl
 from PySide6.QtGui import QAction, QActionGroup, QCloseEvent, QDesktopServices, QKeySequence, QUndoGroup
@@ -717,9 +718,7 @@ class MainWindow(QMainWindow):
                         return
                 tuning.apply_study(sim_id, study_id)
                 if doc is not None:
-                    doc.undo.clear()
-                    doc._load(simulations.get_simulation(sim_id))
-                    doc.changed.emit("")
+                    doc.reset_to(simulations.get_simulation(sim_id))
                 self.statusBar().showMessage(f"Applied the best parameters of {study_id} to {sim_id}.", 6000)
             elif action == "delete":
                 if QMessageBox.question(self, "Delete study", f"Delete {study_id} and its trial runs? This cannot be undone.") != QMessageBox.StandardButton.Yes:
@@ -1047,15 +1046,16 @@ class MainWindow(QMainWindow):
             if answer != QMessageBox.StandardButton.Yes:
                 return
         config = dict(doc.saved_config, parameters_file_path=preset)
-        try:
+
+        def switch() -> dict[str, Any]:  # worker thread: writes the config, reads the new preset
             simulations.save_config(sim_id, config)
-        except ServiceError as exc:
-            QMessageBox.warning(self, "Make active", str(exc))
-            return
-        doc.undo.clear()
-        doc._load(simulations.get_simulation(sim_id))
-        doc.changed.emit("")
-        self.reload()
+            return simulations.get_simulation(sim_id)
+
+        def done(simulation: dict[str, Any]) -> None:
+            doc.reset_to(simulation)
+            self.reload()
+
+        self.ctx.tasks.run(switch, done, lambda exc: QMessageBox.warning(self, "Make active", str(exc)))
 
     def delete_preset(self, sim_id: str, preset: str) -> None:
         if QMessageBox.question(self, "Delete preset", f"Delete {preset}? This cannot be undone.") != QMessageBox.StandardButton.Yes:
@@ -1110,13 +1110,14 @@ class MainWindow(QMainWindow):
         )
         if answer != QMessageBox.StandardButton.Yes:
             return
-        try:
-            simulations.delete_simulation(sim_id)
-        except ServiceError as exc:
-            QMessageBox.warning(self, "Delete simulation", str(exc))
-            return
         self._drop_document(sim_id)
-        self.reload()
+        self.statusBar().showMessage(f"Deleting {sim_id}…")
+        self.ctx.tasks.run(  # removing every run and study folder can take a while
+            lambda: simulations.delete_simulation(sim_id),
+            lambda _result: (self.statusBar().showMessage(f"Deleted {sim_id}.", 4000), self.reload()),
+            lambda exc: (self.statusBar().clearMessage(), QMessageBox.warning(self, "Delete simulation", str(exc)),
+                         self.reload()),
+        )
 
     def _confirm_no_running_job(self, sim_id: str, what: str) -> bool:
         busy = [j for j in self.ctx.jobs.list_jobs(None) if j["status"] == "running" and j.get("demonstrator_id") == sim_id]
@@ -1230,12 +1231,19 @@ class MainWindow(QMainWindow):
             answer = QMessageBox.question(self, "Run batch", "The batch configuration has unsaved changes. Save them and run?")
             if answer != QMessageBox.StandardButton.Yes or not self.save_batch():
                 return
-        try:
+        def prepare() -> tuple[dict[str, Any], dict[str, Any]]:  # worker thread: reads every batch log
             config = batch.load_configuration()
-            plan = batch.plan(config["configuration"], batch.duration_estimates())
-        except ServiceError as exc:
-            QMessageBox.warning(self, APP_NAME, f"The batch cannot run:\n\n{exc}")
-            return
+            return config, batch.plan(config["configuration"], batch.duration_estimates())
+
+        self.statusBar().showMessage("Planning the batch…")
+        self.ctx.tasks.run(
+            prepare,
+            lambda result: (self.statusBar().clearMessage(), self._confirm_and_start_batch(*result)),
+            lambda exc: (self.statusBar().clearMessage(),
+                         QMessageBox.warning(self, APP_NAME, f"The batch cannot run:\n\n{exc}")),
+        )
+
+    def _confirm_and_start_batch(self, config: dict[str, Any], plan: dict[str, Any]) -> None:
         totals = plan["totals"]
         lines = [f"{config['case_count']} cases will run."]
         if totals["estimated"]:
@@ -1308,6 +1316,12 @@ class MainWindow(QMainWindow):
         choice = self._confirm_stop_jobs("Open another workspace")
         if choice is None:
             return False
+        # Background work reads and writes the open workspace. Switching while it runs could make
+        # it write into the new one, so wait for it, and refuse the switch if it does not finish.
+        if not self.ctx.tasks.wait(30000):
+            QMessageBox.warning(self, "Open another workspace",
+                                "Background work on this workspace is still running. Try again in a moment.")
+            return False
         for sim_id in list(self.docs):
             self._drop_document(sim_id)
         if self.batch_doc is not None:
@@ -1316,14 +1330,16 @@ class MainWindow(QMainWindow):
             self.batch_doc = None
         if choice == "stop":
             self.ctx.jobs.cancel_all()
-        self.ctx.close()
+        old = self.ctx
+        old.close()
         self.ctx = AppContext(root, self)
+        old.deleteLater()
         self._connect_context()
         self.graphics.set_tasks(self.ctx.tasks)
         self.jobs.set_manager(self.ctx.jobs)
         self.console = JobConsole(self.ctx.jobs, self.console_panel)
         self.console_panel.view.clear_entries()
-        self.project._loaded = False
+        self.project.reset_expansion()
         self._settings.remember_workspace(str(root))
         self._update_title()
         self._update_status()
