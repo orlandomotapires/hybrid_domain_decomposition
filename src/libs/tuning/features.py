@@ -14,7 +14,7 @@ from libs.profiling.matrix_metrics import _sparsity_metrics
 from libs.runtime.atomic import atomic_write_json
 from libs.runtime.matrix_library import load_matrix_meta
 from libs.graph_prep import build_pipeline_graph  # noqa: F401  (re-exported)
-from libs.runtime.utils import load_mtx, matrix_to_graph
+from libs.runtime.utils import load_mtx
 
 FEATURES_FILE = "features.json"
 FEATURES_VERSION = 1

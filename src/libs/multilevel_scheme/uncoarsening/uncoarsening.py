@@ -198,9 +198,9 @@ def uncoarsen_and_refine(
 
     part = dict(coarse_part)
     # Traverse maps in reverse: level L-1 down to 0
-    for l in range(len(maps) - 1, -1, -1):
-        fine_G = graphs[l]
-        label_map = maps[l]  # fine -> coarse
+    for level in range(len(maps) - 1, -1, -1):
+        fine_G = graphs[level]
+        label_map = maps[level]  # fine -> coarse
 
         fine_part: Dict[Any, int] = {}
         for u in fine_G.nodes():

@@ -72,11 +72,14 @@ Events are emitted with `libs.runtime.events` and never appear in the visible lo
 ## Tests
 
 ```sh
-pip install -e ".[gui,dev]"
-QT_QPA_PLATFORM=offscreen python -m pytest
+pip install -c constraints.txt -e ".[gui,dev]"
+QT_QPA_PLATFORM=offscreen python -m pytest            # add --cov for a coverage report
+ruff check src tests docs
 ```
 
-`pyproject.toml` puts `src/` and the repository root on the path. `tests/gui/` drives the real window headless with pytest-qt; `tests/jobs/` runs jobs with scripted fake processes plus one real METIS run. CI (`.github/workflows/ci.yml`) runs the whole suite on every push, on Python 3.10 (the oldest supported), 3.12 and 3.14.
+`pyproject.toml` puts `src/` and the repository root on the path and stops any test that runs longer than 5 minutes. `tests/gui/` drives the real window headless with pytest-qt; `tests/jobs/` runs jobs with scripted fake processes plus one real METIS run; `tests/conftest.py` restores the workspace environment and closes the pipeline's log file after every test.
+
+CI (`.github/workflows/ci.yml`) runs ruff and the whole suite on every pull request and on pushes to `main`, on Python 3.10 (the oldest supported), 3.12 (with a coverage report) and 3.14. `constraints.txt` pins the exact versions it installs from Python 3.12 on; refresh it with `pip freeze --exclude-editable` from an up-to-date environment, keeping the version marker.
 
 ## Documentation
 

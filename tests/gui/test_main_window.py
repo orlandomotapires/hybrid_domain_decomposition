@@ -9,7 +9,6 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QMessageBox
 
 from hdd.studio.main_window import MainWindow
-from hdd.studio.tree import NODE_ROLE
 from libs.runtime import workspace
 from libs.runtime.utils import AVAILABLE_SAVE_OUTPUTS
 from tests.test_workspace import make_workspace

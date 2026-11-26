@@ -6,7 +6,6 @@ import scipy.sparse as sp
 import numpy as np
 import networkx as nx
 
-import json
 from pathlib import Path
 from typing import Any
 
