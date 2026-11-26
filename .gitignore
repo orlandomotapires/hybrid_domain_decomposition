@@ -25,3 +25,7 @@ matrices/*/features.json
 # Studio state kept inside a workspace (job records and logs)
 .hdd/
 .claude/settings.json
+
+# Coverage data (pytest --cov)
+.coverage
+.coverage.*
