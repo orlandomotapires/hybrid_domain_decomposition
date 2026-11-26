@@ -120,15 +120,16 @@ _CONFIG_NAMES = {
     "DEFAULT_COARSENING_PRESETS": lambda c: c["coarsening_presets"],
     "DEFAULT_ALGORITHM_PRESETS": lambda c: c["algorithm_presets"],
 }
-_CONFIG_CACHE: dict[str, Any] | None = None
+_CONFIG_CACHE: tuple[Path, dict[str, Any]] | None = None  # (workspace root, configuration)
 
 
 def batch_configuration(*, reload: bool = False) -> dict[str, Any]:
-    """The workspace's batch configuration, read on first use (not at import)."""
+    """The workspace's batch configuration, read on first use (not at import) and per workspace."""
     global _CONFIG_CACHE
-    if _CONFIG_CACHE is None or reload:
-        _CONFIG_CACHE = _load_batch_configuration()
-    return _CONFIG_CACHE
+    root = workspace.root()
+    if _CONFIG_CACHE is None or reload or _CONFIG_CACHE[0] != root:
+        _CONFIG_CACHE = (root, _load_batch_configuration())
+    return _CONFIG_CACHE[1]
 
 
 def _setting(name: str) -> Any:

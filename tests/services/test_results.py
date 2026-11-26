@@ -102,7 +102,8 @@ class ResultsServiceTest(unittest.TestCase):
             "import sys; from libs.plotting import partition_plots; from hdd.services import results; "
             "print('matplotlib.pyplot' in sys.modules)"
         )
-        out = subprocess.run([sys.executable, "-c", code], env={**os.environ, "PYTHONPATH": "src"}, capture_output=True, text=True, check=True)
+        src = str(Path(__file__).resolve().parents[2] / "src")
+        out = subprocess.run([sys.executable, "-c", code], env={**os.environ, "PYTHONPATH": src}, capture_output=True, text=True, check=True)
         self.assertEqual("False", out.stdout.strip())
 
 
