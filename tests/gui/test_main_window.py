@@ -70,9 +70,13 @@ def test_selecting_nodes_loads_pages_and_plots(qtbot, window):
 def test_run_a_simulation_from_the_window(qtbot, window, root):
     window.select_node("simulation")
     assert window.act_run.isEnabled()
+    window.jobs_dock.raise_()
+    window.bottom.collapse()
     window.run_selected()
     job_id = window.console.job_id
     assert job_id is not None
+    # A run opens the collapsed bottom panel on its console.
+    assert not window.bottom.is_collapsed() and window.console_dock.isVisible()
     qtbot.waitUntil(lambda: window.ctx.jobs.get_job(job_id)["status"] != "running", timeout=120000)
     assert window.ctx.jobs.get_job(job_id)["status"] == "completed"
     qtbot.waitUntil(lambda: "Simulation Completed Successfully" in window.console_panel.view.visible_text(), timeout=5000)
@@ -189,6 +193,68 @@ def test_layout_survives_a_restart(qtbot, theme, settings, root):
     second.reset_layout()
     qtbot.wait(20)
     assert not second.jobs_dock.isFloating()
+    second.ctx.close()
+
+
+def bottom_docks(window):
+    return [window.console_dock, window.jobs_dock, window.problems_dock]
+
+
+def test_bottom_panel_collapses_to_its_tabs_and_expands(qtbot, window):
+    panel = window.bottom
+    qtbot.wait(50)  # let the dock layout settle
+    central = window.centralWidget().height()
+    height = window.console_dock.height()
+    assert not panel.is_collapsed() and panel.action.isChecked()
+    assert panel.action in window.menuBar().actions()[[a.text() for a in window.menuBar().actions()].index("&View")].menu().actions()
+
+    panel.action.trigger()  # View > Bottom panel, Ctrl+J
+    qtbot.waitUntil(lambda: window.centralWidget().height() > central + 100)
+    assert panel.is_collapsed() and not panel.action.isChecked()
+    assert all(dock.widget().maximumHeight() == 0 for dock in bottom_docks(window))
+    assert panel.button.isVisible() and "Expand" in panel.button.toolTip()
+
+    panel.button.click()
+    qtbot.waitUntil(lambda: window.centralWidget().height() <= central + 10)
+    assert not panel.is_collapsed() and panel.action.isChecked()
+    assert abs(window.console_dock.height() - height) <= 10
+
+
+def test_clicking_a_tab_expands_the_bottom_panel(qtbot, window):
+    panel = window.bottom
+    panel.collapse()
+    bar = panel._bar
+    assert bar is not None
+    index = next(i for i in range(bar.count()) if bar.tabText(i).startswith("Jobs"))
+    qtbot.mouseClick(bar, Qt.MouseButton.LeftButton, pos=bar.tabRect(index).center())
+    assert not panel.is_collapsed()
+    qtbot.waitUntil(window.jobs_dock.isVisible)
+
+
+def test_bottom_panel_ignores_docks_moved_out_of_the_bottom(qtbot, window):
+    for dock in bottom_docks(window):
+        dock.setFloating(True)
+    window.bottom.collapse()
+    assert not window.bottom.is_collapsed()
+    assert all(dock.widget().maximumHeight() > 0 for dock in bottom_docks(window))
+
+
+def test_collapsed_bottom_panel_survives_a_restart(qtbot, theme, settings, root):
+    first = MainWindow(theme, settings, root)
+    qtbot.addWidget(first)
+    first.show()
+    qtbot.wait(50)
+    first.bottom.collapse()
+    height = first.bottom.height()
+    first.close()
+    assert settings.bottom_panel() == (True, height)
+    second = MainWindow(theme, settings, root)
+    qtbot.addWidget(second)
+    second.show()
+    qtbot.waitUntil(second.bottom.is_collapsed)
+    assert second.console_dock.widget().maximumHeight() == 0
+    second.bottom.expand()
+    qtbot.waitUntil(lambda: abs(second.console_dock.height() - height) <= 10)
     second.ctx.close()
 
 

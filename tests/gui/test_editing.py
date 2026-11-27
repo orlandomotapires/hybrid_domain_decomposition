@@ -180,6 +180,19 @@ def test_errors_show_inline_and_in_problems_and_block_saving(qtbot, window, monk
     assert warned and saved_params(root)["coarsening_parameters"]["coarsen_superior_limit"] == 120
 
 
+def test_a_new_error_opens_the_collapsed_bottom_panel_on_problems(qtbot, window):
+    doc, _page = open_stage(qtbot, window, "simulation")
+    window.console_dock.raise_()
+    window.bottom.collapse()
+    doc.set_value(UPPER, 10)
+    qtbot.waitUntil(lambda: not window.bottom.is_collapsed())
+    assert window.problems_dock.isVisible()
+    # The same errors do not reopen a panel the user collapsed again.
+    window.bottom.collapse()
+    window._refresh_problems()
+    assert window.bottom.is_collapsed()
+
+
 def test_problem_row_navigates_to_the_field(qtbot, window):
     doc, _page = open_stage(qtbot, window, "simulation")
     doc.set_value(UPPER, 10)

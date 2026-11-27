@@ -12,7 +12,7 @@ HDD Studio is a native Qt 6 app. Start it with `./run.sh` (or from the applicati
 - **Project** (left): the workspace as a tree — matrices, simulations with their stages, presets, tuning studies and runs, the batch configuration and batch runs, and the quantum hardware checks. Type in the filter box to narrow it.
 - **Settings** (middle): the page of the selected item. Simulation pages are editors; the others show information and actions.
 - **Plots** (right): the selected item's plot. Pages without a plot of their own show the simulation's latest successful run (or its input matrix before the first run), with a caption saying what is shown. Use the magnifier to fit the plot and the image button to export it as PNG, SVG or CSV.
-- **Console, Jobs, Problems** (bottom): the live log of the followed job, every job with its state and progress, and the validation errors of open simulations. Double-click a problem to jump to its field.
+- **Console, Jobs, Problems** (bottom): the live log of the followed job, every job with its state and progress, and the validation errors of open simulations. Double-click a problem to jump to its field. The chevron at the right end of their tab row (or **Ctrl+J**, or **View → Bottom panel**) collapses them to the tabs alone, giving the graphics the room; clicking a tab expands them again. Running a simulation opens the collapsed panel on the Console, and a new validation error opens it on Problems.
 - **Help** (right, opened with F1): the documentation, opened at the parameter that has the focus.
 
 Every panel can be moved, floated, tabbed or closed; **View → Reset layout** restores the default, and the layout is remembered between sessions. The sun/moon button at the right end of the tool bar (Ctrl+Shift+L) switches between the light and dark themes; **View → Theme** also offers following the system setting.
@@ -86,6 +86,7 @@ The app writes its own log to `studio.log` in the per-user data folder (on Linux
 | Ctrl+N / Ctrl+O | New / open workspace |
 | Ctrl+R | Reload the workspace from disk |
 | Ctrl+Shift+L | Switch between the light and dark themes |
+| Ctrl+J | Collapse or expand the Console, Jobs and Problems panel |
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="images/help-dark.png">
