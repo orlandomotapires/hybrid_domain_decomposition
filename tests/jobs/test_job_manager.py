@@ -140,6 +140,12 @@ class JobManagerTest(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.manager.cancel_all()
+        self.manager.close()
+        # A job counts as finished before its follower has written the final record; let every
+        # follower (also those of managers a test reopened) finish before the folder goes away.
+        for thread in threading.enumerate():
+            if thread.name.startswith("job-"):
+                thread.join(10)
         self.env.stop()
         self.tmp.cleanup()
 
