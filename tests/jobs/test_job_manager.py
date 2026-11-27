@@ -527,8 +527,13 @@ class RealJobTest(unittest.TestCase):
             self.assertEqual("completed", job["status"], [e["message"] for e in job["logs"] if e["level"] == "ERROR"])
             self.assertTrue((root / job["result_dir"] / "permutation.txt").is_file())
             self.assertEqual(600, job["telemetry"]["initial_nodes"])
-            record = json.loads((root / ".hdd" / "jobs" / f"{job_id}.json").read_text())
-            self.assertEqual("completed", record["status"])
+            # The follower writes the final record just after the job counts as finished.
+            record_path = root / ".hdd" / "jobs" / f"{job_id}.json"
+            wait_for(lambda: json.loads(record_path.read_text())["status"] == "completed", timeout=10)
+            manager.close()
+            for thread in threading.enumerate():
+                if thread.name.startswith("job-"):
+                    thread.join(10)
 
 
 if __name__ == "__main__":
