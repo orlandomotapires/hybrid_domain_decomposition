@@ -19,6 +19,26 @@ DESKTOP_FILE="$APPS_DIR/hdd-studio.desktop"
 ICON_FILE="$ICON_DIR/hdd-studio.svg"
 SMALL_SIZES=(16x16 24x24 32x32)  # the simplified icon, legible at small sizes
 
+# A value of type string in a desktop entry: a literal backslash is written "\\".
+desktop_string() {
+	local s=$1 bs='\'
+	printf '%s' "${s//"$bs"/"$bs$bs"}"
+}
+
+# One Exec argument, quoted as the Desktop Entry spec asks: inside double quotes, '"', '`', '$' and
+# '\' are escaped with a backslash, that backslash is itself escaped by the string rule, and '%'
+# (a field code) is doubled. The replacements use quoted variables so every bash version treats
+# them literally.
+desktop_arg() {
+	local s=$1 bs='\' dq='"' dl='$' bt='`'
+	s=${s//"$bs"/"$bs$bs$bs$bs"}
+	s=${s//"$dq"/"$bs$bs$dq"}
+	s=${s//"$dl"/"$bs$bs$dl"}
+	s=${s//"$bt"/"$bs$bs$bt"}
+	s=${s//%/%%}
+	printf '"%s"' "$s"
+}
+
 refresh_caches() {
 	command -v update-desktop-database >/dev/null && update-desktop-database "$APPS_DIR" >/dev/null 2>&1 || true
 	command -v gtk-update-icon-cache >/dev/null && gtk-update-icon-cache -q -t "$DATA_HOME/icons/hicolor" >/dev/null 2>&1 || true
@@ -39,8 +59,14 @@ install -m 0644 "$ROOT_DIR/src/hdd/studio/resources/app/hdd-studio.svg" "$ICON_F
 for size in "${SMALL_SIZES[@]}"; do
 	install -D -m 0644 "$ROOT_DIR/src/hdd/studio/resources/app/hdd-studio-small.svg" "$DATA_HOME/icons/hicolor/$size/apps/hdd-studio.svg"
 done
-exec_line="env HDD_PYTHON=$PYTHON_BIN \"$ROOT_DIR/run.sh\" --desktop"
-sed -e "s|@EXEC@|$exec_line|" -e "s|@TRYEXEC@|$ROOT_DIR/run.sh|" "$ROOT_DIR/packaging/linux/hdd-studio.desktop.in" > "$DESKTOP_FILE"
+# Paths may contain spaces or characters the desktop entry format treats specially, so the Exec
+# arguments are quoted as the Desktop Entry spec asks, and the file is filled in without sed (whose
+# replacement text would interpret '&', '|' and '\').
+exec_line="env $(desktop_arg "HDD_PYTHON=$PYTHON_BIN") $(desktop_arg "$ROOT_DIR/run.sh") --desktop"
+template="$(cat "$ROOT_DIR/packaging/linux/hdd-studio.desktop.in")"
+content=${template//@EXEC@/"$exec_line"}
+content=${content//@TRYEXEC@/"$(desktop_string "$ROOT_DIR/run.sh")"}
+printf '%s\n' "$content" > "$DESKTOP_FILE"
 chmod 0644 "$DESKTOP_FILE"
 if command -v desktop-file-validate >/dev/null; then
 	desktop-file-validate "$DESKTOP_FILE"
