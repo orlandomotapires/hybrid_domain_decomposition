@@ -41,7 +41,26 @@ def create_application(argv: list[str] | None = None) -> QApplication:
         for size in (48, 64, 128, 256):
             icon.addFile(str(icons / "hdd-studio.svg"), QSize(size, size))
         app.setWindowIcon(icon)
+    _collect_garbage_on_the_gui_thread()
     return app
+
+
+_gui_garbage_collector = None
+
+
+def _collect_garbage_on_the_gui_thread() -> None:
+    """Run Python's cyclic garbage collector only on the GUI thread, from a timer.
+
+    Otherwise it runs in whichever thread happens to be allocating, such as a task-runner thread
+    building a graph, and may destroy a Qt widget there. Qt objects must be destroyed in their
+    own thread; doing it elsewhere deadlocked the window (the GUI thread waiting on a Qt lock
+    while a worker thread destroyed a widget). pyqtgraph's collector does exactly this.
+    """
+    global _gui_garbage_collector
+    if _gui_garbage_collector is None:
+        from pyqtgraph.util.garbage_collector import GarbageCollector
+
+        _gui_garbage_collector = GarbageCollector(interval=0.5)
 
 
 def resolve_workspace(requested: Path | None, remembered: str | None) -> Path:
