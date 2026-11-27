@@ -182,7 +182,9 @@ def totals(cases: list[dict[str, Any]]) -> dict[str, Any]:
 
 # --------------------------------------------------------------- estimates
 _LOG_CASE_RE = re.compile(r"^\[(\d+)/(\d+)\] (Running|Launched async) (\S+)")
-_LOG_TS_RE = re.compile(r"^\[(\d{1,2} \w{3} \d{4} \d{2}:\d{2}:\d{2}) UTC ")
+# "[26 Nov 2026 10:00:00 <zone> LEVEL]": the pipeline logs in the local time zone (or APP_TIMEZONE),
+# so the zone name is whatever that is, not always UTC.
+_LOG_TS_RE = re.compile(r"^\[(\d{1,2} \w{3} \d{4} \d{2}:\d{2}:\d{2}) \S+ ")
 
 
 def _parse_iso(value: Any) -> datetime | None:

@@ -551,10 +551,13 @@ class JobManager:
 
     def start_batch_study(self, *, stop_on_error: bool = False) -> dict[str, Any]:
         stamp = f"{datetime.now():%Y%m%d_%H%M%S}"
-        batch_dir = self.root / "batch" / "runs" / f"batch_{stamp}"
-        batch_dir.mkdir(parents=True, exist_ok=True)
+        # A suffix, so two batches started in the same second (two Studios, a script) never share a
+        # folder, a log and a manifest.
+        suffix = uuid.uuid4().hex[:6]
+        batch_dir = self.root / "batch" / "runs" / f"batch_{stamp}_{suffix}"
+        batch_dir.mkdir(parents=True, exist_ok=False)
         job = SimulationJob(
-            job_id=f"batch_{stamp}_{uuid.uuid4().hex[:6]}",
+            job_id=f"batch_{stamp}_{suffix}",
             job_type="batch",
             title=f"Batch Study ({batch_dir.name})",
             batch_dir=self._rel(batch_dir),
@@ -611,9 +614,12 @@ class JobManager:
         proc = job._process
         unverified = False
         if proc is not None:
-            if proc.poll() is None:
-                _signal_group(proc.pid, signal.SIGTERM)
-                self._after_grace(lambda: proc.poll() is None and _signal_group(proc.pid, signal.SIGKILL))
+            if proc.poll() is not None:
+                # Already ended, its follower just has not caught up: let it report how it ended
+                # instead of calling a finished run "cancelled".
+                return job.to_dict(include_logs=True)
+            _signal_group(proc.pid, signal.SIGTERM)
+            self._after_grace(lambda: proc.poll() is None and _signal_group(proc.pid, signal.SIGKILL))
         elif _pid_verified(job.pid, job.pid_start):  # followed again after a restart: not our child
             pid, start = job.pid, job.pid_start
             _signal_group(pid, signal.SIGTERM)

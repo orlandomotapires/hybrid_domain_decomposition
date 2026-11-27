@@ -156,7 +156,6 @@ def decompose_matrix(matrix, general_parameters, coarsening_parameters, partitio
         )
 
     events.stage("partitioning")
-    part_k_coarse = 0
     if partitioning_strategy == 'metis_partitioning':
         log("INFO", "Multilevel Partitioning Scheme using METIS")
         part_k_coarse = partition_graph_metis(Gc, nparts=effective_k_target, balance_tolerance=balance_tolerance)
@@ -293,6 +292,11 @@ def decompose_matrix(matrix, general_parameters, coarsening_parameters, partitio
             simulated=simulated,
             qlm_qpu_name=qlm_qpu_name,
             qlm_job_timeout_seconds=qlm_job_timeout_seconds,
+        )
+    else:
+        raise ValueError(
+            f"Unknown partitioning_strategy {partitioning_strategy!r}; "
+            "use metis_partitioning, quantum_annealing or quantum_approximation_optimizer"
         )
 
     log("VERBOSE", f"Partitioning on coarse graph produced {len(set(part_k_coarse.values()))} parts")

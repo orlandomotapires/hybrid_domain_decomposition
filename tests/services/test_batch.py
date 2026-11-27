@@ -42,6 +42,16 @@ class PlanTest(unittest.TestCase):
         self.assertEqual("m1__metis__big", cases[0]["case_key"])
         self.assertTrue(next(c for c in cases if c["algorithm"] == "qaoa_hw")["is_async"])
 
+    def test_log_durations_work_in_any_time_zone(self) -> None:
+        with TemporaryDirectory() as tmp:
+            log = Path(tmp) / "batch.log"
+            log.write_text(
+                "[01/01] Running m__metis__big\n"
+                "[26 Nov 2026 10:00:00 -03 INFO] Converting matrix to graph\n"
+                "[26 Nov 2026 10:00:30 -03 INFO] Permuting matrix\n"
+            )
+            self.assertEqual({"m__metis__big": 30.0}, batch._durations_from_log(log))
+
     def test_preset_keys_cannot_name_paths(self) -> None:
         bad = config()
         bad["algorithm_presets"][0]["key"] = "../../../../tmp/x"
