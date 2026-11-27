@@ -17,8 +17,11 @@ from typing import Any
 
 import numpy as np
 
+from libs.multilevel_scheme.partitioning.utils.metrics import legacy_tolerance_percent
 from libs.runtime import workspace
 from libs.tuning.objectives import objective_values, read_run_metrics, weighted_score
+
+TOLERANCE_UNIT = "percent"
 
 
 def history_path() -> Path:
@@ -50,6 +53,7 @@ def record_run(
         "run_dir": run_rel,
         "parameters": parameters,
         "metrics": metrics,
+        "tolerance_unit": TOLERANCE_UNIT,
     }
     path = history_path()
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -71,8 +75,21 @@ def load_history(matrix_id: str | None = None) -> list[dict[str, Any]]:
         except json.JSONDecodeError:
             continue
         if matrix_id is None or row.get("matrix_id") == matrix_id:
-            rows.append(row)
+            rows.append(_with_percent_tolerance(row))
     return rows
+
+
+def _with_percent_tolerance(row: dict[str, Any]) -> dict[str, Any]:
+    """Entries written before the percent-only rule may hold a ratio (0.1 = 10%); convert them."""
+    if row.get("tolerance_unit") == TOLERANCE_UNIT:
+        return row
+    try:
+        common = row["parameters"]["partitioning_parameters"]["common"]
+        common["balance_tolerance"] = legacy_tolerance_percent(common["balance_tolerance"])
+    except (KeyError, TypeError, ValueError):
+        pass
+    row["tolerance_unit"] = TOLERANCE_UNIT
+    return row
 
 
 def best_runs(

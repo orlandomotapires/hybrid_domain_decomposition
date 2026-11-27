@@ -10,6 +10,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+from libs.runtime.defaults import common_defaults, strategy_defaults
+
 AVAILABLE_SAVE_OUTPUTS = {
     "coarsened_graph",
     "matrix_permuted",
@@ -409,14 +411,15 @@ def validate_and_normalize_simulation_parameters(params: dict) -> dict:
         common_raw = {}
     common = _require_dict(common_raw, "partitioning_parameters.common")
 
-    # Defaults (from your tables)
+    defaults = common_defaults()
     k_target = _coerce_int(
-        common.get("k_target", 2), "partitioning_parameters.common.k_target"
+        common.get("k_target", defaults["k_target"]), "partitioning_parameters.common.k_target"
     )
     if k_target < 1:
         raise ValueError("partitioning_parameters.common.k_target must be >= 1")
     balance_tolerance = _coerce_float(
-        common.get("balance_tolerance", 0.1), "partitioning_parameters.common.balance_tolerance"
+        common.get("balance_tolerance", defaults["balance_tolerance"]),
+        "partitioning_parameters.common.balance_tolerance",
     )
     if balance_tolerance < 0.0:
         raise ValueError("partitioning_parameters.common.balance_tolerance must be >= 0")
@@ -443,14 +446,7 @@ def validate_and_normalize_simulation_parameters(params: dict) -> dict:
 
     strat_out = dict(strat_params)
     if partitioning_strategy == "quantum_annealing":
-        # Defaults (from your tables)
-        qa_defaults = {
-            "qubo_balance_lambda": 0.1,
-            "num_reads": 5,
-            "num_starts": 5,
-            "balance_violation_lambda": 0.1,
-            "simulated": True,
-        }
+        qa_defaults = strategy_defaults("quantum_annealing")
         strat_out["qubo_balance_lambda"] = _coerce_float(
             _value_or_default("qubo_balance_lambda", qa_defaults["qubo_balance_lambda"]),
             "partitioning_parameters.strategies.quantum_annealing.qubo_balance_lambda",
@@ -494,16 +490,7 @@ def validate_and_normalize_simulation_parameters(params: dict) -> dict:
             "partitioning_parameters.strategies.quantum_annealing.qpu_problem_label",
         )
     elif partitioning_strategy == "quantum_approximation_optimizer":
-        # Defaults (from your tables)
-        qaoa_defaults = {
-            "qubo_balance_lambda": 0.1,
-            "num_starts": 12,
-            "balance_violation_lambda": 0.1,
-            "circuit_depth": 12,
-            "num_steps": 12,
-            "num_shots": 5,
-            "simulated": True,
-        }
+        qaoa_defaults = strategy_defaults("quantum_approximation_optimizer")
         if "qaoa_backend" in strat_params:
             raise ValueError(
                 "partitioning_parameters.strategies.quantum_approximation_optimizer.qaoa_backend is no longer used. "
@@ -571,7 +558,7 @@ def validate_and_normalize_simulation_parameters(params: dict) -> dict:
         )
         if strat_out["simulated"]:
             strat_out["adam_learning_rate"] = _coerce_float(
-                _value_or_default("adam_learning_rate", 0.1),
+                _value_or_default("adam_learning_rate", qaoa_defaults["adam_learning_rate"]),
                 "partitioning_parameters.strategies.quantum_approximation_optimizer.adam_learning_rate",
             )
             if strat_out["adam_learning_rate"] <= 0.0:

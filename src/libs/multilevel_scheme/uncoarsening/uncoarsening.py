@@ -6,20 +6,7 @@ from typing import Any, Dict
 import networkx as nx
 import numpy as np
 
-
-def _tol_to_ratio(balance_tolerance: float) -> float:
-    """Convert tolerance to a ratio.
-
-    Convention:
-    - If balance_tolerance > 1.0, treat as percent (e.g., 5.0 => 0.05).
-    - Else treat as already a ratio (e.g., 0.05 => 0.05).
-    """
-    t = float(balance_tolerance)
-    if t < 0:
-        return 0.0
-    if t > 1.0:
-        return t / 100.0
-    return t
+from libs.multilevel_scheme.partitioning.utils.metrics import tolerance_ratio
 
 
 def _node_weight(G: nx.Graph, u: Any, node_weight_attr: str) -> float:
@@ -100,7 +87,7 @@ def refine_kway_boundary_moves(
         return {u: 0 for u in G.nodes()}
 
     obj = (objective or "cut").strip().lower()
-    tol = _tol_to_ratio(balance_tolerance)
+    tol = tolerance_ratio(balance_tolerance)
 
     part = dict(part)
     part_weights = _compute_part_weights(G, part, k, node_weight_attr)

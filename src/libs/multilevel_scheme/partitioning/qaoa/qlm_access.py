@@ -8,6 +8,9 @@ from time import perf_counter, sleep
 from typing import Any
 
 from libs.runtime.log import log
+from libs.runtime.retry import call_with_retries, is_transient_network_error
+
+MAX_CONSECUTIVE_POLL_FAILURES = 3
 
 
 DEFAULT_QLM_QPU_NAME = "qat.qpus:QSolidQPU10"
@@ -201,6 +204,7 @@ def _wait_for_qlm_async_result(
 	success_statuses = {"done", "completed", "success", "finished"}
 	failure_statuses = {"failed", "error", "cancelled", "canceled", "aborted", "killed"}
 
+	poll_failures = 0
 	if job_id is not None:
 		log("VERBOSE", f"QLM job id for {job_label}: {job_id}")
 
@@ -216,11 +220,24 @@ def _wait_for_qlm_async_result(
 			raise TimeoutError(timeout_message)
 
 		api_call_timeout = min(60.0, max(5.0, remaining))
-		status_value = _run_with_timeout(
-			action_label=f"polling status for {job_label}",
-			timeout_seconds=api_call_timeout,
-			func=async_result.get_status,
-		)
+		try:
+			status_value = _run_with_timeout(
+				action_label=f"polling status for {job_label}",
+				timeout_seconds=api_call_timeout,
+				func=async_result.get_status,
+			)
+		except Exception as exc:
+			# Polling is read-only: a dropped connection or a slow reply is retried, up to a limit,
+			# so a three-hour wait is not lost to one network blip.
+			poll_failures += 1
+			if not is_transient_network_error(exc) or poll_failures > MAX_CONSECUTIVE_POLL_FAILURES:
+				raise
+			log("WARNING", f"Polling {job_label} failed ({type(exc).__name__}: {exc}); "
+			               f"retrying ({poll_failures} of {MAX_CONSECUTIVE_POLL_FAILURES})"
+			               + (f" (job_id={job_id})" if job_id is not None else ""))
+			sleep(min(status_poll_interval, 10.0, max(1.0, remaining)))
+			continue
+		poll_failures = 0
 		normalized_status = _normalize_qlm_status(status_value)
 		elapsed = perf_counter() - total_started
 
@@ -233,10 +250,17 @@ def _wait_for_qlm_async_result(
 			last_logged_message = status_message
 
 		if normalized_status in success_statuses:
-			result = _run_with_timeout(
-				action_label=f"retrieving result for {job_label}",
-				timeout_seconds=min(300.0, max(10.0, remaining)),
-				func=async_result.get_result,
+			result = call_with_retries(
+				lambda: _run_with_timeout(
+					action_label=f"retrieving result for {job_label}",
+					timeout_seconds=min(300.0, max(10.0, deadline - perf_counter())),
+					func=async_result.get_result,
+				),
+				retry_on=(Exception,),
+				retry_if=is_transient_network_error,
+				deadline=deadline,  # perf_counter time; retries never wait past the job's timeout
+				clock=perf_counter,
+				what=f"Retrieving the {job_label} result" + (f" (job_id={job_id})" if job_id is not None else ""),
 			)
 			log("VERBOSE", f"Received {job_label} result from QLM in {perf_counter() - total_started:.2f}s")
 			return result

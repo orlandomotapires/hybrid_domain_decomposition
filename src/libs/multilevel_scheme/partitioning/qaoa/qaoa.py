@@ -21,9 +21,7 @@ from libs.multilevel_scheme.partitioning.utils import (
     qubo_energy,
     qubo_to_ising,
 )
-
-
-LOCAL_PYLINALG_QUBIT_SAFETY_LIMIT = 24
+from libs.multilevel_scheme.partitioning.capacity import QAOA_EMULATED_QUBIT_LIMIT
 
 
 def _build_cost_observable(h: np.ndarray, J: np.ndarray):
@@ -136,7 +134,7 @@ def _qaoa_bipartition_on_pennylane(
     seed: int | None,
 ) -> tuple[dict[Any, int], float]:
     n = len(nodes)
-    if n > LOCAL_PYLINALG_QUBIT_SAFETY_LIMIT:
+    if n > QAOA_EMULATED_QUBIT_LIMIT:
         raise ValueError(
             f"QAOA bipartition is too large to simulate locally with PennyLane (n={n}). "
             "Coarsen more, set simulated=False to use a QLM backend, or use a different method."
@@ -173,7 +171,9 @@ def _qaoa_bipartition_on_pennylane(
         return qml.expval(Hc)
 
     rng = np.random.default_rng(seed)
-    params = rng.uniform(low=0.0, high=0.5, size=(2 * int(p),)).astype(float)
+    # The angles must be a trainable PennyLane array: with a plain numpy array the optimizer
+    # sees no trainable parameters and every step returns them unchanged.
+    params = qml.numpy.array(rng.uniform(low=0.0, high=0.5, size=(2 * int(p),)), requires_grad=True)
     opt = qml.AdamOptimizer(stepsize=float(lr))
     for _ in range(max(1, int(steps))):
         params = opt.step(cost_qnode, params)

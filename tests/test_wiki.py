@@ -64,6 +64,37 @@ class WikiTest(unittest.TestCase):
         self.assertIn(f'srcset="{exporter.RAW_IMAGES}a-dark.png"', converted)
         self.assertIn(f'src="{exporter.RAW_IMAGES}a.png"', converted)
 
+    def test_default_badges_match_the_pipeline_defaults(self) -> None:
+        import json
+
+        from libs.runtime.defaults import DEFAULT_SIMULATION_PARAMETERS as defaults
+
+        def lookup(path: list[str]):
+            node = defaults
+            for part in path:
+                if not isinstance(node, dict) or part not in node:
+                    return None
+                node = node[part]
+            return node
+
+        strategies = defaults["partitioning_parameters"]["strategies"]
+        wrong = []
+        for topic in json.loads((ROOT / "src/hdd/services/data/wiki.json").read_text(encoding="utf-8"))["topics"]:
+            key, badge = topic.get("codeKey") or "", topic.get("badge") or ""
+            if "Default:" not in badge or " " in key or not key:
+                continue
+            parts = key.split(".")
+            if parts[0] == "strategies":
+                parts = ["partitioning_parameters", *parts]
+            candidates = [lookup(parts)] if len(parts) > 1 else [s.get(key) for s in strategies.values()]
+            expected = {float(v) for v in candidates if isinstance(v, (int, float)) and not isinstance(v, bool)}
+            if not expected:
+                continue  # strings, "Auto" and keys without a default
+            shown = {float(n.replace(",", "")) for n in re.findall(r"\d[\d,]*(?:\.\d+)?", badge.split("Default:", 1)[1])}
+            if shown != expected:
+                wrong.append(f"{key}: badge {badge!r}, defaults {sorted(expected)}")
+        self.assertEqual([], wrong)
+
     def test_every_wiki_page_is_linked_from_the_index(self) -> None:
         index = (WIKI / "README.md").read_text(encoding="utf-8")
         pages = {p.name for p in WIKI.glob("*.md")} - {"README.md"}

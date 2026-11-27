@@ -16,6 +16,7 @@ note the change and let their own thread pull the state with :meth:`get_job`.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import shutil
 import signal
@@ -40,11 +41,14 @@ Listener = Callable[[str, str], None]
 CommandFactory = Callable[[str, list[str]], list[str]]
 EVENTS = ("added", "changed", "finished", "removed")
 MAX_LOG_ENTRIES = 50_000
-INTERRUPTED_MESSAGE = "The job ended while the Studio was closed and did not report a result."
+_log = logging.getLogger("hdd.jobs")
+
+INTERRUPTED_MESSAGE ="The job ended while the Studio was closed and did not report a result."
 NO_RESULT_MESSAGE = "The job ended without reporting a result (it may have been killed)."
 POLL_SEC = 0.1
 # Fields written to a job record (everything else is runtime state).
 _RECORD_EXCLUDE = {"logs", "parameters_override"}
+_RECORD_PATH_FIELDS = ("log_path", "result_dir", "batch_dir", "study_dir", "demonstrator_dir")
 
 
 def _run_meta_from_params(params: dict[str, Any] | None) -> dict[str, Any]:
@@ -246,22 +250,68 @@ class JobManager:
             return
         try:
             self.store.save(job.to_record())
-        except OSError:
-            pass
+        except (OSError, ValueError) as exc:
+            # The job goes on, but without a record the next session cannot follow or settle it.
+            _log.error("Could not save the record of job %s: %s", job.job_id, exc)
+            with job._lock:
+                if not job.telemetry.get("record_error"):
+                    job.telemetry["record_error"] = str(exc)
+                    job.append_log({"timestamp": datetime.now().strftime("%H:%M:%S"), "level": "WARNING",
+                                    "message": f"Could not save the job record ({exc}); the job will not be "
+                                               "followed after the Studio restarts."})
+
+    def _inside_workspace(self, value: Any, *, follow_links: bool) -> str | None:
+        """``value`` if it is a relative path that stays inside the workspace, else None.
+
+        Paths the Studio only reads or shows are checked lexically, so folders symlinked to
+        another disk keep working. A path it writes to (the log) must also resolve inside.
+        """
+        if not isinstance(value, str) or not value or Path(value).is_absolute():
+            return None
+        if os.path.normpath(value).split(os.sep)[0] == os.pardir:
+            return None
+        if follow_links:
+            try:
+                (self.root / value).resolve().relative_to(self.root)
+            except (ValueError, OSError):
+                return None
+        return value
+
+    def _sanitize_record(self, record: dict[str, Any]) -> dict[str, Any]:
+        """Records come from the workspace, which may be someone else's: keep their paths inside it."""
+        record = dict(record)
+        for key in _RECORD_PATH_FIELDS:
+            if record.get(key) is not None:
+                safe = self._inside_workspace(record[key], follow_links=key == "log_path")
+                if safe is None:
+                    _log.warning("Job %s: ignoring %s %r (outside the workspace)", record.get("job_id"), key, record[key])
+                record[key] = safe
+        for key in ("pid", "pid_start"):
+            value = record.get(key)
+            record[key] = value if isinstance(value, int) and not isinstance(value, bool) and value > 0 else None
+        return record
 
     def _load_records(self) -> None:
         for record in self.store.load_all():
-            job = SimulationJob.from_record(record)
-            self._jobs[job.job_id] = job
-            if job.status != "running":
-                continue
-            # The job was running when the Studio last closed: rebuild its state from its log.
-            job.logs, job.logs_dropped, job.telemetry, job._logs_loaded = [], 0, {}, True
-            job.exit_reported = None
-            if job.log_path and _pid_alive(job.pid, job.pid_start):
-                self._start_follower(job, self._replay(job))
-            else:
-                self._follow(job, 0, settle=True)
+            try:
+                self._load_record(record)
+            except Exception:  # one bad record must not keep the workspace from opening
+                _log.exception("Skipping unreadable job record %r", record.get("job_id"))
+                self._jobs.pop(str(record.get("job_id")), None)
+
+    def _load_record(self, record: dict[str, Any]) -> None:
+        job = SimulationJob.from_record(self._sanitize_record(record))
+        job.to_dict(include_logs=False)  # fail here, not later in the UI, on wrongly typed fields
+        self._jobs[job.job_id] = job
+        if job.status != "running":
+            return
+        # The job was running when the Studio last closed: rebuild its state from its log.
+        job.logs, job.logs_dropped, job.telemetry, job._logs_loaded = [], 0, {}, True
+        job.exit_reported = None
+        if job.log_path and _pid_alive(job.pid, job.pid_start):
+            self._start_follower(job, self._replay(job))
+        else:
+            self._follow(job, 0, settle=True)
 
     def _replay(self, job: SimulationJob) -> int:
         """Apply the complete lines already in the job's log; return the offset to follow from."""
@@ -517,27 +567,39 @@ class JobManager:
         if job is None:
             return None
         proc = job._process
+        unverified = False
         if proc is not None:
             if proc.poll() is None:
                 _signal_group(proc.pid, signal.SIGTERM)
                 self._after_grace(lambda: proc.poll() is None and _signal_group(proc.pid, signal.SIGKILL))
-        elif _pid_alive(job.pid, job.pid_start):  # followed again after a restart: not our child
+        elif _pid_verified(job.pid, job.pid_start):  # followed again after a restart: not our child
             pid, start = job.pid, job.pid_start
             _signal_group(pid, signal.SIGTERM)
-            self._after_grace(lambda: _pid_alive(pid, start) and _signal_group(pid, signal.SIGKILL))
+            self._after_grace(lambda: _pid_verified(pid, start) and _signal_group(pid, signal.SIGKILL))
+        elif _pid_alive(job.pid, job.pid_start):
+            # Followed again after a restart, but the process cannot be proven to be this job (no
+            # start time, or no /proc): the pid may belong to an unrelated process by now, so it
+            # is never signalled, and the job stays "running" until that process ends.
+            unverified = True
         changed = False
         with job._lock:
-            if job.status == "running":
+            stamp = datetime.now().strftime("%H:%M:%S")
+            if unverified and job.status == "running":
+                job.append_log({"timestamp": stamp, "level": "WARNING", "message": (
+                    f"Process {job.pid} could not be verified as this job, so it was not stopped. "
+                    "Stop it from a terminal if it is this job; the job is followed until it ends.")})
+                changed = True
+            elif job.status == "running":
                 now = time.time()
                 job.close_stage(now)
                 job.status = "cancelled"
                 job.finished_epoch = now
                 job.finished_at = datetime.now().isoformat()
-                job.append_log({"timestamp": datetime.now().strftime("%H:%M:%S"), "level": "WARNING", "message": "Job cancelled by user."})
+                job.append_log({"timestamp": stamp, "level": "WARNING", "message": "Job cancelled by user."})
                 changed = True
         if changed:
             self._save(job)
-            self._notify("finished", job_id)
+            self._notify("changed" if unverified else "finished", job_id)
         return job.to_dict(include_logs=True)
 
     def _after_grace(self, fn: Callable[[], Any]) -> None:
@@ -563,8 +625,33 @@ class JobManager:
     def _follow(self, job: SimulationJob, position: int, settle: bool = False) -> None:
         """Apply the job's log from ``position`` on until its process ends (or the manager closes).
 
-        ``settle`` reads a job whose process is already gone, to rebuild its final state.
+        ``settle`` reads a job whose process is already gone, to rebuild its final state. Whatever
+        goes wrong, the job reaches a final state: a dead follower must not leave it "running".
         """
+        try:
+            self._follow_log(job, position, settle)
+        except Exception as exc:
+            _log.exception("Lost track of job %s", job.job_id)
+            self._lose(job, exc)
+
+    def _lose(self, job: SimulationJob, exc: Exception) -> None:
+        with job._lock:
+            if job.status != "running":
+                return
+            pid = job.pid
+            job.status = "failed"
+            job.error_message = f"The Studio lost track of this job ({exc})."
+            if pid and (job._process is None or job._process.poll() is None):
+                job.error_message += f" Its process ({pid}) may still be running."
+            now = time.time()
+            job.close_stage(now)
+            job.finished_epoch = now
+            job.finished_at = datetime.fromtimestamp(now).isoformat()
+            job.append_log({"timestamp": datetime.now().strftime("%H:%M:%S"), "level": "ERROR", "message": job.error_message})
+        self._save(job)
+        self._notify("finished", job.job_id)
+
+    def _follow_log(self, job: SimulationJob, position: int, settle: bool) -> None:
         path = self.root / job.log_path if job.log_path else None
         buffer = b""
         handle = path.open("rb") if path is not None and path.exists() else None
@@ -646,8 +733,13 @@ class JobManager:
         event = job_events.parse(line)
         with job._lock:
             if event is not None:
-                self._apply_event(job, event)
-                return
+                try:
+                    self._apply_event(job, event)
+                    return
+                except (KeyError, TypeError, ValueError) as exc:
+                    # A malformed event must not stop the follower; keep the line for the user.
+                    _log.warning("Ignoring malformed event of job %s: %s (%s)", job.job_id, line, exc)
+                    line = f"[{datetime.now():%H:%M:%S} WARNING] Ignored a malformed progress event: {line}"
             entry = _parse_log_line(line)
             job.append_log(entry)
             parsing.update_telemetry(job.telemetry, entry["message"])
@@ -728,16 +820,25 @@ def _pid_alive(pid: int | None, start: int | None = None) -> bool:
         if start is not None and int(fields_after[19]) != start:
             return False
     except (OSError, ValueError, IndexError):
-        pass
+        pass  # no /proc: the process exists, which is all that can be said
     return True
 
 
-def _signal_group(pid: int, sig: int) -> None:
-    """Signal the job's process group (it leads its own session), else the process alone."""
+def _pid_verified(pid: int | None, start: int | None) -> bool:
+    """Whether ``pid`` is alive and provably the process started at ``start`` (safe to signal)."""
+    if not pid or start is None:
+        return False
+    return _process_start(pid) == start and _pid_alive(pid, start)
+
+
+def _signal_group(pid: int, sig: int) -> bool:
+    """Signal the job's process group. Jobs lead their own session, so the group id is the pid.
+
+    No fallback to signalling the pid alone: if the group is gone, so is the job, and a bare pid
+    may already belong to another process.
+    """
     try:
         os.killpg(pid, sig)
-    except Exception:
-        try:
-            os.kill(pid, sig)
-        except Exception:
-            pass
+        return True
+    except OSError:
+        return False

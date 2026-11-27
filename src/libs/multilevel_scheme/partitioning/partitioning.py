@@ -47,11 +47,21 @@ def _graph_to_metis_csr(G: nx.Graph) -> tuple[List[int], List[int], List[int], L
     eweights = _weights_to_metis_ints(edge_weights_raw)
     return xadj, adjncy, vweights, eweights
 
+def metis_ufactor(balance_tolerance: float) -> int:
+    """METIS ``ufactor`` (allowed imbalance in 1/1000 units) for a tolerance in percent."""
+    return max(1, int(round(float(balance_tolerance) * 10.0)))
+
+
 def partition_graph_metis(
     G: nx.Graph,
     nparts: int = 2,
+    *,
+    balance_tolerance: float | None = None,
 ) -> Dict[Any, int]:
-    """Partition a graph directly with METIS and return node-to-part assignments."""
+    """Partition a graph directly with METIS and return node-to-part assignments.
+
+    ``balance_tolerance`` (percent) is passed to METIS as ``ufactor``; ``None`` keeps METIS' default.
+    """
 
     nodes = list(G.nodes())
     effective_parts = max(1, min(int(nparts), len(nodes)))
@@ -59,12 +69,14 @@ def partition_graph_metis(
         return {}
 
     xadj, adjncy, vweights, eweights = _graph_to_metis_csr(G)
+    options = None if balance_tolerance is None else pymetis.Options(ufactor=metis_ufactor(balance_tolerance))
     _, membership = pymetis.part_graph(
         effective_parts,
         xadj=xadj,
         adjncy=adjncy,
         vweights=vweights,
         eweights=eweights,
+        options=options,
     )
     return {nodes[i]: int(membership[i]) for i in range(len(nodes))}
 
@@ -72,13 +84,13 @@ def recursive_kway_anneal(
     Gc: nx.Graph,
     k: int,
     *,
-    balance_lambda: float = 1.0,
-    num_reads: int = 200,
+    balance_lambda: float,
+    num_reads: int,
     weight: str = 'vweight',
-    balance_tolerance: float = 0.0,
+    balance_tolerance: float,
     seed: int | None = None,
-    num_starts: int = 1,
-    balance_violation_lambda: float = 1.0e6,
+    num_starts: int,
+    balance_violation_lambda: float,
     simulated: bool = True,
     qpu_solver_name: str | None = None,
     qpu_region: str | None = None,
@@ -116,16 +128,16 @@ def recursive_kway_qaoa(
     Gc: nx.Graph,
     k: int,
     *,
-    balance_lambda: float = 1.0,
+    balance_lambda: float,
     weight: str = 'vweight',
-    balance_tolerance: float = 0.0,
+    balance_tolerance: float,
     seed: int | None = None,
-    num_starts: int = 1,
-    balance_violation_lambda: float = 1.0e6,
-    circuit_depth: int = 1,
-    num_steps: int = 60,
+    num_starts: int,
+    balance_violation_lambda: float,
+    circuit_depth: int,
+    num_steps: int,
     adam_learning_rate: float | None = None,
-    num_shots: int = 200,
+    num_shots: int,
     simulated: bool = True,
     qlm_qpu_name: str | None = None,
     qlm_job_timeout_seconds: float | None = None,

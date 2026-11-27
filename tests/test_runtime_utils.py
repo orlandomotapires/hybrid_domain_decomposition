@@ -10,6 +10,19 @@ from libs.runtime.runtime import run_simulation
 
 
 class RuntimeUtilsTest(unittest.TestCase):
+    def test_omitted_partitioning_keys_take_the_studio_defaults(self) -> None:
+        from libs.runtime.defaults import default_parameters, strategy_defaults
+        from libs.runtime.utils import validate_and_normalize_simulation_parameters
+
+        for strategy in ("quantum_annealing", "quantum_approximation_optimizer"):
+            params = default_parameters()
+            params["partitioning_parameters"] = {"partitioning_strategy": strategy}
+            out = validate_and_normalize_simulation_parameters(params)["partitioning_parameters"]
+            self.assertEqual({"k_target": 4, "balance_tolerance": 2.0}, out["common"])
+            block = out["strategies"][strategy]
+            for key, value in strategy_defaults(strategy).items():
+                self.assertEqual(value, block[key], f"{strategy}.{key}")
+
     def test_available_save_outputs_include_no_png_outputs(self) -> None:
         png_outputs = {entry for entry in AVAILABLE_SAVE_OUTPUTS if entry.endswith(".png")}
 
@@ -65,7 +78,7 @@ class RuntimeUtilsTest(unittest.TestCase):
             },
             "partitioning_parameters": {
                 "partitioning_strategy": "metis_partitioning",
-                "common": {"k_target": 2, "balance_tolerance": 0.1},
+                "common": {"k_target": 2, "balance_tolerance": 10.0},
                 "strategies": {"metis_partitioning": {}},
             },
             "uncoarsening_parameters": {

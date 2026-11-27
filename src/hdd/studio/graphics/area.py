@@ -12,9 +12,7 @@ from PySide6.QtCore import QSize, Qt
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import QComboBox, QFileDialog, QHBoxLayout, QLabel, QMenu, QSizePolicy, QStackedWidget, QTabBar, QToolButton, QVBoxLayout, QWidget
 
-from hdd.services import catalog, results
-from libs.runtime.matrix_library import resolve_matrix
-from libs.runtime.utils import load_mtx
+from hdd.services import catalog, matrices, results
 
 from ..tasks import TaskRunner
 from ..theme import Theme
@@ -30,8 +28,8 @@ PLOT_LABELS = {
 
 
 def load_matrix_pattern(matrix_id: str) -> SparsityData:
-    coo = load_mtx(resolve_matrix(matrix_id), label=matrix_id).tocoo()
-    return SparsityData(int(coo.shape[0]), coo.row.astype(np.int64), coo.col.astype(np.int64), None, matrix_id)
+    n, rows, cols = matrices.sparsity_pattern(matrix_id)
+    return SparsityData(n, rows, cols, None, matrix_id)
 
 
 def load_run_plot(result_dir: str, plot_name: str) -> SparsityData:

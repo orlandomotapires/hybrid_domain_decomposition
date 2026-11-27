@@ -2,6 +2,7 @@
 
 import json
 import os
+import subprocess
 import sys
 import textwrap
 import threading
@@ -87,6 +88,12 @@ SCRIPTS = {
                      "[tuning] trial 2/2 status=infeasible", {event("trial", done=2, total=2, status="infeasible")!r},
                      {event("exit", code=0)!r}]:
             print(line, flush=True)
+    """,
+    # A batch whose progress event lacks its fields: must not stop the follower.
+    "malformed_event": f"""
+        print({event("batch_case", total=2)!r}, flush=True)
+        print("[10:00:00 INFO] still going", flush=True)
+        print({event("exit", code=0)!r}, flush=True)
     """,
     "flood": """
         for i in range(%d):
@@ -328,6 +335,84 @@ class JobManagerTest(unittest.TestCase):
         self.assertEqual("cancelled", reopened.cancel_job(job["job_id"])["status"])
         wait_for(lambda: reopened.get_job(job["job_id"])["pid"] is None)
         self.assertEqual("cancelled", reopened.get_job(job["job_id"])["status"])
+
+    def _write_record(self, name: str, **record) -> None:
+        jobs_dir = self.root / workspace.STATE_DIR_NAME / "jobs"
+        jobs_dir.mkdir(parents=True, exist_ok=True)
+        (jobs_dir / f"{name}.json").write_text(json.dumps({"schema": 1, "job_type": "single", "title": "t", **record}))
+
+    def test_crafted_job_ids_cannot_write_outside_the_jobs_folder(self) -> None:
+        target = Path(self.tmp.name) / "victim"
+        self._write_record("evil", job_id=f"../../../{target.name}", status="running")
+        reopened = JobManager(self.root, command_factory=self.fake)
+        self.assertFalse(target.with_suffix(".json").exists())
+        self.assertNotIn(f"../../../{target.name}", [j["job_id"] for j in reopened.list_jobs(None)])
+
+    def test_crafted_paths_are_dropped(self) -> None:
+        outside = Path(self.tmp.name) / "outside.log"
+        outside.write_text("keep\n")
+        self._write_record("sim_x", job_id="sim_x", status="running", log_path=str(outside),
+                           result_dir="../../elsewhere")
+        reopened = JobManager(self.root, command_factory=self.fake)
+        job = reopened.get_job("sim_x")
+        self.assertEqual("keep\n", outside.read_text())  # the settle note was not appended to it
+        self.assertIsNone(job["result_dir"])
+
+    def test_an_unverified_pid_is_never_signalled(self) -> None:
+        bystander = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"], start_new_session=True)
+        try:
+            self._write_record("sim_y", job_id="sim_y", status="running", pid=bystander.pid, pid_start=None,
+                               log_path=f"{workspace.STATE_DIR_NAME}/jobs/sim_y.log")
+            (self.root / workspace.STATE_DIR_NAME / "jobs" / "sim_y.log").write_text("")
+            reopened = JobManager(self.root, command_factory=self.fake, kill_grace_sec=0.1)
+            cancelled = reopened.cancel_job("sim_y")
+            self.assertEqual("running", cancelled["status"])  # not stopped, so not reported as stopped
+            self.assertIn("could not be verified", cancelled["logs"][-1]["message"])
+            time.sleep(0.3)
+            self.assertIsNone(bystander.poll())
+            reopened.close()
+        finally:
+            bystander.kill()
+            bystander.wait()
+
+    def test_symlinked_result_folders_are_kept(self) -> None:
+        elsewhere = Path(self.tmp.name) / "other_disk"
+        (elsewhere / "run_1").mkdir(parents=True)
+        (self.root / "simulations" / "linked").symlink_to(elsewhere)
+        self._write_record("sim_z", job_id="sim_z", status="completed", result_dir="simulations/linked/run_1")
+        reopened = JobManager(self.root, command_factory=self.fake)
+        self.assertEqual("simulations/linked/run_1", reopened.get_job("sim_z")["result_dir"])
+
+    def test_a_malformed_event_does_not_stop_the_follower(self) -> None:
+        self.fake.next["batch"] = "malformed_event"
+        job_id = self.manager.start_batch_study()["job_id"]
+        wait_for(self.finished(job_id))
+        job = self.manager.get_job(job_id)
+        self.assertEqual("completed", job["status"])
+        messages = [e["message"] for e in job["logs"]]
+        self.assertTrue(any("malformed progress event" in m for m in messages))
+        self.assertIn("still going", messages)
+
+    def test_a_crashed_follower_finishes_the_job(self) -> None:
+        self.fake.next["single"] = "sleep"
+        with patch.object(JobManager, "_follow_log", side_effect=RuntimeError("disk gone")):
+            job = self.manager.start_single_simulation("simulations/sim_a")
+            wait_for(self.finished(job["job_id"]))
+        try:
+            lost = self.manager.get_job(job["job_id"])
+            self.assertEqual("failed", lost["status"])
+            self.assertIn("lost track", lost["error_message"])
+            self.assertIn("disk gone", lost["error_message"])
+        finally:
+            os.killpg(job["pid"], 9)
+
+    def test_an_unreadable_record_does_not_block_the_workspace(self) -> None:
+        self._write_record("sim_bad", job_id="sim_bad", status="completed", started_epoch="yesterday")
+        self._write_record("sim_good", job_id="sim_good", status="completed")
+        reopened = JobManager(self.root, command_factory=self.fake)
+        ids = [j["job_id"] for j in reopened.list_jobs(None)]
+        self.assertIn("sim_good", ids)
+        self.assertNotIn("sim_bad", ids)
 
     def test_running_jobs_cannot_be_deleted(self) -> None:
         self.fake.next["single"] = "sleep"

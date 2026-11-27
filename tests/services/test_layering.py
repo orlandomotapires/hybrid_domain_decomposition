@@ -30,13 +30,22 @@ class LayeringTest(unittest.TestCase):
         self.assertEqual({}, offenders)
 
     def test_core_does_not_know_the_application_or_any_ui(self) -> None:
-        self.assert_no_imports(SRC / "libs", {"hdd", "backend", "PySide6", "fastapi", "pydantic"})
+        self.assert_no_imports(SRC / "libs", {"hdd", "PySide6", "shiboken6", "pyqtgraph"})
 
-    def test_services_do_not_know_any_ui_or_http(self) -> None:
-        self.assert_no_imports(SRC / "hdd" / "services", {"backend", "PySide6", "fastapi", "pydantic", "pyqtgraph"})
+    def test_services_use_only_the_core_and_plain_libraries(self) -> None:
+        # An allow-list, so a new dependency of the services layer shows up here.
+        # dwave: hardware.py reads the Leap config for its credential check (imported lazily; the
+        # test below makes sure importing the services does not load it).
+        allowed = set(sys.stdlib_module_names) | {"hdd", "libs", "numpy", "scipy", "networkx", "dwave"}
+        offenders = {
+            str(path.relative_to(REPO_ROOT)): sorted(imported_roots(path) - allowed)
+            for path in (SRC / "hdd" / "services").rglob("*.py")
+            if imported_roots(path) - allowed
+        }
+        self.assertEqual({}, offenders)
 
     def test_desktop_does_not_reach_around_the_services(self) -> None:
-        self.assert_no_imports(SRC / "hdd" / "studio", {"backend", "fastapi"})
+        self.assert_no_imports(SRC / "hdd" / "studio", {"libs"})
 
     def test_importing_the_services_does_not_load_the_quantum_stack(self) -> None:
         code = (

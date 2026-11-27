@@ -492,7 +492,7 @@ Source: `src/libs/domain_decomposition.py`
 
 ### Target Number of Subdomains (k_target)
 
-`partitioning_parameters.common.k_target` · integer >= 1 • Default: 4 or 8
+`partitioning_parameters.common.k_target` · integer >= 1 • Default: 4
 
 Number of subdomains k into which the mesh graph and matrices are decomposed.
 
@@ -530,7 +530,7 @@ Maximum allowed relative weight deviation of any subdomain from the ideal averag
 
 **In this implementation**
 
-- Normalized via _tol_to_ratio() in uncoarsening.py: values > 1.0 are divided by 100 (e.g., 2.0 → 0.02), while values ≤ 1.0 are used directly as fractions (e.g., 0.02 → 2%). Used in METIS ufactor, QA/QAOA candidate scoring, and Stage 4 KL refinement bounds.
+- Always a percentage: 2.0 means ±2% and 0.5 means ±0.5%. Converted once by tolerance_ratio() in partitioning/utils/metrics.py. Passed to METIS as ufactor (tolerance × 10, in 1/1000 units) and used in QA/QAOA candidate scoring and in the Stage 4 KL refinement bounds. Tuning studies and run history written before this rule (when values ≤ 1.0 were read as fractions) are converted to percent when read.
 
 Source: `src/libs/multilevel_scheme/partitioning/partitioning.py`
 
@@ -713,7 +713,7 @@ Source: `src/libs/multilevel_scheme/partitioning/qa/annealing.py`
 
 ### Post-Sample Balance Violation Penalty (balance_violation_lambda)
 
-`balance_violation_lambda` · float >= 0 • Default: 1,000,000
+`balance_violation_lambda` · float >= 0 • Default: 5.0
 
 Classical post-selection penalty applied when ranking candidate quantum bitstrings that exceed the allowed balance_tolerance.
 
@@ -723,7 +723,7 @@ Score = E_QUBO(x) + balance_violation_lambda · max(0, Imbalance(x) - ε)²
 
 **Background**
 
-- Even with qubo_balance_lambda in the Hamiltonian, noisy quantum hardware samples may occasionally violate the hard balance tolerance ε. This high penalty guarantees that any sample satisfying the balance tolerance is strictly preferred over an imbalanced sample during bitstring post-selection.
+- Even with qubo_balance_lambda in the Hamiltonian, noisy quantum hardware samples may occasionally violate the hard balance tolerance ε. A large penalty makes any sample within the balance tolerance strictly preferred over an imbalanced one during bitstring post-selection; the default of 5.0 trades some of that strictness for a lower cut.
 
 **In this implementation**
 
@@ -781,7 +781,7 @@ Source: `src/libs/multilevel_scheme/partitioning/qa/annealing.py`
 
 ### QAOA Variational Circuit Depth p (circuit_depth)
 
-`strategies.quantum_approximation_optimizer.circuit_depth` · integer >= 1 • Default: 1 to 5
+`strategies.quantum_approximation_optimizer.circuit_depth` · integer >= 1 • Default: 1
 
 Number of alternating Cost (U_P) and Mixer (U_M) unitary layers p in the QAOA quantum circuit.
 
@@ -821,7 +821,7 @@ Source: `src/libs/multilevel_scheme/partitioning/qaoa/qaoa.py`
 
 ### Circuit Measurement Shots (num_shots)
 
-`strategies.quantum_approximation_optimizer.num_shots` · integer >= 1 • Default: 5 to 100
+`strategies.quantum_approximation_optimizer.num_shots` · integer >= 1 • Default: 10
 
 Number of projective computational-basis measurements executed per QAOA circuit evaluation.
 
@@ -989,13 +989,13 @@ Source: `src/libs/multilevel_scheme/uncoarsening/uncoarsening.py`
 
 ### Maximum Node Moves per Pass (refine_max_moves_per_pass)
 
-`uncoarsening_parameters.refine_max_moves_per_pass` · integer >= 1 | null • Default: null (Unlimited)
+`uncoarsening_parameters.refine_max_moves_per_pass` · integer >= 1 | null • Default: 5000
 
 Optional cap on the number of boundary vertices moved within a single refinement pass.
 
 **Background**
 
-- When null (unlimited), every boundary vertex with a positive-score move is updated in a pass. Setting an integer cap limits per-pass movement on very large graphs.
+- When null (unlimited), every boundary vertex with a positive-score move is updated in a pass. An integer cap (5000 by default) limits per-pass movement on very large graphs.
 
 **In this implementation**
 

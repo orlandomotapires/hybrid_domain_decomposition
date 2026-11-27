@@ -15,6 +15,23 @@ from .errors import Conflict, InvalidInput, NotFound
 from .matrix_files import generate_demo_fem_matrices, inspect_matrix, simulations_using_matrix, validate_mtx_header
 
 
+def sparsity_pattern(matrix_id: str) -> tuple[int, Any, Any]:
+    """``(n, rows, cols)`` of the matrix's nonzeros, as int64 arrays, for plotting."""
+    import numpy as np
+
+    from libs.runtime.matrix_library import resolve_matrix
+    from libs.runtime.utils import load_mtx
+
+    try:
+        path = resolve_matrix(matrix_id)
+    except FileNotFoundError as exc:
+        raise NotFound(str(exc)) from exc
+    except ValueError as exc:
+        raise InvalidInput(str(exc)) from exc
+    coo = load_mtx(path, label=matrix_id).tocoo()
+    return int(coo.shape[0]), coo.row.astype(np.int64), coo.col.astype(np.int64)
+
+
 def new_matrix_id(raw_name: str) -> str:
     """Folder id for a new matrix named ``raw_name``; the id must be free."""
     try:

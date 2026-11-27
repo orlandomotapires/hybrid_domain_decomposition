@@ -4,6 +4,7 @@ from libs.runtime.utils import matrix_to_graph
 from libs.permutation import permute_matrix
 from libs.graph_prep import set_edge_weight_attr, set_node_vweight_diag
 from libs.multilevel_scheme.coarsening.coarsening import coarsen_chain
+from libs.multilevel_scheme.partitioning.capacity import local_capacity_error
 from libs.multilevel_scheme.partitioning.partitioning import (
     partition_graph_metis,
     recursive_kway_anneal,
@@ -62,7 +63,14 @@ def decompose_matrix(matrix, general_parameters, coarsening_parameters, partitio
     strategy_partitioning_parameters = strategies_partitioning_parameters.get(partitioning_strategy)
 
     k_target = int(common_partitioning_parameters.get("k_target"))
-    balance_tolerance = float(common_partitioning_parameters.get("balance_tolerance"))		
+    balance_tolerance = float(common_partitioning_parameters.get("balance_tolerance"))
+    if 0.0 < balance_tolerance <= 1.0:
+        log(
+            "WARNING",
+            f"balance_tolerance={balance_tolerance:g} means ±{balance_tolerance:g}%. Parameter files written "
+            "before November 2026 used values up to 1.0 as fractions (0.1 = 10%); "
+            f"if this file is one of them, use {balance_tolerance * 100:g} instead.",
+        )
 
     # Uncoarsening parameters
     refine_objective = str(uncoarsening_parameters.get("refine_objective"))
@@ -126,6 +134,10 @@ def decompose_matrix(matrix, general_parameters, coarsening_parameters, partitio
     _close_stage("coarsening")
 
     Gc = graphs[-1]
+    # Fail fast with a clear reason instead of running a local quantum emulator out of memory.
+    capacity_error = local_capacity_error(partitioning_parameters, Gc.number_of_nodes())
+    if capacity_error:
+        raise ValueError(capacity_error)
     effective_k_target = _clamp_partition_count(k_target, Gc.number_of_nodes())
     if effective_k_target != k_target:
         log(
@@ -149,7 +161,7 @@ def decompose_matrix(matrix, general_parameters, coarsening_parameters, partitio
     part_k_coarse = 0
     if partitioning_strategy == 'metis_partitioning':
         log("INFO", "Multilevel Partitioning Scheme using METIS")
-        part_k_coarse = partition_graph_metis(Gc, nparts=effective_k_target)
+        part_k_coarse = partition_graph_metis(Gc, nparts=effective_k_target, balance_tolerance=balance_tolerance)
 
     elif partitioning_strategy == 'quantum_annealing':
 
@@ -161,7 +173,6 @@ def decompose_matrix(matrix, general_parameters, coarsening_parameters, partitio
         qpu_solver_name = strategy_partitioning_parameters.get("qpu_solver_name")
         qpu_region = strategy_partitioning_parameters.get("qpu_region")
         qpu_problem_label = strategy_partitioning_parameters.get("qpu_problem_label")
-        dense_qpu_too_large = False
 
         if simulated:
             log("INFO", "Running simulated quantum annealing for bipartitioning")
@@ -174,29 +185,29 @@ def decompose_matrix(matrix, general_parameters, coarsening_parameters, partitio
                 coarse_size = Gc.number_of_nodes()
                 log("VERBOSE", f"Solver {solver_name} largest dense QUBO clique capacity: {clique_capacity}")
                 log("VERBOSE", f"Current coarse dense QUBO size: {coarse_size}")
-                dense_qpu_too_large = coarse_size > clique_capacity
-                if dense_qpu_too_large:
-                    log(
-                        "WARNING",
-                        f"Coarse dense QUBO size {coarse_size} exceeds solver capacity {clique_capacity}; Leap submission will be skipped",
+                if coarse_size > clique_capacity:
+                    # Stop before any Leap submission: the dense QUBO cannot be embedded.
+                    raise ValueError(
+                        f"The coarse graph has {coarse_size} nodes, but solver {solver_name} can embed a dense "
+                        f"QUBO of at most {clique_capacity}. Coarsen further (lower coarsen_superior_limit) "
+                        "or set simulated=True. Nothing was submitted to Leap."
                     )
 
-            if not dense_qpu_too_large:
-                bipartitions_per_start = max(1, int(effective_k_target) - 1)
-                expected_submissions = max(1, num_starts) * bipartitions_per_start
-                expected_reads = expected_submissions * max(1, num_reads)
+            bipartitions_per_start = max(1, int(effective_k_target) - 1)
+            expected_submissions = max(1, num_starts) * bipartitions_per_start
+            expected_reads = expected_submissions * max(1, num_reads)
+            log(
+                "VERBOSE",
+                "Expected QPU problem submissions: "
+                f"{expected_submissions} (num_starts={num_starts} * bipartitions_per_start={bipartitions_per_start}); "
+                f"num_reads per submission: {num_reads}; total QPU reads: {expected_reads}",
+            )
+            if expected_submissions > 50:
                 log(
-                    "VERBOSE",
-                    "Expected QPU problem submissions: "
-                    f"{expected_submissions} (num_starts={num_starts} * bipartitions_per_start={bipartitions_per_start}); "
-                    f"num_reads per submission: {num_reads}; total QPU reads: {expected_reads}",
+                    "WARNING",
+                    "This run will submit many QPU problems. Dropped connections are retried, but "
+                    "reduce num_starts/num_reads or set simulated=True for a local run if Leap keeps failing.",
                 )
-                if expected_submissions > 50:
-                    log(
-                        "WARNING",
-                        "This run will submit many QPU problems. If Leap resets the connection, "
-                        "reduce num_starts/num_reads or set simulated=True for a local run.",
-                    )
 
         part_k_coarse = recursive_kway_anneal(
             Gc,

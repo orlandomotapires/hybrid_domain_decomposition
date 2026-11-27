@@ -31,7 +31,7 @@ PARAMETERS: list[dict[str, Any]] = [
     {"key": "k_target", "label": "k (number of parts)", "group": "partitioning", "type": "int",
      "path": ["partitioning_parameters", "common", "k_target"], "low": 2, "high": 16, "free": False},
     {"key": "balance_tolerance", "label": "Balance tolerance", "group": "partitioning", "type": "float",
-     "path": ["partitioning_parameters", "common", "balance_tolerance"], "low": 0.01, "high": 0.3, "free": True},
+     "path": ["partitioning_parameters", "common", "balance_tolerance"], "low": 1.0, "high": 30.0, "free": True},  # percent
     {"key": "coarse_target", "label": "Coarse graph target size", "group": "coarsening", "type": "int",
      "path": None, "low": 20, "high": 400, "free": True},
     {"key": "coarse_window", "label": "Coarse size window", "group": "coarsening", "type": "float",

@@ -70,6 +70,8 @@ The status bar shows the followed job's stage and progress: pipeline stage for a
   <img src="images/run-failed.png" alt="A failed run explains why">
 </picture>
 
+The app writes its own log to `studio.log` in the per-user data folder (on Linux, `~/.local/share/HDD/HDD Studio/logs/`). An unexpected error shows a short message in the status bar that names this file; the full traceback is in the log.
+
 ## Shortcuts
 
 | Key | Action |

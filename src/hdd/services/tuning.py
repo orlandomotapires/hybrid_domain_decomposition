@@ -30,7 +30,7 @@ SAMPLERS = [
 
 
 class Jobs(Protocol):
-    def list_jobs(self) -> list[dict[str, Any]]: ...
+    def list_jobs(self, limit: int | None = 40) -> list[dict[str, Any]]: ...
 
     def start_tuning_study(self, *, study_dir: Path, title: str, demonstrator_id: str | None = None) -> dict[str, Any]: ...
 
@@ -63,6 +63,7 @@ def study_dir(simulation: str, study_id: str) -> Path:
     path = simulation_dir(simulation) / "tuning" / study_id
     if not (path / _tuner().STUDY_CONFIG).exists():
         raise NotFound(f"Study {study_id!r} not found")
+    _tuner().migrate_legacy_study(path)
     return path
 
 
@@ -77,7 +78,8 @@ def running_job_for(jobs: Jobs | None, path: Path) -> dict[str, Any] | None:
     if jobs is None:
         return None
     rel = workspace.rel(path)
-    for job in jobs.list_jobs():
+    # Scan every job: a long study can be older than the newest 40 and must still count as running.
+    for job in jobs.list_jobs(limit=None):
         if job.get("job_type") == "tuning" and job.get("study_dir") == rel and job.get("status") == "running":
             return job
     return None

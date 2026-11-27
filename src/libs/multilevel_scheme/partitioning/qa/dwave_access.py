@@ -5,6 +5,8 @@ from typing import Any, Mapping, NoReturn, Sequence
 
 import numpy as np
 
+from libs.runtime.retry import call_with_retries, is_transient_network_error
+
 
 @lru_cache(maxsize=1)
 def _get_dwave_runtime() -> dict[str, Any]:
@@ -219,7 +221,7 @@ def sample_qubo_on_dwave_qpu(
 	)
 	variables = list(logical_variables)
 
-	try:
+	def _sample_once():
 		with DWaveSampler(**sampler_config) as qpu_sampler:
 			if uses_dense_balance_qubo(balance_lambda):
 				embedding = _build_dense_qubo_embedding(
@@ -231,11 +233,21 @@ def sample_qubo_on_dwave_qpu(
 			else:
 				sampler = EmbeddingComposite(qpu_sampler)
 
-			best = sampler.sample_qubo(
+			return sampler.sample_qubo(
 				dict(Q),
 				num_reads=int(num_reads),
 				label=qpu_problem_label,
 			).first
+
+	try:
+		# A dropped connection is retried a few times; if Leap had already accepted the problem,
+		# a retry submits it again (the problem label tells the copies apart in the Leap dashboard).
+		best = call_with_retries(
+			_sample_once,
+			retry_on=qpu_connection_errors,
+			retry_if=is_transient_network_error,  # not 400/401/403: those fail the same way again
+			what=f"D-Wave submission{f' {qpu_problem_label}' if qpu_problem_label else ''}",
+		)
 	except handled_errors as exc:
 		raise_qpu_runtime_error(
 			exc,
