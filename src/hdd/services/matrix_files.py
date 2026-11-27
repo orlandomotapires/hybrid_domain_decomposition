@@ -276,3 +276,125 @@ def generate_demo_fem_matrices(
 
     return inspect_mtx_file(k_path)
 
+
+# ------------------------------------------------------------ random sparse matrices
+SYMMETRY_KINDS = {
+    "symmetric": "Symmetric (A = Aᵀ)",
+    "structural": "Structurally symmetric",
+    "unsymmetric": "Unsymmetric",
+}
+MAX_GENERATED_ROWS = 1_000_000
+MAX_GENERATED_NONZEROS = 20_000_000
+_ENUMERATE_LIMIT = 4_000_000  # band positions listed outright below this; sampled above it
+
+
+def achievable_nonzeros(n: int, nonzeros: int, symmetry: str) -> int:
+    """The stored-nonzero count a request turns into.
+
+    Counts include the diagonal, which is always full. Symmetric patterns hold off-diagonal entries
+    in mirrored pairs, so their off-diagonal count is even: an odd request rounds down by one.
+    """
+    nonzeros = max(int(n), min(int(nonzeros), int(n) * int(n)))
+    if symmetry != "unsymmetric" and (nonzeros - n) % 2:
+        nonzeros -= 1
+    return nonzeros
+
+
+def check_random_matrix_request(n: int, nonzeros: int, symmetry: str) -> str | None:
+    """Why a random-matrix request cannot be generated, or None when it can."""
+    if symmetry not in SYMMETRY_KINDS:
+        return f"Unknown symmetry {symmetry!r}; use one of {', '.join(SYMMETRY_KINDS)}"
+    if not 2 <= n <= MAX_GENERATED_ROWS:
+        return f"The size must be between 2 and {MAX_GENERATED_ROWS:,}"
+    if nonzeros < n:
+        return f"At least {n:,} nonzeros: the diagonal is always full"
+    if nonzeros > n * n:
+        return f"At most {n * n:,} nonzeros for a {n:,} × {n:,} matrix"
+    if nonzeros > MAX_GENERATED_NONZEROS:
+        return f"At most {MAX_GENERATED_NONZEROS:,} nonzeros can be generated"
+    return None
+
+
+def _upper_band_capacity(n: int, width: int) -> int:
+    """Positions (i, j) with 1 <= j - i <= width in an n x n matrix."""
+    return width * n - width * (width + 1) // 2
+
+
+def _band_width(n: int, needed: int) -> int:
+    """Smallest band whose upper half has room for ``needed`` entries at no more than half fill."""
+    low, high = 1, n - 1
+    while low < high:
+        mid = (low + high) // 2
+        if _upper_band_capacity(n, mid) >= 2 * needed:
+            high = mid
+        else:
+            low = mid + 1
+    return low
+
+
+def _upper_band_positions(n: int, count: int, rng: np.random.Generator) -> tuple[np.ndarray, np.ndarray]:
+    """``count`` distinct positions (i, j), i < j, close to the diagonal (a band)."""
+    if count == 0:
+        empty = np.empty(0, dtype=np.int64)
+        return empty, empty
+    width = _band_width(n, count)
+    capacity = _upper_band_capacity(n, width)
+    if capacity <= _ENUMERATE_LIMIT or capacity <= 2 * count:
+        # List every band position and pick without replacement (exact, also for nearly full bands).
+        rows = np.concatenate([np.arange(n - d, dtype=np.int64) for d in range(1, width + 1)])
+        offsets = np.concatenate([np.full(n - d, d, dtype=np.int64) for d in range(1, width + 1)])
+        chosen = rng.choice(rows.size, size=count, replace=False)
+        return rows[chosen], rows[chosen] + offsets[chosen]
+    # Large and at most half full: draw positions, drop repeats, until there are enough.
+    keys = np.empty(0, dtype=np.int64)
+    while keys.size < count:
+        batch = 2 * (count - keys.size) + 1024
+        i = rng.integers(0, n, size=batch, dtype=np.int64)
+        j = i + rng.integers(1, width + 1, size=batch, dtype=np.int64)
+        keep = j < n
+        keys = np.unique(np.concatenate([keys, i[keep] * n + j[keep]]))
+    keys = rng.permutation(keys)[:count]
+    return keys // n, keys % n
+
+
+def random_banded_matrix(n: int, nonzeros: int, symmetry: str = "symmetric", seed: int = 42) -> sp.csr_matrix:
+    """A random ``n`` x ``n`` sparse matrix with a hidden band structure.
+
+    The nonzeros sit close to the diagonal and the rows and columns are then shuffled with one
+    random permutation, so the matrix looks unstructured but a good reordering recovers the band:
+    a demo in which partitioning and permutation visibly help.
+
+    - ``nonzeros`` counts stored entries including the full diagonal (see ``achievable_nonzeros``).
+    - ``symmetry``: ``"symmetric"`` (A = Aᵀ, positive definite like a stiffness matrix),
+      ``"structural"`` (symmetric pattern, independent values) or ``"unsymmetric"``.
+    - Off-diagonal values are negative and the diagonal dominates each row strictly, so the matrix
+      is nonsingular and its diagonal gives the pipeline positive node weights.
+    """
+    problem = check_random_matrix_request(n, nonzeros, symmetry)
+    if problem:
+        raise ValueError(problem)
+    rng = np.random.default_rng(seed)
+    off_diagonal = achievable_nonzeros(n, nonzeros, symmetry) - n
+
+    if symmetry == "unsymmetric":
+        # Upper and lower entries are drawn independently, so the pattern is not mirrored.
+        upper = rng.binomial(off_diagonal, 0.5)
+        ui, uj = _upper_band_positions(n, upper, rng)
+        li, lj = _upper_band_positions(n, off_diagonal - upper, rng)
+        rows, cols = np.concatenate([ui, lj]), np.concatenate([uj, li])
+        values = -rng.uniform(0.1, 1.0, rows.size)
+    else:
+        ui, uj = _upper_band_positions(n, off_diagonal // 2, rng)
+        rows, cols = np.concatenate([ui, uj]), np.concatenate([uj, ui])
+        if symmetry == "symmetric":
+            half = -rng.uniform(0.1, 1.0, ui.size)
+            values = np.concatenate([half, half])
+        else:
+            values = -rng.uniform(0.1, 1.0, rows.size)
+
+    off = sp.coo_matrix((values, (rows, cols)), shape=(n, n)).tocsr()
+    row_sums = np.asarray(abs(off).sum(axis=1)).ravel()
+    matrix = (off + sp.diags(row_sums + rng.uniform(0.5, 1.5, n))).tocsr()
+    shuffle = rng.permutation(n)  # the same permutation on rows and columns keeps the symmetry
+    return matrix[shuffle][:, shuffle].tocsr()
+

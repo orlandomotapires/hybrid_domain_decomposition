@@ -32,7 +32,7 @@ from hdd.services.errors import ServiceError
 from . import APP_NAME, batch_page, diagnostics, pages, sim_pages
 from .batch_doc import BatchDocument
 from .context import AppContext
-from .dialogs import CompareDialog, NewSimulationDialog, NewStudyDialog
+from .dialogs import CompareDialog, GenerateMatrixDialog, NewSimulationDialog, NewStudyDialog
 from .documents import SimulationDocument
 from .graphics.area import GraphicsArea
 from .help import HelpPanel
@@ -1131,13 +1131,18 @@ class MainWindow(QMainWindow):
         return True
 
     def generate_demo_matrix(self) -> None:
-        name, ok = QInputDialog.getText(self, "Generate demo matrix", "Name in the library:", text="demo_fem")
-        if not ok or not name.strip():
+        dialog = GenerateMatrixDialog(self)
+        if dialog.exec() != dialog.DialogCode.Accepted:
             return
-        self.ctx.tasks.run(
-            lambda: matrices.generate_demo_matrix(name.strip()),
-            lambda info: self._reload_and_select(f"matrix:{info['id']}"),
-            lambda exc: QMessageBox.warning(self, "Generate demo matrix", str(exc)),
+        values = dialog.values()
+        kind = values.pop("kind")
+        generate = matrices.generate_random_matrix if kind == "random" else matrices.generate_demo_matrix
+        self.statusBar().showMessage("Generating the matrix…")
+        self.ctx.tasks.run(  # a large random matrix takes a few seconds to build and write
+            lambda: generate(**values),
+            lambda info: (self.statusBar().showMessage(f"Generated {info['id']}.", 4000),
+                          self._reload_and_select(f"matrix:{info['id']}")),
+            lambda exc: (self.statusBar().clearMessage(), QMessageBox.warning(self, "Generate matrix", str(exc))),
         )
 
     def delete_matrix(self, matrix_id: str) -> None:

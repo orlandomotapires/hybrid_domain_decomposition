@@ -11,8 +11,19 @@ from typing import Any
 from libs.runtime import workspace
 from libs.runtime.matrix_library import list_matrix_ids, matrix_dir, sanitize_matrix_id, write_matrix_meta
 
+from scipy.io import mmwrite
+
 from .errors import Conflict, InvalidInput, NotFound
-from .matrix_files import generate_demo_fem_matrices, inspect_matrix, simulations_using_matrix, validate_mtx_header
+from .matrix_files import (
+    SYMMETRY_KINDS,
+    achievable_nonzeros,
+    check_random_matrix_request,
+    generate_demo_fem_matrices,
+    inspect_matrix,
+    random_banded_matrix,
+    simulations_using_matrix,
+    validate_mtx_header,
+)
 
 
 def sparsity_pattern(matrix_id: str) -> tuple[int, Any, Any]:
@@ -154,6 +165,58 @@ def generate_demo_matrix(
     except Exception as exc:
         shutil.rmtree(target, ignore_errors=True)
         raise InvalidInput(str(exc)) from exc
+    return inspect_matrix(matrix_id)
+
+
+def nonzeros_for_density(n: int, density_percent: float) -> int:
+    """Stored nonzeros of an ``n`` x ``n`` matrix filled to ``density_percent`` (of n²)."""
+    return int(round(float(density_percent) / 100.0 * int(n) * int(n)))
+
+
+def density_percent(n: int, nonzeros: int) -> float:
+    """Share of the ``n`` x ``n`` entries that are nonzero, in percent."""
+    return 100.0 * int(nonzeros) / float(int(n) * int(n))
+
+
+def generate_random_matrix(
+    name: str | None = None,
+    *,
+    n: int,
+    nonzeros: int,
+    symmetry: str = "symmetric",
+    seed: int = 42,
+) -> dict[str, Any]:
+    """Generate a random square sparse matrix with a hidden band structure into the library.
+
+    ``nonzeros`` counts stored entries including the full diagonal; a symmetric pattern rounds an
+    odd off-diagonal count down by one (``matrix_files.achievable_nonzeros``).
+    """
+    problem = check_random_matrix_request(int(n), int(nonzeros), symmetry)
+    if problem:
+        raise InvalidInput(problem)
+    try:
+        matrix_id = unique_matrix_id(name or f"random_{n}")
+    except ValueError as exc:
+        raise InvalidInput(str(exc)) from exc
+    target = matrix_dir(matrix_id)
+    stored = achievable_nonzeros(int(n), int(nonzeros), symmetry)
+    label = SYMMETRY_KINDS[symmetry].split(" (")[0].lower()
+    try:
+        target.mkdir(parents=True, exist_ok=False)
+        matrix = random_banded_matrix(int(n), int(nonzeros), symmetry, int(seed))
+        mmwrite(target / "matrix.mtx", matrix, comment=f"Random sparse matrix: {label}, scrambled band, seed {seed}")
+        write_matrix_meta(
+            matrix_id,
+            file="matrix.mtx",
+            name=f"Random {n:,} × {n:,} ({label})",
+            description=(
+                f"Random sparse {n:,} × {n:,}, {stored:,} nonzeros ({density_percent(n, stored):.4g}% dense), "
+                f"{label}, scrambled band, seed {seed}"
+            ),
+        )
+    except BaseException:
+        shutil.rmtree(target, ignore_errors=True)
+        raise
     return inspect_matrix(matrix_id)
 
 
