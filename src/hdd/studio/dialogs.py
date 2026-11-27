@@ -8,7 +8,7 @@ from PySide6.QtWidgets import QComboBox, QDialog, QDialogButtonBox, QLabel, QLin
 
 from hdd.services import catalog
 
-from .widgets import FormGrid
+from .widgets import FormGrid, segmented
 from .widgets.tables import DataTable, fmt
 
 
@@ -47,6 +47,169 @@ class NewSimulationDialog(QDialog):
 
     def values(self) -> dict[str, Any]:
         return {"name": self.name.text().strip() or None, "matrix": self.matrix.currentData(), "clone_from": self.clone.currentData()}
+
+
+class GenerateMatrixDialog(QDialog):
+    """Generate a matrix for the library: a random sparse matrix you size, or the FEM mesh demo.
+
+    For a random matrix the nonzero count and the density are two views of one number: editing
+    either updates the other, and changing the size keeps whichever was edited last.
+    """
+
+    RANDOM, FEM = 0, 1
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        from PySide6.QtWidgets import QDoubleSpinBox, QSpinBox
+
+        from hdd.services import matrix_files
+
+        super().__init__(parent)
+        self.setWindowTitle("Generate matrix")
+        self._limits = matrix_files
+        self._driver = "nonzeros"  # the field the user set last: kept when the size changes
+        self.name = QLineEdit("random_matrix")
+        kind_widget, self.kind = segmented(["Random sparse", "FEM mesh"])
+
+        self.size = QSpinBox()
+        self.size.setRange(2, matrix_files.MAX_GENERATED_ROWS)
+        self.size.setGroupSeparatorShown(True)
+        self.size.setValue(1000)
+        self.nonzeros = QSpinBox()
+        self.nonzeros.setRange(2, matrix_files.MAX_GENERATED_NONZEROS)
+        self.nonzeros.setGroupSeparatorShown(True)
+        self.nonzeros.setValue(10000)
+        self.density = QDoubleSpinBox()
+        self.density.setRange(0.0001, 100.0)
+        self.density.setDecimals(4)
+        self.density.setSingleStep(0.1)
+        self.symmetry = QComboBox()
+        for key, label in matrix_files.SYMMETRY_KINDS.items():
+            self.symmetry.addItem(label, key)
+        self.seed = QSpinBox()
+        self.seed.setRange(0, 2**31 - 1)
+        self.seed.setValue(42)
+
+        self.fem_nodes = [QSpinBox(), QSpinBox(), QSpinBox()]
+        for box, value in zip(self.fem_nodes, (12, 5, 4)):
+            box.setRange(1, 200)
+            box.setValue(value)
+        self.fem_dof = QSpinBox()
+        self.fem_dof.setRange(1, 6)
+        self.fem_dof.setValue(3)
+
+        form = FormGrid()
+        form.add_row("Name", self.name)
+        form.add_row("Kind", kind_widget)
+        self._random_rows = [
+            form.add_row("Size", self.size, "rows = columns", "The matrix is square, as the pipeline requires"),
+            form.add_row("Nonzeros", self.nonzeros, "", "Stored entries, including the full diagonal"),
+            form.add_row("Density", self.density, "%", "Nonzeros as a share of all n² entries"),
+            form.add_row("Symmetry", self.symmetry, "",
+                          "Symmetric: A = Aᵀ and positive definite. Structurally symmetric: same pattern, "
+                          "different values. Unsymmetric: independent pattern."),
+        ]
+        self._fem_rows = [
+            form.add_row("Nodes in x", self.fem_nodes[0]),
+            form.add_row("Nodes in y", self.fem_nodes[1]),
+            form.add_row("Nodes in z", self.fem_nodes[2]),
+            form.add_row("Rows per node", self.fem_dof, "", "Degrees of freedom per mesh node"),
+        ]
+        form.add_row("Seed", self.seed, "", "The same seed gives the same matrix")
+        self._form = form
+        self.summary = QLabel()
+        self.summary.setProperty("role", "muted")
+        self.summary.setWordWrap(True)
+
+        self.buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        self.buttons.button(QDialogButtonBox.StandardButton.Ok).setText("Generate")
+        self.buttons.button(QDialogButtonBox.StandardButton.Ok).setProperty("role", "primary")
+        self.buttons.accepted.connect(self.accept)
+        self.buttons.rejected.connect(self.reject)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(16, 14, 16, 12)
+        layout.setSpacing(12)
+        layout.addWidget(form)
+        layout.addWidget(self.summary)
+        layout.addWidget(self.buttons)
+
+        self.kind.idClicked.connect(self._kind_changed)
+        self.size.valueChanged.connect(self._size_changed)
+        self.nonzeros.valueChanged.connect(lambda _value: self._set_driver("nonzeros"))
+        self.density.valueChanged.connect(lambda _value: self._set_driver("density"))
+        self.symmetry.currentIndexChanged.connect(lambda _index: self._refresh())
+        for box in (*self.fem_nodes, self.fem_dof):
+            box.valueChanged.connect(lambda _value: self._refresh())
+        self._sync_density()
+        self._kind_changed(self.RANDOM)
+
+    # ------------------------------------------------------------ state
+    def _kind_changed(self, kind: int) -> None:
+        for row in self._random_rows:
+            self._form.set_row_visible(row, kind == self.RANDOM)
+        for row in self._fem_rows:
+            self._form.set_row_visible(row, kind == self.FEM)
+        if self.name.text() in ("random_matrix", "demo_fem"):
+            self.name.setText("random_matrix" if kind == self.RANDOM else "demo_fem")
+        self._refresh()
+
+    def _set_driver(self, driver: str) -> None:
+        self._driver = driver
+        if driver == "nonzeros":
+            self._sync_density()
+        else:
+            self._sync_nonzeros()
+        self._refresh()
+
+    def _size_changed(self, _value: int) -> None:
+        if self._driver == "density":
+            self._sync_nonzeros()
+        else:
+            self._sync_density()
+        self._refresh()
+
+    def _sync_density(self) -> None:
+        from hdd.services.matrices import density_percent
+
+        self.density.blockSignals(True)
+        self.density.setValue(density_percent(self.size.value(), self.nonzeros.value()))
+        self.density.blockSignals(False)
+
+    def _sync_nonzeros(self) -> None:
+        from hdd.services.matrices import nonzeros_for_density
+
+        self.nonzeros.blockSignals(True)
+        self.nonzeros.setValue(min(self.nonzeros.maximum(), nonzeros_for_density(self.size.value(), self.density.value())))
+        self.nonzeros.blockSignals(False)
+
+    def _refresh(self) -> None:
+        ok = self.buttons.button(QDialogButtonBox.StandardButton.Ok)
+        if self.kind.checkedId() == self.FEM:
+            nodes = self.fem_nodes[0].value() * self.fem_nodes[1].value() * self.fem_nodes[2].value()
+            self._form.set_error(self._random_rows[1], None)
+            self.summary.setText(f"A {nodes * self.fem_dof.value():,} × {nodes * self.fem_dof.value():,} stiffness-like "
+                                 f"matrix of a {nodes:,}-node 3D mesh, numbered in a scrambled order.")
+            ok.setEnabled(True)
+            return
+        n, nonzeros, symmetry = self.size.value(), self.nonzeros.value(), self.symmetry.currentData()
+        problem = self._limits.check_random_matrix_request(n, nonzeros, symmetry)
+        self._form.set_error(self._random_rows[1], problem)
+        ok.setEnabled(problem is None)
+        if problem:
+            self.summary.setText("")
+            return
+        stored = self._limits.achievable_nonzeros(n, nonzeros, symmetry)
+        note = f" {stored:,} will be stored: a symmetric pattern pairs its off-diagonal entries." if stored != nonzeros else ""
+        self.summary.setText(f"Nonzeros near the diagonal, then rows and columns shuffled: reordering can recover "
+                             f"the band.{note}")
+
+    def values(self) -> dict[str, Any]:
+        name = self.name.text().strip() or None
+        if self.kind.checkedId() == self.FEM:
+            nx_, ny, nz = (box.value() for box in self.fem_nodes)
+            return {"kind": "fem", "name": name, "nx_nodes": nx_, "ny_nodes": ny, "nz_nodes": nz,
+                    "dof_per_node": self.fem_dof.value(), "seed": self.seed.value()}
+        return {"kind": "random", "name": name, "n": self.size.value(), "nonzeros": self.nonzeros.value(),
+                "symmetry": self.symmetry.currentData(), "seed": self.seed.value()}
 
 
 class CompareDialog(QDialog):

@@ -136,6 +136,45 @@ def test_jobs_can_keep_running_after_the_window_closes(qtbot, theme, settings, r
         reopened.cancel_all()
 
 
+def test_generate_matrix_dialog_links_nonzeros_and_density(qtbot, theme):
+    from PySide6.QtWidgets import QDialogButtonBox
+
+    from hdd.studio.dialogs import GenerateMatrixDialog
+
+    dialog = GenerateMatrixDialog()
+    qtbot.addWidget(dialog)
+    ok = dialog.buttons.button(QDialogButtonBox.StandardButton.Ok)
+    dialog.size.setValue(1000)
+    dialog.nonzeros.setValue(10000)
+    assert abs(dialog.density.value() - 1.0) < 1e-9
+    dialog.density.setValue(2.0)
+    assert dialog.nonzeros.value() == 20000
+    dialog.size.setValue(2000)  # density was set last, so it is kept
+    assert dialog.nonzeros.value() == 80000
+    dialog.nonzeros.setValue(1500)  # fewer than the diagonal
+    assert not ok.isEnabled()
+    dialog.nonzeros.setValue(2001)
+    assert ok.isEnabled()
+    dialog.symmetry.setCurrentIndex(dialog.symmetry.findData("symmetric"))
+    assert "2,000 will be stored" in dialog.summary.text()
+    assert dialog.values() == {"kind": "random", "name": "random_matrix", "n": 2000, "nonzeros": 2001,
+                               "symmetry": "symmetric", "seed": 42}
+    dialog.kind.button(GenerateMatrixDialog.FEM).click()
+    assert dialog.values()["kind"] == "fem" and dialog.values()["name"] == "demo_fem"
+    assert dialog.size.isHidden() and not dialog.fem_dof.isHidden()
+
+
+def test_generating_a_random_matrix_adds_it_to_the_library(qtbot, window, monkeypatch, root):
+    from hdd.studio import dialogs
+
+    monkeypatch.setattr(dialogs.GenerateMatrixDialog, "exec", lambda self: self.DialogCode.Accepted)
+    monkeypatch.setattr(dialogs.GenerateMatrixDialog, "values", lambda self: {
+        "kind": "random", "name": "rnd", "n": 300, "nonzeros": 3000, "symmetry": "unsymmetric", "seed": 5})
+    window.generate_demo_matrix()
+    qtbot.waitUntil(lambda: "rnd" in tree_labels(window), timeout=20000)
+    assert (root / "matrices" / "rnd" / "matrix.mtx").is_file()
+
+
 def test_batch_planning_runs_off_the_gui_thread(qtbot, window, monkeypatch):
     import threading
 

@@ -158,13 +158,13 @@
    "category": "stage1",
    "title": "Matrix Upload & Demo Matrix Generator",
    "badge": "Studio Provisioning Tool",
-   "shortSummary": "Add a Matrix Market (.mtx) file to the shared library, or generate a synthetic sparse test matrix from a 3D FEM mesh with one click.",
+   "shortSummary": "Add a Matrix Market (.mtx) file to the shared library, or generate a test matrix: a random sparse one with the size, nonzeros (or density) and symmetry you choose, or a 3D FEM mesh.",
    "scientificBackground": [
     "Because real matrices can be tens or hundreds of megabytes, the .mtx files in the library (matrices/<id>/) are excluded from Git via .gitignore; only matrix.json is tracked.",
     "The demo generator gives fresh clones something to run: a symmetric positive-definite matrix with a scrambled node order, so the bandwidth reduction is easy to see."
    ],
    "implementationDetails": [
-    "Import and generation live in src/hdd/services/matrices.py; the generator is generate_demo_fem_matrices() in src/hdd/services/matrix_files.py (3D brick stencil, 26 neighbours per node)."
+    "Import and generation live in src/hdd/services/matrices.py. The generators are in src/hdd/services/matrix_files.py: random_banded_matrix() (nonzeros placed near the diagonal, then rows and columns shuffled by one permutation; symmetric, structurally symmetric or unsymmetric; diagonally dominant) and generate_demo_fem_matrices() (3D brick stencil, 26 neighbours per node)."
    ],
    "sourceFile": "src/hdd/services/matrices.py"
   },

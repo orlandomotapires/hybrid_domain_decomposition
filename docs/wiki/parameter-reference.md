@@ -156,7 +156,7 @@ Source: `src/libs/runtime/matrix_library.py`
 
 Studio Provisioning Tool
 
-Add a Matrix Market (.mtx) file to the shared library, or generate a synthetic sparse test matrix from a 3D FEM mesh with one click.
+Add a Matrix Market (.mtx) file to the shared library, or generate a test matrix: a random sparse one with the size, nonzeros (or density) and symmetry you choose, or a 3D FEM mesh.
 
 **Background**
 
@@ -165,7 +165,7 @@ Add a Matrix Market (.mtx) file to the shared library, or generate a synthetic s
 
 **In this implementation**
 
-- Import and generation live in src/hdd/services/matrices.py; the generator is generate_demo_fem_matrices() in src/hdd/services/matrix_files.py (3D brick stencil, 26 neighbours per node).
+- Import and generation live in src/hdd/services/matrices.py. The generators are in src/hdd/services/matrix_files.py: random_banded_matrix() (nonzeros placed near the diagonal, then rows and columns shuffled by one permutation; symmetric, structurally symmetric or unsymmetric; diagonally dominant) and generate_demo_fem_matrices() (3D brick stencil, 26 neighbours per node).
 
 Source: `src/hdd/services/matrices.py`
 
