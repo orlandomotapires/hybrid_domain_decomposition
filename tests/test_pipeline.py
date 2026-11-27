@@ -83,6 +83,21 @@ class BackendsTest(unittest.TestCase):
                                    balance_violation_lambda=1.0, circuit_depth=1, num_steps=1, num_shots=4,
                                    adam_learning_rate=None, simulated=True)
 
+    def test_unknown_strategy_is_a_clear_error(self) -> None:
+        p = _params()
+        p["partitioning_parameters"]["partitioning_strategy"] = "simulated_bifurcation"
+        with self.assertRaisesRegex(ValueError, "Unknown partitioning_strategy"):
+            decompose_matrix(_grid_laplacian(), p["general_parameters"], p["coarsening_parameters"],
+                             p["partitioning_parameters"], p["uncoarsening_parameters"])
+
+    def test_only_the_weight_attribute_the_pipeline_reads_is_accepted(self) -> None:
+        from libs.runtime.utils import validate_and_normalize_simulation_parameters
+
+        p = _params()
+        p["coarsening_parameters"]["weight"] = "stiffness"
+        with self.assertRaisesRegex(ValueError, "coarsening_parameters.weight"):
+            validate_and_normalize_simulation_parameters(p)
+
     def test_same_seed_gives_the_same_permutation(self) -> None:
         A = _grid_laplacian()
         for strategy, block in (("metis_partitioning", {}), ("quantum_annealing", QA_BLOCK)):

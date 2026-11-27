@@ -39,7 +39,7 @@ The application menu does not activate conda envs or venvs, so the launcher reco
 1. `HDD_PYTHON` (set by the menu launcher)
 2. the active conda env, `base` included
 3. the active venv
-4. `.venv/` and `.env_ocean/` next to `run.sh`
+4. `.venv/` next to `run.sh`
 5. `python3` on `PATH`
 
 If none has the dependencies, it says so and how to install them. `./run.sh --which-python` prints the one it would pick for the app.

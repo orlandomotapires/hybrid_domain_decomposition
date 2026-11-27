@@ -204,8 +204,8 @@ def get_run_detail(result_dir: str) -> dict[str, Any]:
         "run_parameters": _read_json(rdir / "run_simulation_parameters.json") or {},
         "kpi_summary": extract_kpi_summary(run_metrics) if run_metrics else None,
         "curves": extract_curve_series(run_metrics) if run_metrics else [],
-        "run_metrics_txt": metrics_txt.read_text(encoding="utf-8", errors="ignore") if metrics_txt.exists() else "",
-        "run_log": log_path.read_text(encoding="utf-8", errors="ignore") if log_path.exists() else "",
+        "run_metrics_txt": _read_own_text(metrics_txt),
+        "run_log": _read_own_text(log_path),
         "artifacts": [f.name for f in sorted(rdir.iterdir()) if f.is_file()],
         "can_render_plots": partition_plots.can_plot(rdir),
         "available_plots": AVAILABLE_CASE_PLOTS,
@@ -244,16 +244,28 @@ def render_plot_png(result_dir: str, plot_name: str, *, force: bool = False) -> 
         raise InvalidInput(f"Plot rendering failed: {exc}") from exc
 
 
+def _read_own_text(path: Path) -> str:
+    """A run file's text; nothing for a missing file or a symlink (which may point anywhere)."""
+    if path.is_symlink() or not path.exists():
+        return ""
+    return path.read_text(encoding="utf-8", errors="ignore")
+
+
 def export_run_bundle(result_dir: str, destination) -> None:
     """Write a zip of the run (files plus cached plots under ``plots/``) to a path or binary stream."""
     rdir = _existing_result_dir(result_dir)
     with zipfile.ZipFile(destination, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
+        # The pipeline never writes symlinks; one in a run folder (say, from a shared workspace)
+        # could pull an unrelated file, such as a private key, into a bundle that gets sent away.
         for item in sorted(rdir.iterdir()):
+            if item.is_symlink():
+                continue
             if item.is_file():
                 zf.write(item, arcname=item.name)
             elif item.is_dir() and item.name == "plots":
                 for png in sorted(item.glob("*.png")):
-                    zf.write(png, arcname=f"plots/{png.name}")
+                    if not png.is_symlink():
+                        zf.write(png, arcname=f"plots/{png.name}")
 
 
 # ----------------------------------------------------------------- batch

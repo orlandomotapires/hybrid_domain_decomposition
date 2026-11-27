@@ -467,6 +467,23 @@ class JobManagerTest(unittest.TestCase):
         self.assertIn("sim_good", ids)
         self.assertNotIn("sim_bad", ids)
 
+    def test_cancelling_a_job_that_just_ended_keeps_its_real_status(self) -> None:
+        self.fake.next["single"] = "single_ok"
+        job_id = self.manager.start_single_simulation("simulations/sim_a")["job_id"]
+        job = self.manager._jobs[job_id]
+        wait_for(lambda: job._process.poll() is not None)  # ended; the follower may not have caught up
+        self.manager.cancel_job(job_id)
+        wait_for(self.finished(job_id))
+        self.assertEqual("completed", self.manager.get_job(job_id)["status"])
+
+    def test_batches_started_together_get_their_own_folders(self) -> None:
+        self.fake.next["batch"] = "batch"
+        first = self.manager.start_batch_study()
+        second = self.manager.start_batch_study()
+        self.assertNotEqual(first["batch_dir"], second["batch_dir"])
+        wait_for(self.finished(first["job_id"]))
+        wait_for(self.finished(second["job_id"]))
+
     def test_running_jobs_cannot_be_deleted(self) -> None:
         self.fake.next["single"] = "sleep"
         job_id = self.manager.start_single_simulation("simulations/sim_a")["job_id"]

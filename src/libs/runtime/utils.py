@@ -367,6 +367,10 @@ def validate_and_normalize_simulation_parameters(params: dict) -> dict:
     weight = cp.get("weight")
     if not isinstance(weight, str) or not weight.strip():
         raise ValueError("coarsening_parameters.weight must be a non-empty string")
+    if weight.strip() != "weight":
+        # The coarse levels, METIS and the QUBO all read the edge attribute "weight"; any other name
+        # would silently treat every coarse edge as weight 1.
+        raise ValueError('coarsening_parameters.weight must be "weight" (the only edge weight the pipeline reads)')
     strategy = cp.get("strategy")
     if not isinstance(strategy, str) or not strategy.strip():
         raise ValueError("coarsening_parameters.strategy must be a non-empty string")

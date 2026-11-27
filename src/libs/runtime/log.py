@@ -71,7 +71,7 @@ def log(log_type: str, message: str) -> None:
 		out.write(f"{prefix}{message}\n")
 	out.flush()
 	if _log_file is not None:
-		_log_file.write(f"{prefix} {message}\n")
+		_log_file.write(f"{prefix}{message}\n")
 		_log_file.flush()
 
 def start_timer() -> float:

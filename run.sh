@@ -10,7 +10,6 @@ candidate_pythons() {
 	[[ -n "${CONDA_PREFIX:-}" ]] && echo "$CONDA_PREFIX/bin/python"
 	[[ -n "${VIRTUAL_ENV:-}" ]] && echo "$VIRTUAL_ENV/bin/python"
 	echo "$ROOT_DIR/.venv/bin/python"
-	echo "$ROOT_DIR/.env_ocean/bin/python"
 	command -v python3 || true
 }
 

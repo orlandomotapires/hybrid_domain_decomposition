@@ -2,7 +2,21 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
+
+_PRESET_KEY_RE = re.compile(r"^[A-Za-z0-9_-]+$")
+
+
+def preset_key(value: Any, what: str) -> str:
+    """A preset key, which names folders under ``batch/runs/<batch>/cases/``: letters, digits, ``_`` and ``-`` only.
+
+    A key such as ``../../x`` would otherwise make a batch write its results outside the workspace.
+    """
+    key = str(value)
+    if not _PRESET_KEY_RE.match(key):
+        raise ValueError(f"{what} key {key!r} may only contain letters, digits, '_' and '-'")
+    return key
 
 
 def case_key(matrix: Any, algorithm: Any, size: Any) -> str:
