@@ -9,11 +9,7 @@ batch/runs/
 simulations/*/results/
 simulations/*/data/matrices/
 matrices/**/*.mtx
-threash_can/staged_deletions/
 results/
-
-METIS/
-ocean/
 
 *egg-info/
 
