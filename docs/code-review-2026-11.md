@@ -35,10 +35,11 @@ several places that disagree, and errors that never reach the user because the G
 | 13 | High | CI only tests Python 3.12 | CI | Fixed |
 | 36 | High | GUI could deadlock: worker threads emitted Qt signals (found while fixing #26) | studio | Fixed |
 | 14–28 | Medium | see below | | Fixed (#15: off-thread I/O only, no controller split) |
-| 29–34 | Low | see below | | Open |
+| 29–34 | Low | see below | | Fixed (33 partly: `libs` is a regular package; renaming `libs`/`main` deferred) |
 
 The Critical and High fixes are on branch `fix/review-critical-high`, the Medium ones on
-`fix/review-medium` (stacked on it), one commit per finding. Medium decisions taken with the owner:
+`fix/review-medium` (stacked on it) and the Low ones on `fix/review-low` (stacked on that), one
+commit per finding. Medium decisions taken with the owner:
 finding 15 only moves disk-bound work off the GUI thread (the controller split is left for its own
 change), finding 23 changes METIS weight scaling (results change for matrices whose weights span more
 than ~1e6), and finding 27 adds ruff, coverage, a test timeout and a constraints file. Decisions taken with the
@@ -85,6 +86,10 @@ capacity limits (#21).
 - **Fix:** workers put results in a queue that a timer on the GUI thread drains, as `JobsBridge` already
   did; the error relay works the same way. Ten consecutive full test runs passed afterwards, where about
   one run in five had hung.
+- **Second cause, found later:** a rarer hang remained. Python's cyclic garbage collector runs in whichever
+  thread is allocating, so a worker building a graph could destroy a Qt widget, which Qt forbids; the
+  GUI thread then waited forever on a Qt lock. Automatic collection is now off and a timer on the GUI
+  thread collects instead (pyqtgraph's `GarbageCollector`, installed in `create_application`).
 
 ## High
 
