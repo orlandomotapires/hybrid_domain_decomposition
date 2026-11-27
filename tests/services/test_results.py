@@ -94,6 +94,18 @@ class ResultsServiceTest(unittest.TestCase):
         self.assertIn("run_inputs.json", names)
         self.assertIn("plots/permuted_matrix_partitioned.png", names)
 
+    def test_bundle_and_detail_skip_symlinks(self) -> None:
+        secret = Path(self.tmp.name) / "secret_key"
+        secret.write_text("PRIVATE")
+        link = self.root / self.result_dir / "notes.txt"
+        link.symlink_to(secret)
+        try:
+            buffer = io.BytesIO()
+            results.export_run_bundle(self.result_dir, buffer)
+            self.assertNotIn("notes.txt", zipfile.ZipFile(buffer).namelist())
+        finally:
+            link.unlink()
+
     def test_renderer_does_not_use_pyplot(self) -> None:
         import subprocess
         import sys

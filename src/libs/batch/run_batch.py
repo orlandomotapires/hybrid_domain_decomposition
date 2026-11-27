@@ -17,7 +17,7 @@ import traceback
 from typing import Any
 
 
-from libs.batch.cases import case_key, unique_matrix_keys
+from libs.batch.cases import case_key, preset_key, unique_matrix_keys
 from libs.runtime import events, workspace
 from libs.runtime.launch import child_environment, module_command
 from libs.runtime.matrix_library import resolve_matrix
@@ -91,7 +91,7 @@ def parse_batch_configuration(configuration: dict[str, Any]) -> dict[str, Any]:
         "geometries": _load_matrices(configuration),
         "coarsening_presets": tuple(
             CoarseningPreset(
-                key=str(entry["key"]),
+                key=preset_key(entry["key"], "coarsening preset"),
                 coarsen_inferior_limit=int(entry["coarsen_inferior_limit"]),
                 coarsen_superior_limit=None if entry.get("coarsen_superior_limit") is None else int(entry["coarsen_superior_limit"]),
             )
@@ -99,7 +99,7 @@ def parse_batch_configuration(configuration: dict[str, Any]) -> dict[str, Any]:
         ),
         "algorithm_presets": tuple(
             AlgorithmPreset(
-                key=str(entry["key"]),
+                key=preset_key(entry["key"], "algorithm preset"),
                 partitioning_strategy=str(entry["partitioning_strategy"]),
                 allowed_sizes=tuple(str(size) for size in entry.get("allowed_sizes", [])),
                 strategy_parameters=_clone_json_like(entry.get("strategy_parameters", {})),

@@ -42,6 +42,12 @@ class PlanTest(unittest.TestCase):
         self.assertEqual("m1__metis__big", cases[0]["case_key"])
         self.assertTrue(next(c for c in cases if c["algorithm"] == "qaoa_hw")["is_async"])
 
+    def test_preset_keys_cannot_name_paths(self) -> None:
+        bad = config()
+        bad["algorithm_presets"][0]["key"] = "../../../../tmp/x"
+        with self.assertRaises(batch.InvalidInput):
+            batch.validate_configuration(bad)
+
     def test_saving_checks_every_preset_and_reference(self) -> None:
         from tests.test_tuning import _params
 
