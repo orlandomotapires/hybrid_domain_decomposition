@@ -45,6 +45,8 @@ ICONS: dict[str, str] = {
     "follow": "arrow-bar-to-down",
     "expanded": "chevron-down",
     "collapsed": "chevron-right",
+    "panel-expand": "chevron-up",
+    "panel-collapse": "chevron-down",
     # project tree
     "workspace": "box",
     "matrices": "database",

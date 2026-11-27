@@ -60,6 +60,20 @@ class Settings:
         self._backend.setValue("window/state", state)
         self._backend.sync()
 
+    def bottom_panel(self) -> tuple[bool, int | None]:
+        """``(collapsed, expanded height)`` of the bottom panel at the last close."""
+        collapsed = str(self._backend.value("window/bottom_collapsed", "false")).lower() == "true"
+        try:
+            height = int(self._backend.value("window/bottom_height", 0)) or None
+        except (TypeError, ValueError):
+            height = None
+        return collapsed, height
+
+    def save_bottom_panel(self, collapsed: bool, height: int) -> None:
+        self._backend.setValue("window/bottom_collapsed", "true" if collapsed else "false")
+        self._backend.setValue("window/bottom_height", int(height))
+        self._backend.sync()
+
     def _bytes(self, key: str) -> QByteArray | None:
         value = self._backend.value(key)
         return value if isinstance(value, QByteArray) and not value.isEmpty() else None

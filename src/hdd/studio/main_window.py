@@ -31,6 +31,7 @@ from hdd.services.errors import ServiceError
 
 from . import APP_NAME, batch_page, diagnostics, pages, sim_pages
 from .batch_doc import BatchDocument
+from .bottom_panel import BottomPanel
 from .context import AppContext
 from .dialogs import CompareDialog, NewSimulationDialog, NewStudyDialog
 from .documents import SimulationDocument
@@ -237,6 +238,8 @@ class MainWindow(QMainWindow):
         self.console_dock.raise_()
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.help_dock)
         self.help_dock.hide()
+        self.bottom = BottomPanel(self, [self.console_dock, self.jobs_dock, self.problems_dock])
+        self._error_count: int | None = None  # errors in the Problems list; None until the first refresh
         self._apply_default_sizes()
 
     def _dock(self, title: str, name: str, widget: QWidget) -> Dock:
@@ -254,6 +257,7 @@ class MainWindow(QMainWindow):
     def _sync_dock_titles(self) -> None:
         for dock in self.docks:
             dock.set_title_visible(not (self.tabifiedDockWidgets(dock) and not dock.isFloating()))
+        self.bottom.sync()
 
     # ---------------------------------------------------------------- actions
     def _action(self, text: str, slot, icon: str | None = None, shortcut=None, tint: str = "default", tip: str | None = None) -> QAction:
@@ -346,6 +350,7 @@ class MainWindow(QMainWindow):
         view_menu = bar.addMenu("&View")
         for dock in self.docks:
             view_menu.addAction(dock.toggleViewAction())
+        view_menu.addAction(self.bottom.action)
         view_menu.addSeparator()
         theme_menu = view_menu.addMenu("&Theme")
         theme_menu.addActions(list(self.theme_actions.values()))
@@ -924,6 +929,9 @@ class MainWindow(QMainWindow):
         for row, (severity, _m, _l) in enumerate(rows):
             self.problems.item(row, 0).setIcon(self._theme.icon(severity, severity))
         errors = sum(1 for r in rows if r[0] == "error")
+        if self._error_count is not None and errors > self._error_count and self.bottom.is_collapsed():
+            self.bottom.expand(self.problems_dock)  # a new error opens the panel on it
+        self._error_count = errors
         self.problems_dock.setWindowTitle(f"Problems ({len(rows)})" if rows else "Problems")
         self.act_validate.setToolTip(f"Check parameters (F7) — {errors} errors" if errors else "Check parameters (F7)")
 
@@ -936,8 +944,7 @@ class MainWindow(QMainWindow):
     def show_problems(self) -> None:
         for doc in self.docs.values():
             doc.validate()
-        self.problems_dock.show()
-        self.problems_dock.raise_()
+        self.bottom.expand(self.problems_dock)
 
     def _batch_selected(self) -> bool:
         node = self.project.current_node()
@@ -1220,7 +1227,7 @@ class MainWindow(QMainWindow):
         self.jobs.refresh()
         self.jobs.select(job["job_id"], emit=False)
         self.console.follow(job["job_id"])
-        self.console_dock.raise_()
+        self.bottom.expand(self.console_dock)  # a run opens the panel on its live log
         self.statusBar().showMessage(f"Started {job['title']}.", 4000)
         self._update_status()
 
@@ -1432,6 +1439,7 @@ class MainWindow(QMainWindow):
         )
 
     def reset_layout(self) -> None:
+        self.bottom.expand()
         self.restoreState(self._default_state, LAYOUT_VERSION)
         self._apply_default_sizes()
         QTimer.singleShot(0, self._sync_dock_titles)
@@ -1444,9 +1452,15 @@ class MainWindow(QMainWindow):
             self.restoreState(state, LAYOUT_VERSION)
         else:
             QTimer.singleShot(0, self._apply_default_sizes)
+        collapsed, height = self._settings.bottom_panel()
+        if height:
+            self.bottom.set_height(height)
+        if collapsed:
+            QTimer.singleShot(0, self.bottom.collapse)  # once the restored layout has settled
 
     def save_layout(self) -> None:
         self._settings.save_window(self.saveGeometry(), self.saveState(LAYOUT_VERSION))
+        self._settings.save_bottom_panel(self.bottom.is_collapsed(), self.bottom.height())
 
     def closeEvent(self, event: QCloseEvent) -> None:
         choice = self._confirm_stop_jobs("Quit") if self._confirm_unsaved("Quit") else None
