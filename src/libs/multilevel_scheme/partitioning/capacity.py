@@ -59,6 +59,27 @@ def backend_capacity(partitioning_parameters: dict[str, Any]) -> tuple[int | Non
     return None, None
 
 
+def qpu_workload(strategy: str, strategy_parameters: dict[str, Any] | None, k_target: int) -> dict[str, Any] | None:
+    """Remote calls one run makes: ``{"submissions", "samples", "unit"}``, or None for METIS.
+
+    Recursive bisection into k parts runs k - 1 bipartitions per start. Annealing submits one
+    problem per bipartition; QAOA one circuit job per optimizer step plus a final sampling job.
+    Parameters left out take the pipeline's defaults.
+    """
+    from libs.runtime.defaults import strategy_defaults
+
+    params = {**strategy_defaults(strategy), **(strategy_parameters or {})}
+    bisections = max(1, int(k_target) - 1)
+    starts = max(1, int(params.get("num_starts", 1)))
+    if strategy == "quantum_annealing":
+        submissions = starts * bisections
+        return {"submissions": submissions, "samples": submissions * max(1, int(params.get("num_reads", 1))), "unit": "reads"}
+    if strategy == "quantum_approximation_optimizer":
+        submissions = starts * bisections * (max(1, int(params.get("num_steps", 1))) + 1)
+        return {"submissions": submissions, "samples": submissions * max(1, int(params.get("num_shots", 1))), "unit": "shots"}
+    return None
+
+
 def local_capacity_error(partitioning_parameters: dict[str, Any], coarse_nodes: int) -> str | None:
     """Why a local (simulated) backend cannot take a coarse graph of ``coarse_nodes``, else None.
 

@@ -151,6 +151,10 @@ class ProjectPanel(QWidget):
         self._loaded = False
 
     # --------------------------------------------------------------- content
+    def reset_expansion(self) -> None:
+        """Expand the next snapshot like a first load (a different workspace was opened)."""
+        self._loaded = False
+
     def set_snapshot(self, snap: ProjectSnapshot) -> None:
         """Rebuild the tree, keeping the selection and the expanded branches."""
         expanded = self._expanded_keys()

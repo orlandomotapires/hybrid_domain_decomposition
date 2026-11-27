@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from libs.runtime import workspace
+from libs.runtime.atomic import atomic_write_json
 from libs.runtime.utils import resolve_parameters_file_path, validate_and_normalize_simulation_config
 
 from . import simulations
@@ -223,7 +224,7 @@ def resume_study(simulation: str, study_id: str, jobs: Jobs, n_trials: int | Non
     if n_trials is not None:
         config = _read(path / tuner.STUDY_CONFIG)
         config["n_trials"] = max(int(n_trials), len(tuner.load_trials(path)) + 1)
-        (path / tuner.STUDY_CONFIG).write_text(json.dumps(config, indent=2), encoding="utf-8")
+        atomic_write_json(path / tuner.STUDY_CONFIG, config)
     (path / tuner.STOP_FILE).unlink(missing_ok=True)
     job = jobs.start_tuning_study(study_dir=path, title=f"Tuning {simulation} ({study_id})", demonstrator_id=simulation)
     return {"study": study_brief(simulation, path, jobs), "job": job}

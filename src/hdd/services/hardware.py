@@ -234,7 +234,7 @@ def environment_status() -> dict[str, Any]:
 def probe_dwave(qpu_solver_name: str | None = DEFAULT_DWAVE_SOLVER, qpu_region: str | None = DEFAULT_DWAVE_REGION) -> dict[str, Any]:
     """Connect to D-Wave Leap and report the largest clique the solver embeds."""
     try:
-        from libs.multilevel_scheme.partitioning.qa import get_qpu_dense_clique_capacity
+        from libs.multilevel_scheme.partitioning.qa.dwave_access import get_qpu_dense_clique_capacity
 
         solver_name, clique_capacity = get_qpu_dense_clique_capacity(qpu_solver_name, qpu_region)
         return {"reachable": True, "solver_name": solver_name, "largest_clique_capacity": clique_capacity, "region": qpu_region, "error": None}
@@ -245,7 +245,7 @@ def probe_dwave(qpu_solver_name: str | None = DEFAULT_DWAVE_SOLVER, qpu_region: 
 
 def probe_qlm(qlm_qpu_name: str | None = DEFAULT_QLM_QPU) -> dict[str, Any]:
     """Connect to QLMaaS and describe the QPU."""
-    from libs.multilevel_scheme.partitioning.qa import get_qlm_qpu_api_summary
+    from libs.multilevel_scheme.partitioning.qaoa.qlm_access import get_qlm_qpu_api_summary
 
     summary = get_qlm_qpu_api_summary(qlm_qpu_name=qlm_qpu_name)
     return {"reachable": "inspection_error" not in summary, "requested_qpu_name": qlm_qpu_name, "summary": summary}

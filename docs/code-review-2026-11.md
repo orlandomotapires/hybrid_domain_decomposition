@@ -33,10 +33,15 @@ several places that disagree, and errors that never reach the user because the G
 | 11 | High | Layering test does not guard `hdd.studio` | architecture | Fixed |
 | 12 | High | Core algorithms have no tests | testing | Fixed |
 | 13 | High | CI only tests Python 3.12 | CI | Fixed |
-| 14–28 | Medium | see below | | Open (14, 20, 21 partly addressed) |
+| 36 | High | GUI could deadlock: worker threads emitted Qt signals (found while fixing #26) | studio | Fixed |
+| 14–28 | Medium | see below | | Fixed (#15: off-thread I/O only, no controller split) |
 | 29–34 | Low | see below | | Open |
 
-The fixes are on branch `fix/review-critical-high`, one commit per finding. Decisions taken with the
+The Critical and High fixes are on branch `fix/review-critical-high`, the Medium ones on
+`fix/review-medium` (stacked on it), one commit per finding. Medium decisions taken with the owner:
+finding 15 only moves disk-bound work off the GUI thread (the controller split is left for its own
+change), finding 23 changes METIS weight scaling (results change for matrices whose weights span more
+than ~1e6), and finding 27 adds ruff, coverage, a test timeout and a constraints file. Decisions taken with the
 owner: `balance_tolerance` is a percentage everywhere (old ratio values in tuning history and studies
 are converted on read), and the Studio's defaults are the single source of default parameters.
 Partly addressed Medium items: job records now use a unique temporary file (#14); cancelling an
@@ -69,6 +74,17 @@ capacity limits (#21).
   runs (SciPy COBYLA) were not affected.
 - **Fix:** make the angles a trainable `pennylane.numpy` array; a test checks every optimizer step moves
   them. Results of emulated QAOA runs change, including any produced before this fix.
+
+### 36. The Studio could deadlock (High) — found while fixing #26
+
+- **Where:** `src/hdd/studio/tasks.py`, `src/hdd/studio/diagnostics.py`.
+- **Problem:** `TaskRunner` workers emitted a Qt signal to hand results to the GUI. The emitting thread
+  holds Qt's connection lock while it waits for Python's GIL, and the GUI thread can hold the GIL while it
+  waits for that lock (seen during garbage collection), so the window froze. It showed up as an
+  intermittent hang in the GUI tests, captured with a stack dump.
+- **Fix:** workers put results in a queue that a timer on the GUI thread drains, as `JobsBridge` already
+  did; the error relay works the same way. Ten consecutive full test runs passed afterwards, where about
+  one run in five had hung.
 
 ## High
 

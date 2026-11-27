@@ -13,7 +13,7 @@ from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
 from hdd.services.jobs import JobManager
-from hdd.services.jobs.manager import INTERRUPTED_MESSAGE, MAX_LOG_ENTRIES, _pid_alive
+from hdd.services.jobs.manager import INTERRUPTED_MESSAGE, MAX_LOG_ENTRIES, NO_RESULT_MESSAGE, _pid_alive
 from libs.runtime import workspace
 from tests.test_workspace import make_workspace
 
@@ -140,6 +140,12 @@ class JobManagerTest(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.manager.cancel_all()
+        self.manager.close()
+        # A job counts as finished before its follower has written the final record; let every
+        # follower (also those of managers a test reopened) finish before the folder goes away.
+        for thread in threading.enumerate():
+            if thread.name.startswith("job-"):
+                thread.join(10)
         self.env.stop()
         self.tmp.cleanup()
 
@@ -375,6 +381,45 @@ class JobManagerTest(unittest.TestCase):
             bystander.kill()
             bystander.wait()
 
+    def _run_folder(self, name: str, log: str, metrics: bool = False) -> Path:
+        run = self.root / "simulations" / "sim_a" / "results" / name
+        run.mkdir(parents=True)
+        (run / "run_log").write_text(log)
+        if metrics:
+            (run / "run_metrics.json").write_text("{}")
+        return run
+
+    def test_a_killed_run_folder_is_listed_as_failed(self) -> None:
+        self._run_folder("run_killed", "[10:00:00 INFO] Coarsening Heavy Edge Matching\n")  # no metrics, no result
+        self._run_folder("run_ok", "[10:00:00 INFO] Simulation Completed Successfully\n", metrics=True)
+        reopened = JobManager(self.root, command_factory=self.fake)
+        killed = reopened.get_job("hist_sim_a_run_killed")
+        self.assertEqual(("failed", NO_RESULT_MESSAGE), (killed["status"], killed["error_message"]))
+        self.assertEqual("completed", reopened.get_job("hist_sim_a_run_ok")["status"])
+
+    def test_historical_logs_are_read_on_demand(self) -> None:
+        self._run_folder("run_ok", "[10:00:00 INFO] Simulation Completed Successfully\n", metrics=True)
+        reopened = JobManager(self.root, command_factory=self.fake)
+        self.assertEqual(0, reopened.list_jobs(None)[0]["log_count"])
+        self.assertEqual("Simulation Completed Successfully", reopened.get_job("hist_sim_a_run_ok")["logs"][-1]["message"])
+
+    def test_a_run_removed_from_the_list_does_not_come_back(self) -> None:
+        run = self._run_folder("run_ok", "[10:00:00 INFO] Simulation Completed Successfully\n", metrics=True)
+        first = JobManager(self.root, command_factory=self.fake)
+        self.assertTrue(first.delete_job("hist_sim_a_run_ok"))
+        self.assertTrue(run.exists())  # the files stay
+        reopened = JobManager(self.root, command_factory=self.fake)
+        self.assertIsNone(reopened.get_job("hist_sim_a_run_ok"))
+
+    def test_a_failed_run_has_no_result_and_can_be_removed_from_the_list(self) -> None:
+        self._run_folder("run_killed", "[10:00:00 INFO] Graph G with 600 nodes and 1150 edges created from the matrix\n")
+        first = JobManager(self.root, command_factory=self.fake)
+        failed = first.get_job("hist_sim_a_run_killed")
+        self.assertIsNone(failed["result_dir"])  # no "Show result" for a run without one
+        self.assertEqual(600, failed["telemetry"].get("initial_nodes"))  # read from the log on demand
+        self.assertTrue(first.delete_job("hist_sim_a_run_killed"))
+        self.assertIsNone(JobManager(self.root, command_factory=self.fake).get_job("hist_sim_a_run_killed"))
+
     def test_symlinked_result_folders_are_kept(self) -> None:
         elsewhere = Path(self.tmp.name) / "other_disk"
         (elsewhere / "run_1").mkdir(parents=True)
@@ -405,6 +450,14 @@ class JobManagerTest(unittest.TestCase):
             self.assertIn("disk gone", lost["error_message"])
         finally:
             os.killpg(job["pid"], 9)
+
+    def test_a_corrupt_record_is_set_aside(self) -> None:
+        jobs_dir = self.root / workspace.STATE_DIR_NAME / "jobs"
+        jobs_dir.mkdir(parents=True, exist_ok=True)
+        (jobs_dir / "sim_cut.json").write_text('{"schema": 1, "job_id": "sim_')
+        JobManager(self.root, command_factory=self.fake)
+        self.assertFalse((jobs_dir / "sim_cut.json").exists())
+        self.assertTrue((jobs_dir / "sim_cut.json.corrupt").exists())
 
     def test_an_unreadable_record_does_not_block_the_workspace(self) -> None:
         self._write_record("sim_bad", job_id="sim_bad", status="completed", started_epoch="yesterday")

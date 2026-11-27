@@ -1,7 +1,6 @@
 import numpy as np
 from scipy import sparse
 from typing import Any
-import matplotlib.pyplot as plt
 
 INITIAL_PERCENT = 0
 FINAL_PERCENT = 5
@@ -12,11 +11,13 @@ DEFAULT_PERCENT_BANDS = tuple(round(step * STEP_PERCENT, 10) for step in range(i
 def _as_csr(A):
     return A.tocsr() if sparse.issparse(A) else sparse.csr_matrix(A)
 
-def _check_permutation_matrix_relation(matrix_name, A_original, A_permuted, permutation, n_samples=100000, seed=0, tol=0.0):
-    """
-    Verifies (by random entry checks) that:
-        A_permuted[i, j] == A_original[permutation[i], permutation[j]]
-    This is the relationship produced by permuting rows/cols with the same permutation.
+def _check_permutation_matrix_relation(matrix_name, A_original, A_permuted, permutation, n_samples=None, seed=None, tol=0.0):
+    """Check every entry of ``A_permuted[i, j] == A_original[permutation[i], permutation[j]]``.
+
+    Returns ``(mismatches, max_abs_err)``: the number of entries that differ by more than ``tol``
+    and the largest difference. Exact and O(nnz). (It used to sample random (i, j) positions,
+    which on a large sparse matrix almost never hit a nonzero; ``n_samples`` and ``seed`` are
+    kept for callers and ignored.)
     """
     A0 = _as_csr(A_original)
     Ap = _as_csr(A_permuted)
@@ -26,21 +27,14 @@ def _check_permutation_matrix_relation(matrix_name, A_original, A_permuted, perm
     assert A0.shape == Ap.shape
     assert p.shape[0] == n
 
-    rng = np.random.default_rng(seed)
-    ii = rng.integers(0, n, size=n_samples)
-    jj = rng.integers(0, n, size=n_samples)
-
-    mismatches = 0
-    max_abs_err = 0.0
-    for i, j in zip(ii, jj):
-        a_ref = A0[p[i], p[j]]
-        a_got = Ap[i, j]
-        err = float(abs(a_ref - a_got))
-        if err > tol:
-            mismatches += 1
-            if err > max_abs_err:
-                max_abs_err = err
-                
+    # float64 first: unsigned integers would wrap around in the subtraction, booleans cannot subtract.
+    diff = abs(Ap.astype(np.float64) - A0[p][:, p].astype(np.float64)).tocsr()
+    diff.eliminate_zeros()
+    errors = diff.data
+    bad = ~np.isfinite(errors) | (errors > tol)  # a NaN entry never "matches"
+    mismatches = int(np.count_nonzero(bad))
+    finite = errors[np.isfinite(errors)]
+    max_abs_err = float("inf") if finite.size < errors.size else (float(finite.max()) if finite.size else 0.0)
     return mismatches, max_abs_err
 
 
@@ -99,40 +93,6 @@ def _sparsity_metrics(A, band: int = 200, percent_bands = DEFAULT_PERCENT_BANDS)
 
     return metrics
 
-
-def save_frac_within_band_plot(metrics_by_matrix: dict[str, Any], save_path, *, dpi: int = 200) -> None:
-    matrix_names = [name for name in metrics_by_matrix.keys()]
-    if not matrix_names:
-        raise ValueError("No metrics available to plot")
-
-    fig, axes = plt.subplots(1, len(matrix_names), figsize=(7 * len(matrix_names), 5), constrained_layout=True)
-    if len(matrix_names) == 1:
-        axes = [axes]
-
-    percent_values = [float(percent) for percent in DEFAULT_PERCENT_BANDS]
-    percent_labels = [_format_percent_label(percent) for percent in percent_values]
-
-    for ax, matrix_name in zip(axes, matrix_names):
-        matrix_metrics = metrics_by_matrix.get(matrix_name, {})
-        structural_metrics = matrix_metrics.get("structural_metrics", {}) if isinstance(matrix_metrics, dict) else {}
-        original = structural_metrics.get("original", {}) if isinstance(structural_metrics, dict) else {}
-        permuted = structural_metrics.get("permuted", {}) if isinstance(structural_metrics, dict) else {}
-
-        original_curve = [float(original.get(f"frac_within_|i-j|<={label}_of_n", 0.0)) for label in percent_labels]
-        permuted_curve = [float(permuted.get(f"frac_within_|i-j|<={label}_of_n", 0.0)) for label in percent_labels]
-
-        ax.plot(percent_values, original_curve, label="Original", linewidth=2.0)
-        ax.plot(percent_values, permuted_curve, label="Permuted", linewidth=2.0)
-        ax.set_title(f"frac_within_|i-j|: {matrix_name}")
-        ax.set_xlabel("Band range (% of n)")
-        ax.set_ylabel("Fraction of nonzeros within band")
-        ax.set_xlim(INITIAL_PERCENT, FINAL_PERCENT)
-        ax.set_ylim(0.0, 1.02)
-        ax.grid(True, alpha=0.3)
-        ax.legend()
-
-    fig.savefig(save_path, dpi=dpi)
-    plt.close(fig)
 
 def _check_structural_metrics(matrix_name, method_name, A0, Ap):
     m0 = _sparsity_metrics(A0, band=200)

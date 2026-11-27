@@ -95,6 +95,15 @@ class WikiTest(unittest.TestCase):
                 wrong.append(f"{key}: badge {badge!r}, defaults {sorted(expected)}")
         self.assertEqual([], wrong)
 
+    def test_help_points_at_files_that_exist(self) -> None:
+        import json
+
+        topics = json.loads((ROOT / "src/hdd/services/data/wiki.json").read_text(encoding="utf-8"))["topics"]
+        missing = [f"{t['id']}: {t['sourceFile']}" for t in topics if t.get("sourceFile") and not (ROOT / t["sourceFile"]).exists()]
+        self.assertEqual([], missing)
+        stale = [t["id"] for t in topics if re.search(r"backend/|frontend/|/api/|\.tsx\b", json.dumps(t))]
+        self.assertEqual([], stale, "help text still refers to the removed web app")
+
     def test_every_wiki_page_is_linked_from_the_index(self) -> None:
         index = (WIKI / "README.md").read_text(encoding="utf-8")
         pages = {p.name for p in WIKI.glob("*.md")} - {"README.md"}

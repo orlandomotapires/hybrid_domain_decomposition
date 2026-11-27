@@ -165,9 +165,9 @@ Add a Matrix Market (.mtx) file to the shared library, or generate a synthetic s
 
 **In this implementation**
 
-- Upload and generation live in backend/routes/library.py; the generator is in backend/services/matrix_service.py (3D brick stencil, 26 neighbours per node).
+- Import and generation live in src/hdd/services/matrices.py; the generator is generate_demo_fem_matrices() in src/hdd/services/matrix_files.py (3D brick stencil, 26 neighbours per node).
 
-Source: `backend/routes/library.py`
+Source: `src/hdd/services/matrices.py`
 
 ### Block Size (Rows per Graph Node)
 
@@ -451,7 +451,7 @@ Source: `src/libs/multilevel_scheme/coarsening/coarsening.py`
 
 ### Dry-Run Coarsening Trajectory Preview
 
-`POST /api/demonstrators/{dem_id}/preview-coarsening` · Interactive Hierarchy Simulator
+`simulations.preview_coarsening` · Interactive Hierarchy Simulator
 
 Executes Stage 1 and Stage 2 Heavy Edge Matching in ~35 ms to preview the exact level-by-level contraction hierarchy G_0 → G_1 → … → G_L before launching a full run.
 
@@ -461,9 +461,9 @@ Executes Stage 1 and Stage 2 Heavy Edge Matching in ~35 ms to preview the exact 
 
 **In this implementation**
 
-- Implemented in preview_coarsening_trajectory() in backend/routes/matrices.py.
+- Implemented in preview_coarsening() in src/hdd/services/simulations.py, on top of the pipeline's own dry run (coarsening_dry_run() in src/libs/tuning/feasibility.py), so the preview always matches a real run.
 
-Source: `backend/routes/matrices.py`
+Source: `src/hdd/services/simulations.py`
 
 ## Stage 3: Partitioning
 
@@ -863,7 +863,7 @@ Python module:Class path specifying the Atos/Eviden QLM or myQLM quantum process
 
 **In this implementation**
 
-- Resolved dynamically via importlib.import_module(module_name) and getattr(mod, class_name)() in get_qlm_qpu() (qaoa/qlm_access.py).
+- Passed as a name to QLMaaSConnection().get_qpu(name) in get_qlm_qpu() (qaoa/qlm_access.py); the remote service resolves it. No module is imported from the name.
 
 Source: `src/libs/multilevel_scheme/partitioning/qaoa/qlm_access.py`
 
@@ -880,9 +880,9 @@ Warns when the Stage 2 coarse node range exceeds the practical capacity of the s
 
 **In this implementation**
 
-- Provides a 1-click Auto-Adjust button to set Stage 2 coarse limits to Small [4, 5] for QAOA or Medium [100, 175] for D-Wave QPU.
+- The editor lists a problem when the coarse range exceeds the backend's capacity (backend_capacity() in src/libs/multilevel_scheme/partitioning/capacity.py), and Auto-select parameters on the simulation page picks a range that fits. A run on a local backend also stops right after coarsening when the coarse graph is too large.
 
-Source: `frontend/src/components/PipelineStudio.tsx`
+Source: `src/libs/multilevel_scheme/partitioning/capacity.py`
 
 ## Stage 4: Refinement
 
@@ -1021,7 +1021,7 @@ A'[i, j] = A[p[i], p[j]]
 
 - Once every vertex u ∈ V_0 has a final subdomain label part[u] ∈ {0, ..., k-1}, vertices are ordered contiguously by subdomain label: all vertices of subdomain 0 first, then subdomain 1, up to subdomain k-1.
 - Each node u is expanded back into its d = dof_per_node contiguous rows [u·d, u·d + 1, ..., u·d + d - 1], yielding a permutation array p of length N.
-- Applying p to both rows and columns produces the domain-block-reordered matrix A’ = P A Pᵀ. Random coordinate pairs (i, j) are then sampled to verify that A’[i, j] == A[p[i], p[j]] with zero mismatches.
+- Applying p to both rows and columns produces the domain-block-reordered matrix A’ = P A Pᵀ. Every stored entry is then compared to verify that A’[i, j] == A[p[i], p[j]] with zero mismatches (an exact check, linear in the number of nonzeros).
 
 **In this implementation**
 
@@ -1153,7 +1153,7 @@ C_fact(A) = N · B(A)²   |   Δ(nB²)% = (B_perm² - B_orig²) / B_orig² × 10
 
 - Computed automatically in the Results Explorer from original_bw, permuted_bw, and matrix dimension N.
 
-Source: `backend/routes/results.py`
+Source: `src/hdd/services/results.py`
 
 ### Average Bandwidth B̄(A)
 
@@ -1245,7 +1245,7 @@ Source: `batch/run_batch.py`
 
 ### Runtime SDKs & Quantum Hardware Probes
 
-`backend/routes/quantum_hw.py` · Environment & QPU Diagnostics
+`hardware.environment_status / probe_dwave / probe_qlm` · Environment & QPU Diagnostics
 
 Checks installed Python classical/quantum SDKs (PyMETIS, D-Wave Neal, D-Wave System, PennyLane, myQLM) and probes live QPU capacities.
 
@@ -1258,7 +1258,7 @@ Checks installed Python classical/quantum SDKs (PyMETIS, D-Wave Neal, D-Wave Sys
 
 - Calls get_qpu_dense_clique_capacity() via dwave-system / minorminer and get_qlm_qpu_api_summary() in src/libs/multilevel_scheme/partitioning/qa/.
 
-Source: `backend/routes/quantum_hw.py`
+Source: `src/hdd/services/hardware.py`
 
 ### Configuration & Run Comparators
 
@@ -1272,6 +1272,6 @@ Compares two parameter presets side-by-side in Single Run, or compares two compl
 
 **In this implementation**
 
-- Implemented in PipelineStudio.tsx and ResultsExplorer.tsx.
+- Implemented in CompareDialog (src/hdd/studio/dialogs.py) for presets and in the results views for runs.
 
-Source: `frontend/src/components/ResultsExplorer.tsx`
+Source: `src/hdd/studio/dialogs.py`

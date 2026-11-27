@@ -164,9 +164,9 @@
     "The demo generator gives fresh clones something to run: a symmetric positive-definite matrix with a scrambled node order, so the bandwidth reduction is easy to see."
    ],
    "implementationDetails": [
-    "Upload and generation live in backend/routes/library.py; the generator is in backend/services/matrix_service.py (3D brick stencil, 26 neighbours per node)."
+    "Import and generation live in src/hdd/services/matrices.py; the generator is generate_demo_fem_matrices() in src/hdd/services/matrix_files.py (3D brick stencil, 26 neighbours per node)."
    ],
-   "sourceFile": "backend/routes/library.py"
+   "sourceFile": "src/hdd/services/matrices.py"
   },
   {
    "id": "param-dof-per-node",
@@ -719,7 +719,7 @@
     "Allows targeting either remote hardware QPUs (such as QSolidQPU10) or local myQLM noisy/linlag simulators (such as qat.qpus:PyLinalg) without changing code."
    ],
    "implementationDetails": [
-    "Resolved dynamically via importlib.import_module(module_name) and getattr(mod, class_name)() in get_qlm_qpu() (qaoa/qlm_access.py)."
+    "Passed as a name to QLMaaSConnection().get_qpu(name) in get_qlm_qpu() (qaoa/qlm_access.py); the remote service resolves it. No module is imported from the name."
    ],
    "sourceFile": "src/libs/multilevel_scheme/partitioning/qaoa/qlm_access.py"
   },
@@ -829,7 +829,7 @@
    "scientificBackground": [
     "Once every vertex u ∈ V_0 has a final subdomain label part[u] ∈ {0, ..., k-1}, vertices are ordered contiguously by subdomain label: all vertices of subdomain 0 first, then subdomain 1, up to subdomain k-1.",
     "Each node u is expanded back into its d = dof_per_node contiguous rows [u·d, u·d + 1, ..., u·d + d - 1], yielding a permutation array p of length N.",
-    "Applying p to both rows and columns produces the domain-block-reordered matrix A’ = P A Pᵀ. Random coordinate pairs (i, j) are then sampled to verify that A’[i, j] == A[p[i], p[j]] with zero mismatches."
+    "Applying p to both rows and columns produces the domain-block-reordered matrix A’ = P A Pᵀ. Every stored entry is then compared to verify that A’[i, j] == A[p[i], p[j]] with zero mismatches (an exact check, linear in the number of nonzeros)."
    ],
    "implementationDetails": [
     "Implemented in permute_matrix() inside src/libs/permutation.py and profiled via collect_metrics() in src/libs/profiling/matrix_metrics.py."
@@ -943,7 +943,7 @@
    "implementationDetails": [
     "Computed automatically in the Results Explorer from original_bw, permuted_bw, and matrix dimension N."
    ],
-   "sourceFile": "backend/routes/results.py"
+   "sourceFile": "src/hdd/services/results.py"
   },
   {
    "id": "metric-avg-bandwidth",
@@ -1017,7 +1017,7 @@
    "id": "hardware-backends",
    "category": "workflows",
    "title": "Runtime SDKs & Quantum Hardware Probes",
-   "codeKey": "backend/routes/quantum_hw.py",
+   "codeKey": "hardware.environment_status / probe_dwave / probe_qlm",
    "badge": "Environment & QPU Diagnostics",
    "shortSummary": "Checks installed Python classical/quantum SDKs (PyMETIS, D-Wave Neal, D-Wave System, PennyLane, myQLM) and probes live QPU capacities.",
    "scientificBackground": [
@@ -1027,22 +1027,22 @@
    "implementationDetails": [
     "Calls get_qpu_dense_clique_capacity() via dwave-system / minorminer and get_qlm_qpu_api_summary() in src/libs/multilevel_scheme/partitioning/qa/."
    ],
-   "sourceFile": "backend/routes/quantum_hw.py"
+   "sourceFile": "src/hdd/services/hardware.py"
   },
   {
    "id": "tool-dry-run-coarsening",
    "category": "stage2",
    "title": "Dry-Run Coarsening Trajectory Preview",
-   "codeKey": "POST /api/demonstrators/{dem_id}/preview-coarsening",
+   "codeKey": "simulations.preview_coarsening",
    "badge": "Interactive Hierarchy Simulator",
    "shortSummary": "Executes Stage 1 and Stage 2 Heavy Edge Matching in ~35 ms to preview the exact level-by-level contraction hierarchy G_0 → G_1 → … → G_L before launching a full run.",
    "scientificBackground": [
     "Shows the vertex and edge counts, contraction ratio r_l = |V_l|/|V_{l-1}|, and maximum supernode weight at each level, along with whether the target range [coarsen_inferior_limit, coarsen_superior_limit] was reached or why contraction stopped."
    ],
    "implementationDetails": [
-    "Implemented in preview_coarsening_trajectory() in backend/routes/matrices.py."
+    "Implemented in preview_coarsening() in src/hdd/services/simulations.py, on top of the pipeline's own dry run (coarsening_dry_run() in src/libs/tuning/feasibility.py), so the preview always matches a real run."
    ],
-   "sourceFile": "backend/routes/matrices.py"
+   "sourceFile": "src/hdd/services/simulations.py"
   },
   {
    "id": "tool-feasibility-check",
@@ -1056,9 +1056,9 @@
     "D-Wave Advantage QPUs require complete-graph K_n minor-embedding when qubo_balance_lambda > 0, limiting dense QUBOs to ~175–180 logical coarse vertices."
    ],
    "implementationDetails": [
-    "Provides a 1-click Auto-Adjust button to set Stage 2 coarse limits to Small [4, 5] for QAOA or Medium [100, 175] for D-Wave QPU."
+    "The editor lists a problem when the coarse range exceeds the backend's capacity (backend_capacity() in src/libs/multilevel_scheme/partitioning/capacity.py), and Auto-select parameters on the simulation page picks a range that fits. A run on a local backend also stops right after coarsening when the coarse graph is too large."
    ],
-   "sourceFile": "frontend/src/components/PipelineStudio.tsx"
+   "sourceFile": "src/libs/multilevel_scheme/partitioning/capacity.py"
   },
   {
    "id": "tool-compare-configs",
@@ -1071,9 +1071,9 @@
     "Highlights parameter differences across Stages 1–4 before execution, and compares bandwidth, nB² reduction, and diagonal locality curves across runs."
    ],
    "implementationDetails": [
-    "Implemented in PipelineStudio.tsx and ResultsExplorer.tsx."
+    "Implemented in CompareDialog (src/hdd/studio/dialogs.py) for presets and in the results views for runs."
    ],
-   "sourceFile": "frontend/src/components/ResultsExplorer.tsx"
+   "sourceFile": "src/hdd/studio/dialogs.py"
   }
  ]
 }

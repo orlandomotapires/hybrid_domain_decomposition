@@ -121,10 +121,14 @@ class SimulationDocument(QObject):
             return False
         if simulation["simulation_parameters"] == self.saved_params and simulation["simulation_config"] == self.saved_config:
             return False
+        self.reset_to(simulation)
+        return True
+
+    def reset_to(self, simulation: dict[str, Any]) -> None:
+        """Take the files' state, discarding any edits and the undo history."""
         self.undo.clear()
         self._load(simulation)
         self.changed.emit("")
-        return True
 
     def is_dirty(self) -> bool:
         return not self.undo.isClean()

@@ -70,4 +70,5 @@ class AppContext(QObject):
         """Release the workspace. Running jobs keep running and are picked up when it opens again."""
         self.bridge.close()
         self.jobs.close()
+        self.tasks.cancel_pending()  # results that arrive after this are for a closed workspace
         self.tasks.wait(5000)

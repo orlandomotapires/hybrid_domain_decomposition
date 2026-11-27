@@ -30,9 +30,11 @@ def _should_use_color(stream: TextIOBase) -> bool:
 	return hasattr(stream, "isatty") and stream.isatty()
 
 def set_log_file(path: str | Path) -> None:
+	"""Copy every following ``log`` line to ``path`` (closing the previous log file, if any)."""
 	global _log_file
 	log_path = Path(path)
 	log_path.parent.mkdir(parents=True, exist_ok=True)
+	close_log_file()
 	_log_file = log_path.open("a", encoding="utf-8")
 
 def close_log_file() -> None:

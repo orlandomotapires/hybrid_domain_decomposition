@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import signal
 import sys
 import traceback
 
@@ -54,6 +55,9 @@ def main(argv: list[str] | None = None) -> int:
     tune = sub.add_parser("tune", help="run (or resume) a tuning study")
     tune.add_argument("study_dir")
     args = parser.parse_args(argv)
+    # Cancelling a job sends SIGTERM. Turn it into SystemExit so ``finally`` blocks run: the batch
+    # marks its unfinished cases and the job still reports its exit code.
+    signal.signal(signal.SIGTERM, _terminate)
     code = 1
     try:
         code = _run(args)
@@ -65,6 +69,13 @@ def main(argv: list[str] | None = None) -> int:
     finally:
         events.emit("exit", code=code)
     return code
+
+
+TERMINATED = 128 + signal.SIGTERM  # exit code of a job stopped by SIGTERM
+
+
+def _terminate(signum, frame) -> None:
+    raise SystemExit(TERMINATED)
 
 
 def _run(args: argparse.Namespace) -> int:

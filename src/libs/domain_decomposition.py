@@ -2,9 +2,9 @@ from libs.runtime import events
 from libs.runtime.log import log
 from libs.runtime.utils import matrix_to_graph
 from libs.permutation import permute_matrix
-from libs.graph_prep import set_edge_weight_attr, set_node_vweight_diag
+from libs.graph_prep import default_max_node_weight, set_edge_weight_attr, set_node_vweight_diag
 from libs.multilevel_scheme.coarsening.coarsening import coarsen_chain
-from libs.multilevel_scheme.partitioning.capacity import local_capacity_error
+from libs.multilevel_scheme.partitioning.capacity import local_capacity_error, qpu_workload
 from libs.multilevel_scheme.partitioning.partitioning import (
     partition_graph_metis,
     recursive_kway_anneal,
@@ -107,10 +107,8 @@ def decompose_matrix(matrix, general_parameters, coarsening_parameters, partitio
         log("VERBOSE", "Matrix diagonal has zero blocks; using uniform node weights")
     _set_edge_weight_attr(G, weight)
 
-    # Common rule of thumb: ~1.5 * (total_node_weight / k_target)
-    if max_node_weight is None and k_target is not None and int(k_target) > 1:
-        total_vw = sum(float(G.nodes[u].get('vweight', 1.0)) for u in G.nodes())
-        max_node_weight = 1.5 * (total_vw / float(int(k_target)))
+    if max_node_weight is None:
+        max_node_weight = default_max_node_weight(G, k_target)  # 1.5 x (total node weight / k)
 
     log("INFO", f"Graph G with {G.number_of_nodes()} nodes and {G.number_of_edges()} edges created from the matrix")
 
@@ -194,8 +192,8 @@ def decompose_matrix(matrix, general_parameters, coarsening_parameters, partitio
                     )
 
             bipartitions_per_start = max(1, int(effective_k_target) - 1)
-            expected_submissions = max(1, num_starts) * bipartitions_per_start
-            expected_reads = expected_submissions * max(1, num_reads)
+            workload = qpu_workload("quantum_annealing", strategy_partitioning_parameters, effective_k_target)
+            expected_submissions, expected_reads = workload["submissions"], workload["samples"]
             log(
                 "VERBOSE",
                 "Expected QPU problem submissions: "

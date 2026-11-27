@@ -10,16 +10,13 @@ from statistics import median
 from typing import Any
 
 from libs.runtime import workspace
-from libs.runtime.defaults import strategy_defaults
+from libs.batch.cases import case_key, unique_matrix_keys
 from libs.runtime.utils import write_json
-from libs.multilevel_scheme.partitioning.capacity import backend_capacity
+from libs.multilevel_scheme.partitioning.capacity import backend_capacity, qpu_workload
 
 from .errors import InvalidInput, NotFound
 
 REQUIRED_KEYS = ("algorithm_presets", "coarsening_presets", "common_defaults", "matrices")
-# Values the pipeline uses when a preset omits a parameter.
-QA_DEFAULTS = strategy_defaults("quantum_annealing")
-QAOA_DEFAULTS = strategy_defaults("quantum_approximation_optimizer")
 _BATCH_ID_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
 
 
@@ -30,12 +27,35 @@ def validate_configuration(config: dict[str, Any]) -> None:
     missing = sorted(set(REQUIRED_KEYS) - set(config))
     if missing:
         raise InvalidInput(f"Missing required batch configuration keys: {', '.join(missing)}")
-    from libs.batch.run_batch import parse_batch_configuration
+    from libs.batch.run_batch import case_parameters, expand_cases, parse_batch_configuration
 
     try:
-        parse_batch_configuration(config)
+        parsed = parse_batch_configuration(config)
     except (KeyError, ValueError, TypeError) as exc:
         raise InvalidInput(f"Invalid batch configuration: {exc!r}") from exc
+
+    # Catch at save time what would otherwise fail case by case, hours into the batch.
+    problems: list[str] = []
+    sizes = {preset.key for preset in parsed["coarsening_presets"]}
+    for preset in parsed["algorithm_presets"]:
+        for size in sorted(set(preset.allowed_sizes) - sizes):
+            problems.append(f"Algorithm preset {preset.key!r} allows size {size!r}, which no coarsening preset defines")
+    presets = {preset.key for preset in parsed["algorithm_presets"]}
+    for key in sorted(set(parsed["async_remote_case_keys"]) - presets):
+        problems.append(f"async_remote_case_keys names {key!r}, which no algorithm preset defines")
+    if parsed["base_parameters"] is not None:
+        checked: set[tuple[str, str]] = set()
+        for case in expand_cases(parsed):
+            pair = (case.algorithm.key, case.coarsening.key)
+            if pair in checked:
+                continue  # the parameters do not depend on the matrix
+            checked.add(pair)
+            try:
+                case_parameters(parsed, case)
+            except (KeyError, ValueError, TypeError) as exc:
+                problems.append(f"Preset {case.algorithm.key!r} with size {case.coarsening.key!r}: {exc}")
+    if problems:
+        raise InvalidInput("Invalid batch configuration:\n" + "\n".join(problems))
 
 
 def load_configuration() -> dict[str, Any]:
@@ -56,10 +76,13 @@ def save_configuration(config: dict[str, Any]) -> dict[str, Any]:
 
 
 def dry_run_cases(config: dict[str, Any]) -> list[dict[str, Any]]:
-    """The cases a configuration expands to, in run order."""
+    """The cases a configuration expands to, in run order (the same expansion the batch runs).
+
+    Tolerates a half-edited configuration, which the editor previews while the user types.
+    """
     async_keys = set(config.get("async_remote_case_keys", []))
     cases = []
-    for geom in config.get("matrices", []):
+    for matrix in unique_matrix_keys(config):
         for alg in config.get("algorithm_presets", []):
             allowed = set(alg.get("allowed_sizes", []))
             for coarsen in config.get("coarsening_presets", []):
@@ -68,9 +91,9 @@ def dry_run_cases(config: dict[str, Any]) -> list[dict[str, Any]]:
                     continue
                 cases.append(
                     {
-                        "case_key": f"{geom.get('key')}__{alg.get('key')}__{size}",
-                        "geometry": geom.get("key"),
-                        "matrix": geom.get("key"),
+                        "case_key": case_key(matrix, alg.get("key"), size),
+                        "geometry": matrix,
+                        "matrix": matrix,
                         "algorithm": alg.get("key"),
                         "partitioning_strategy": alg.get("partitioning_strategy"),
                         "coarsening_size": size,
@@ -98,19 +121,7 @@ def qpu_load(strategy: str, params: dict[str, Any] | None, k_target: int) -> dic
     """Remote workload of one case. Recursive bisection to k parts runs k - 1 bipartitions per start."""
     if not is_remote_hardware(strategy, params):
         return None
-    params = params or {}
-    bisections = max(1, int(k_target) - 1)
-    if strategy == "quantum_annealing":
-        starts = int(params.get("num_starts", QA_DEFAULTS["num_starts"]))
-        reads = int(params.get("num_reads", QA_DEFAULTS["num_reads"]))
-        submissions = starts * bisections
-        return {"submissions": submissions, "samples": submissions * reads, "unit": "reads"}
-    if strategy == "quantum_approximation_optimizer":
-        starts = int(params.get("num_starts", QAOA_DEFAULTS["num_starts"]))
-        steps = int(params.get("num_steps", QAOA_DEFAULTS["num_steps"]))
-        shots = int(params.get("num_shots", QAOA_DEFAULTS["num_shots"]))
-        submissions = starts * bisections * (steps + 1)
-        return {"submissions": submissions, "samples": submissions * shots, "unit": "shots"}
+    return qpu_workload(strategy, params, k_target)
     return None
 
 

@@ -42,6 +42,29 @@ class PlanTest(unittest.TestCase):
         self.assertEqual("m1__metis__big", cases[0]["case_key"])
         self.assertTrue(next(c for c in cases if c["algorithm"] == "qaoa_hw")["is_async"])
 
+    def test_saving_checks_every_preset_and_reference(self) -> None:
+        from tests.test_tuning import _params
+
+        bad = config(base_parameters=_params())
+        bad["algorithm_presets"][1]["strategy_parameters"]["num_reads"] = 0  # invalid
+        bad["algorithm_presets"][0]["allowed_sizes"].append("huge")  # no such coarsening preset
+        bad["async_remote_case_keys"].append("nope")
+        with self.assertRaises(batch.InvalidInput) as raised:
+            batch.validate_configuration(bad)
+        message = str(raised.exception)
+        self.assertIn("'qa_hw'", message)
+        self.assertIn("'huge'", message)
+        self.assertIn("'nope'", message)
+        batch.validate_configuration(config(base_parameters=_params()))  # a good one passes
+
+    def test_a_repeated_matrix_runs_once_as_in_the_batch_runner(self) -> None:
+        from libs.batch.run_batch import expand_cases, parse_batch_configuration
+
+        repeated = config(matrices=[{"key": "m1"}, {"key": "m1"}], base_parameters={})
+        planned = [c["case_key"] for c in batch.dry_run_cases(repeated)]
+        self.assertEqual([c.case_key for c in expand_cases(parse_batch_configuration(repeated))], planned)
+        self.assertEqual(len(planned), len(set(planned)))
+
     def test_qpu_load_and_capacity(self) -> None:
         plan = batch.plan(config())
         by_key = {c["case_key"]: c for c in plan["cases"]}

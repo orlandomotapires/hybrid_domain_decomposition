@@ -27,6 +27,7 @@ from typing import Any
 
 from libs.multilevel_scheme.partitioning.utils.metrics import legacy_tolerance_percent
 from libs.runtime import events, workspace
+from libs.runtime.atomic import append_line, atomic_write_json, atomic_write_text
 from libs.runtime.matrix_library import resolve_matrix
 from libs.runtime.utils import load_mtx, validate_and_normalize_simulation_parameters
 from libs.tuning import history as history_mod
@@ -160,9 +161,7 @@ def _now() -> str:
 
 
 def _write_json(path: Path, data: Any) -> None:
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(json.dumps(data, indent=2, default=float), encoding="utf-8")
-    tmp.replace(path)
+    atomic_write_json(path, data, indent=2, default=float)
 
 
 def _read_json(path: Path, default: Any = None) -> Any:
@@ -232,9 +231,7 @@ def migrate_legacy_study(study_dir: str | Path) -> bool:
         if trials:
             for row in trials:
                 _legacy_tolerance_to_percent(row.get("parameters"))
-            tmp = study_dir / (TRIALS + ".tmp")
-            tmp.write_text("".join(json.dumps(row, default=float) + "\n" for row in trials), encoding="utf-8")
-            tmp.replace(study_dir / TRIALS)
+            atomic_write_text(study_dir / TRIALS, "".join(json.dumps(row, default=float) + "\n" for row in trials))
         mark(TRIALS)
 
     entry = (config.get("search_space") or {}).get("balance_tolerance")
@@ -253,8 +250,7 @@ def _load_config(study_dir: Path) -> dict[str, Any] | None:
 
 
 def _append_trial(study_dir: Path, row: dict[str, Any]) -> None:
-    with (study_dir / TRIALS).open("a", encoding="utf-8") as f:
-        f.write(json.dumps(row, default=float) + "\n")
+    append_line(study_dir / TRIALS, json.dumps(row, default=float))
 
 
 def _make_sampler(config: dict[str, Any]):

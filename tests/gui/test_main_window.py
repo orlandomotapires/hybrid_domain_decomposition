@@ -9,7 +9,6 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QMessageBox
 
 from hdd.studio.main_window import MainWindow
-from hdd.studio.tree import NODE_ROLE
 from libs.runtime import workspace
 from libs.runtime.utils import AVAILABLE_SAVE_OUTPUTS
 from tests.test_workspace import make_workspace
@@ -135,6 +134,28 @@ def test_jobs_can_keep_running_after_the_window_closes(qtbot, theme, settings, r
         assert reopened.get_job(job_id)["status"] == "running"
     finally:
         reopened.cancel_all()
+
+
+def test_batch_planning_runs_off_the_gui_thread(qtbot, window, monkeypatch):
+    import threading
+
+    from hdd.services import batch
+
+    planned_on = []
+
+    def plan(config, estimates=None):
+        planned_on.append(threading.current_thread())
+        return {"totals": {"estimated": False, "seconds": 0, "submissions": 0, "over_capacity": 0}}
+
+    asked = []
+    monkeypatch.setattr(batch, "load_configuration", lambda: {"configuration": {}, "case_count": 3})
+    monkeypatch.setattr(batch, "duration_estimates", lambda: {})
+    monkeypatch.setattr(batch, "plan", plan)
+    monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: asked.append(a[2]) or QMessageBox.StandardButton.No)
+    window.run_batch()
+    qtbot.waitUntil(lambda: bool(asked), timeout=10000)
+    assert planned_on[0] is not threading.main_thread()
+    assert "3 cases will run." in asked[0]
 
 
 def test_import_matrix_and_switch_workspace(qtbot, window, tmp_path, monkeypatch):

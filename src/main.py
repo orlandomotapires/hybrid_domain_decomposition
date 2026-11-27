@@ -32,7 +32,7 @@ def cli_main(argv: list[str] | None = None) -> None:
 	out_dir: Path | None = None
 	try:
 		out_dir = run_simulation(args.demonstrator_dir)
-		log("INFO", f"Simulation Completed Successfully")
+		log("INFO", "Simulation Completed Successfully")
 		log("VERBOSE", f"Results saved in {out_dir}")
 	except Exception as exc:
 		log("ERROR", f"Simulation failed: {exc}")

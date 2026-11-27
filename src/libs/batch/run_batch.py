@@ -17,6 +17,7 @@ import traceback
 from typing import Any
 
 
+from libs.batch.cases import case_key, unique_matrix_keys
 from libs.runtime import events, workspace
 from libs.runtime.launch import child_environment, module_command
 from libs.runtime.matrix_library import resolve_matrix
@@ -56,7 +57,7 @@ class BatchCase:
 
     @property
     def case_key(self) -> str:
-        return f"{self.geometry.key}__{self.algorithm.key}__{self.coarsening.key}"
+        return case_key(self.geometry.key, self.algorithm.key, self.coarsening.key)
 
 
 def _clone_json_like(value: Any) -> Any:
@@ -70,12 +71,9 @@ def _load_json(path: Path) -> dict[str, Any]:
 
 def _load_matrices(configuration: dict[str, Any]) -> tuple[Geometry, ...]:
     """Library matrices to run (``"matrices": [{"key": "<matrix_id>"}]``), de-duplicated in order."""
-    seen: list[str] = []
-    for entry in configuration.get("matrices", []):
-        key = str(entry["key"])
-        if key not in seen:
-            seen.append(key)
-    return tuple(Geometry(key=key) for key in seen)
+    if any(not isinstance(entry, dict) or "key" not in entry for entry in configuration.get("matrices", [])):
+        raise KeyError("every entry of 'matrices' needs a 'key'")
+    return tuple(Geometry(key=key) for key in unique_matrix_keys(configuration))
 
 
 def _load_batch_configuration() -> dict[str, Any]:
@@ -120,15 +118,16 @@ _CONFIG_NAMES = {
     "DEFAULT_COARSENING_PRESETS": lambda c: c["coarsening_presets"],
     "DEFAULT_ALGORITHM_PRESETS": lambda c: c["algorithm_presets"],
 }
-_CONFIG_CACHE: dict[str, Any] | None = None
+_CONFIG_CACHE: tuple[Path, dict[str, Any]] | None = None  # (workspace root, configuration)
 
 
 def batch_configuration(*, reload: bool = False) -> dict[str, Any]:
-    """The workspace's batch configuration, read on first use (not at import)."""
+    """The workspace's batch configuration, read on first use (not at import) and per workspace."""
     global _CONFIG_CACHE
-    if _CONFIG_CACHE is None or reload:
-        _CONFIG_CACHE = _load_batch_configuration()
-    return _CONFIG_CACHE
+    root = workspace.root()
+    if _CONFIG_CACHE is None or reload or _CONFIG_CACHE[0] != root:
+        _CONFIG_CACHE = (root, _load_batch_configuration())
+    return _CONFIG_CACHE[1]
 
 
 def _setting(name: str) -> Any:
@@ -144,15 +143,26 @@ def __getattr__(name: str) -> Any:
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
-def _apply_common_defaults(parameters: dict[str, Any], coarsening: CoarseningPreset) -> dict[str, Any]:
-    updated = _clone_json_like(parameters)
+def case_parameters(configuration: dict[str, Any], case: BatchCase) -> dict[str, Any]:
+    """Validated parameters of one case of a parsed configuration. Pure: raises ValueError when invalid."""
+    base = configuration.get("base_parameters")
+    if base is None:
+        raise ValueError("the batch configuration has no base_parameters")
+    parameters = validate_and_normalize_simulation_parameters(_clone_json_like(base))
+    parameters = _apply_common_defaults(parameters, case.coarsening, configuration.get("common_defaults") or {})
+    return validate_and_normalize_simulation_parameters(_apply_algorithm_preset(parameters, case))
 
-    updated["general_parameters"].update(_clone_json_like(_setting("COMMON_DEFAULTS").get("general_parameters", {})))
-    updated["coarsening_parameters"].update(_clone_json_like(_setting("COMMON_DEFAULTS").get("coarsening_parameters", {})))
-    updated["partitioning_parameters"]["common"].update(_clone_json_like(_setting("COMMON_DEFAULTS").get("partitioning_common", {})))
-    updated.setdefault("uncoarsening_parameters", {}).update(
-        _clone_json_like(_setting("COMMON_DEFAULTS").get("uncoarsening_parameters", {}))
-    )
+
+def _apply_common_defaults(
+    parameters: dict[str, Any], coarsening: CoarseningPreset, common_defaults: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    updated = _clone_json_like(parameters)
+    defaults = _setting("COMMON_DEFAULTS") if common_defaults is None else common_defaults
+
+    updated["general_parameters"].update(_clone_json_like(defaults.get("general_parameters", {})))
+    updated["coarsening_parameters"].update(_clone_json_like(defaults.get("coarsening_parameters", {})))
+    updated["partitioning_parameters"]["common"].update(_clone_json_like(defaults.get("partitioning_common", {})))
+    updated.setdefault("uncoarsening_parameters", {}).update(_clone_json_like(defaults.get("uncoarsening_parameters", {})))
     updated["coarsening_parameters"].update(
         {
             "coarsen_inferior_limit": int(coarsening.coarsen_inferior_limit),
@@ -193,15 +203,20 @@ def _apply_algorithm_preset(parameters: dict[str, Any], case: BatchCase) -> dict
     return updated
 
 
-def build_cases() -> list[BatchCase]:
+def expand_cases(configuration: dict[str, Any]) -> list[BatchCase]:
+    """Cases of a parsed configuration (see ``parse_batch_configuration``), in run order."""
     cases: list[BatchCase] = []
-    for geometry in _setting("GEOMETRIES"):
-        for algorithm in _setting("DEFAULT_ALGORITHM_PRESETS"):
-            for coarsening in _setting("DEFAULT_COARSENING_PRESETS"):
+    for geometry in configuration["geometries"]:
+        for algorithm in configuration["algorithm_presets"]:
+            for coarsening in configuration["coarsening_presets"]:
                 if coarsening.key not in algorithm.allowed_sizes:
                     continue
                 cases.append(BatchCase(geometry, coarsening, algorithm))
     return cases
+
+
+def build_cases() -> list[BatchCase]:
+    return expand_cases(batch_configuration())
 
 
 def _build_case_parameters(case: BatchCase, base_parameters: dict[str, Any]) -> dict[str, Any]:
@@ -401,8 +416,14 @@ def _finalize_async_case(
     entry["pid"] = None
     output_path: Path = active_async["output_path"]
 
+    payload: dict[str, Any] | None = None
     if output_path.exists():
-        payload = _load_json(output_path)
+        try:
+            payload = _load_json(output_path)
+        except (OSError, ValueError) as exc:
+            payload = {"status": "failed", "error": {"type": type(exc).__name__,
+                                                     "message": f"Unreadable worker output: {exc}", "traceback": None}}
+    if payload is not None:
         if payload.get("status") == "completed":
             entry["status"] = "completed"
             entry["result_dir"] = payload.get("result_dir")
@@ -519,8 +540,11 @@ def _build_batch_summary(manifest: dict[str, Any]) -> list[dict[str, Any]]:
         if isinstance(result_dir, str) and result_dir:
             metrics_path = workspace.root() / result_dir / "run_metrics.json"
             if metrics_path.exists():
-                run_metrics = _load_json(metrics_path)
-                row.update(_extract_summary_metrics(run_metrics))
+                try:  # one unreadable file must not cost the summary of every other case
+                    row.update(_extract_summary_metrics(_load_json(metrics_path)))
+                except (OSError, ValueError, TypeError, KeyError) as exc:
+                    row["error_type"] = row["error_type"] or type(exc).__name__
+                    row["error_message"] = row["error_message"] or f"Unreadable {metrics_path.name}: {exc}"
 
         summary_rows.append(row)
 
@@ -553,7 +577,41 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
+_CURRENT_BATCH: dict[str, Any] = {}
+_UNFINISHED = ("pending", "running", "running_async")
+
+
 def main(argv: list[str] | None = None) -> int:
+    try:
+        return _main(argv)
+    except BaseException as exc:  # cancelled (SIGTERM -> SystemExit), Ctrl+C or a crash
+        _close_interrupted_batch(exc)
+        raise
+    finally:
+        _CURRENT_BATCH.clear()
+
+
+def _close_interrupted_batch(exc: BaseException) -> None:
+    """Mark the cases that did not finish and write the summary, so the batch folder is consistent."""
+    if not _CURRENT_BATCH:
+        return
+    manifest = _CURRENT_BATCH["manifest"]
+    reason = "cancelled" if isinstance(exc, (SystemExit, KeyboardInterrupt)) else "failed"
+    now = datetime.now().isoformat()
+    for entry in manifest.get("cases", []):
+        if entry.get("status") in _UNFINISHED:
+            entry["status"] = reason
+            entry["finished_at"] = now
+            entry["pid"] = None
+    manifest["interrupted"] = reason
+    try:
+        _finalize_batch(_CURRENT_BATCH["batch_dir"], _CURRENT_BATCH["manifest_path"], manifest)
+        print(f"Batch {reason}: unfinished cases marked in {_CURRENT_BATCH['manifest_path'].name}")
+    except Exception as finalize_error:  # never hide the original reason
+        print(f"Could not finalize the interrupted batch: {finalize_error}")
+
+
+def _main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     cases = build_cases()
 
@@ -582,6 +640,8 @@ def main(argv: list[str] | None = None) -> int:
         "log_file": str((batch_dir / "batch.log").relative_to(workspace.root())),
         "cases": [],
     }
+    # Seen by main() if the batch is interrupted (cancelled), to close the manifest properly.
+    _CURRENT_BATCH.update(batch_dir=batch_dir, manifest_path=manifest_path, manifest=manifest)
     active_async: dict[str, Any] | None = None
     deferred_async_records: list[dict[str, Any]] = []
     stop_requested = False
@@ -688,6 +748,7 @@ def main(argv: list[str] | None = None) -> int:
         if stop_requested and active_async is None:
             break
 
+    _CURRENT_BATCH.clear()
     _finalize_batch(batch_dir, manifest_path, manifest)
     print(f"Batch manifest: {manifest_path.relative_to(workspace.root())}")
     print(f"Batch summary: {(batch_dir / 'batch_summary.json').relative_to(workspace.root())}")

@@ -4,6 +4,7 @@ Ported from the web routes' contract tests when the web Studio was removed; the
 HTTP status codes became the matching ``ServiceError`` subclasses.
 """
 
+import json
 import os
 import unittest
 from pathlib import Path
@@ -102,6 +103,27 @@ class SimulationsServiceTest(unittest.TestCase):
         with self.assertRaises(InvalidInput):
             simulations.save_config("cfg", {**config, "parameters_file_path": "does_not_exist.json"})
 
+    def test_disk_errors_are_not_reported_as_invalid_input(self) -> None:
+        params = self.new_simulation("disk")["simulation_parameters"]
+        with patch("hdd.services.simulations.write_json", side_effect=PermissionError("read-only")):
+            with self.assertRaises(PermissionError):
+                simulations.save_parameters("disk", params)
+
+    def test_saving_over_an_unreadable_parameters_file_keeps_a_copy(self) -> None:
+        params = self.new_simulation("broken")["simulation_parameters"]
+        data = workspace.simulations_dir() / "broken" / "data"
+        (data / "simulation_parameters.json").write_text("{not json")
+        simulations.save_parameters("broken", params)
+        self.assertEqual("{not json", (data / "simulation_parameters.json.unreadable").read_text())
+
+    def test_saving_over_a_file_that_is_not_a_parameter_set_works(self) -> None:
+        params = self.new_simulation("odd")["simulation_parameters"]
+        data = workspace.simulations_dir() / "odd" / "data"
+        for content in ("[1, 2]", "null", '{"partitioning_parameters": null}'):
+            (data / "simulation_parameters.json").write_text(content)
+            simulations.save_parameters("odd", params)
+            self.assertIsInstance(json.loads((data / "simulation_parameters.json").read_text()), dict)
+
     def test_preset_lifecycle(self) -> None:
         params = self.new_simulation("presets")["simulation_parameters"]
         saved = simulations.save_preset("presets", "my preset", params, False)
@@ -122,9 +144,28 @@ class SimulationsServiceTest(unittest.TestCase):
     def test_validate_parameters_reports_instead_of_failing(self) -> None:
         params = self.new_simulation("val")["simulation_parameters"]
         ok = simulations.validate_parameters(params)
-        self.assertEqual({"valid", "normalized_parameters", "estimates"}, set(ok))
+        self.assertEqual({"valid", "normalized_parameters", "estimates", "unknown_keys"}, set(ok))
         self.assertTrue(ok["valid"])
+        self.assertEqual([], ok["unknown_keys"])
         self.assertEqual({"valid", "error"}, set(simulations.validate_parameters({})))
+
+    def test_typos_in_parameter_names_are_reported(self) -> None:
+        params = self.new_simulation("typo")["simulation_parameters"]
+        params["coarsening_parameters"]["coarsen_ratoi"] = 0.5
+        params["partitioning_parameters"]["strategies"]["quantum_annealing"]["num_read"] = 3
+        self.assertEqual(
+            ["coarsening_parameters.coarsen_ratoi", "partitioning_parameters.strategies.quantum_annealing.num_read"],
+            simulations.validate_parameters(params)["unknown_keys"],
+        )
+
+    def test_negative_seed_and_lambda_are_rejected(self) -> None:
+        params = self.new_simulation("bounds")["simulation_parameters"]
+        params["general_parameters"]["seed"] = -1
+        self.assertFalse(simulations.validate_parameters(params)["valid"])
+        params["general_parameters"]["seed"] = 1
+        params["partitioning_parameters"]["partitioning_strategy"] = "quantum_annealing"
+        params["partitioning_parameters"]["strategies"]["quantum_annealing"]["qubo_balance_lambda"] = -2.0
+        self.assertIn("qubo_balance_lambda", simulations.validate_parameters(params)["error"])
 
     def test_quantum_estimates_follow_the_strategy(self) -> None:
         params = self.new_simulation("est")["simulation_parameters"]

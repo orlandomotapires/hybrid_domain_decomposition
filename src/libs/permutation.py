@@ -1,6 +1,5 @@
 import numpy as np
 from scipy.sparse import coo_matrix, issparse
-from libs.runtime.log import log
 
 def _create_permutation_from_partition(partition: dict, n_nodes: int) -> np.ndarray:
     partition_nodes = set(partition.keys())

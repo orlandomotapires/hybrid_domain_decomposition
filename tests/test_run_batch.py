@@ -1,3 +1,4 @@
+import os
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -6,8 +7,79 @@ from unittest.mock import patch
 import libs.batch.run_batch as run_batch
 from libs.runtime import workspace
 
+REPO_ROOT = Path(__file__).resolve().parents[1]
+
+
+class BatchLifecycleTest(unittest.TestCase):
+    """A real batch on a temporary workspace: failures, interruption and the summary."""
+
+    def setUp(self) -> None:
+        import json
+
+        from tests.test_tuning import _params
+        from tests.test_workspace import make_workspace
+
+        self.tmp = TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = make_workspace(Path(self.tmp.name).resolve())
+        env = patch.dict(os.environ, {workspace.ENV_VAR: str(self.root), "HDD_DISABLE_HISTORY": "1"})
+        env.start()
+        self.addCleanup(env.stop)
+        (self.root / "batch" / "batch_configuration.json").write_text(json.dumps({
+            "matrices": [{"key": "grid"}, {"key": "missing"}],
+            "algorithm_presets": [{"key": "metis", "partitioning_strategy": "metis_partitioning",
+                                   "allowed_sizes": ["small"], "strategy_parameters": {}}],
+            "coarsening_presets": [{"key": "small", "coarsen_inferior_limit": 40, "coarsen_superior_limit": 120}],
+            "common_defaults": {}, "base_parameters": _params(), "save_output": ["run_metrics"],
+        }))
+        run_batch.batch_configuration(reload=True)
+
+    def _manifest(self) -> dict:
+        import json
+
+        (batch_dir,) = workspace.batch_runs_dir().iterdir()
+        return json.loads((batch_dir / "batch_manifest.json").read_text()), batch_dir
+
+    def test_each_case_succeeds_or_fails_on_its_own(self) -> None:
+        with patch("libs.runtime.runtime.log"), patch("libs.runtime.runtime.set_log_file"):
+            code = run_batch.main([])
+        manifest, batch_dir = self._manifest()
+        self.assertEqual(1, code)  # one case failed
+        self.assertEqual(["completed", "failed"], [c["status"] for c in manifest["cases"]])
+        self.assertTrue((batch_dir / "batch_summary.json").exists())
+
+    def test_an_interrupted_batch_marks_its_unfinished_cases(self) -> None:
+        with patch.object(run_batch, "_run_one_case", side_effect=SystemExit(143)):
+            with self.assertRaises(SystemExit):
+                run_batch.main([])
+        manifest, batch_dir = self._manifest()
+        self.assertEqual("cancelled", manifest["interrupted"])
+        self.assertEqual("cancelled", manifest["cases"][0]["status"])
+        self.assertTrue((batch_dir / "batch_summary.json").exists())
+
+    def test_an_unreadable_metrics_file_does_not_cost_the_summary(self) -> None:
+        bad = self.root / "simulations" / "x" / "run_1"
+        bad.mkdir(parents=True)
+        (bad / "run_metrics.json").write_text("{truncated")
+        rows = run_batch._build_batch_summary({"cases": [{"case_key": "a", "status": "completed",
+                                                          "result_dir": "simulations/x/run_1"}]})
+        self.assertIn("Unreadable", rows[0]["error_message"])
+
 
 class RunBatchTest(unittest.TestCase):
+    """Checks the repository's own batch configuration, so the workspace is the repository."""
+
+    def setUp(self) -> None:
+        self.env = patch.dict(os.environ, {workspace.ENV_VAR: str(REPO_ROOT)})
+        self.env.start()
+        self.addCleanup(self.env.stop)
+
+    def _scratch_dir(self) -> TemporaryDirectory:
+        # Inside the workspace (paths are written relative to it) but under the ignored batch/runs/.
+        runs = workspace.batch_runs_dir()
+        runs.mkdir(parents=True, exist_ok=True)
+        return TemporaryDirectory(dir=runs)
+
     def test_default_batch_uses_library_matrices(self) -> None:
         self.assertTrue(run_batch.GEOMETRIES)
         for geometry in run_batch.GEOMETRIES:
@@ -64,7 +136,7 @@ class RunBatchTest(unittest.TestCase):
             "cases": [],
         }
 
-        with TemporaryDirectory(dir=workspace.root()) as tmp_dir:
+        with self._scratch_dir() as tmp_dir:
             batch_dir = Path(tmp_dir)
             manifest_path = batch_dir / "batch_manifest.json"
 
@@ -77,7 +149,7 @@ class RunBatchTest(unittest.TestCase):
             self.assertFalse((batch_dir / "batch_summary.csv").exists())
 
     def test_write_batch_configuration_snapshot_copies_json_into_batch_dir(self) -> None:
-        with TemporaryDirectory(dir=workspace.root()) as tmp_dir:
+        with self._scratch_dir() as tmp_dir:
             batch_dir = Path(tmp_dir)
 
             snapshot_path = run_batch._write_batch_configuration_snapshot(batch_dir)

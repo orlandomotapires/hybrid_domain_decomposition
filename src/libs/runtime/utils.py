@@ -6,10 +6,10 @@ import scipy.sparse as sp
 import numpy as np
 import networkx as nx
 
-import json
 from pathlib import Path
 from typing import Any
 
+from libs.runtime.atomic import atomic_write_json
 from libs.runtime.defaults import common_defaults, strategy_defaults
 
 AVAILABLE_SAVE_OUTPUTS = {
@@ -113,7 +113,12 @@ def load_mtx(path, label=None):
             "Only Matrix Market .mtx files are supported."
         )
 
-    return _as_csr_matrix(mmread(matrix_path))
+    matrix = _as_csr_matrix(mmread(matrix_path))
+    # NaN or Inf would only fail much later, as an opaque error inside METIS or the coarsening.
+    if matrix.nnz and not np.isfinite(matrix.data).all():
+        bad = int(np.count_nonzero(~np.isfinite(matrix.data)))
+        raise ValueError(f"Matrix {matrix_name} has {bad} entries that are NaN or infinite; fix the .mtx file")
+    return matrix
 
 
 def resolve_simulation_matrix(simulation_config: dict[str, Any]) -> Path:
@@ -123,9 +128,8 @@ def resolve_simulation_matrix(simulation_config: dict[str, Any]) -> Path:
     return resolve_matrix(str(simulation_config["input_matrix"]))
 
 def write_json(path: Path, obj: Any) -> None:
-	path.parent.mkdir(parents=True, exist_ok=True)
-	with path.open("w", encoding="utf-8") as f:
-		json.dump(obj, f, indent=2, sort_keys=True)
+	"""Write ``obj`` as JSON atomically: readers see the old file or the new one, never a part."""
+	atomic_write_json(path, obj, indent=2, sort_keys=True)
 
 def write_results_table_text(path: Path, data: dict[str, Any]) -> None:
     def _format_value(v: Any) -> str:
@@ -328,6 +332,8 @@ def validate_and_normalize_simulation_parameters(params: dict) -> dict:
     if dof_per_node <= 0:
         raise ValueError("general_parameters.dof_per_node must be > 0")
     seed = _coerce_int(gp.get("seed"), "general_parameters.seed")
+    if not 0 <= seed < 2**32:  # numpy's seed range
+        raise ValueError("general_parameters.seed must be between 0 and 4294967295")
     gp_out = dict(gp)
     gp_out.update({"dof_per_node": dof_per_node, "seed": seed})
 
@@ -451,6 +457,8 @@ def validate_and_normalize_simulation_parameters(params: dict) -> dict:
             _value_or_default("qubo_balance_lambda", qa_defaults["qubo_balance_lambda"]),
             "partitioning_parameters.strategies.quantum_annealing.qubo_balance_lambda",
         )
+        if strat_out["qubo_balance_lambda"] < 0.0:
+            raise ValueError("partitioning_parameters.strategies.quantum_annealing.qubo_balance_lambda must be >= 0")
         strat_out["num_starts"] = _coerce_int(
             _value_or_default("num_starts", qa_defaults["num_starts"]),
             "partitioning_parameters.strategies.quantum_annealing.num_starts",
@@ -510,6 +518,10 @@ def validate_and_normalize_simulation_parameters(params: dict) -> dict:
             _value_or_default("qubo_balance_lambda", qaoa_defaults["qubo_balance_lambda"]),
             "partitioning_parameters.strategies.quantum_approximation_optimizer.qubo_balance_lambda",
         )
+        if strat_out["qubo_balance_lambda"] < 0.0:
+            raise ValueError(
+                "partitioning_parameters.strategies.quantum_approximation_optimizer.qubo_balance_lambda must be >= 0"
+            )
         strat_out["num_starts"] = _coerce_int(
             _value_or_default("num_starts", qaoa_defaults["num_starts"]),
             "partitioning_parameters.strategies.quantum_approximation_optimizer.num_starts",

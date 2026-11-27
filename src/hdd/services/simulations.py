@@ -4,16 +4,18 @@ from __future__ import annotations
 
 import copy
 import json
+import logging
 import re
 import shutil
 import time
 from pathlib import Path
 from typing import Any
 
-from libs.graph_prep import build_pipeline_graph, default_max_node_weight
-from libs.multilevel_scheme.coarsening.coarsening import coarsen_chain
+from libs.graph_prep import build_pipeline_graph
+from libs.tuning.feasibility import coarsening_dry_run
+from libs.multilevel_scheme.partitioning.capacity import qpu_workload
 from libs.runtime import workspace
-from libs.runtime.defaults import DEFAULT_SIMULATION_PARAMETERS
+from libs.runtime.defaults import DEFAULT_SIMULATION_PARAMETERS, unknown_parameter_keys
 from libs.runtime.matrix_library import list_matrix_ids
 from libs.runtime.utils import (
     AVAILABLE_SAVE_OUTPUTS,
@@ -27,6 +29,19 @@ from libs.runtime.utils import (
 
 from .errors import Conflict, InvalidInput, NotFound
 from .matrix_files import simulation_matrix_info
+
+_log = logging.getLogger("hdd.services")
+
+# Errors that mean the user's files or request are wrong. Anything else (a full disk, a permission
+# problem, a bug) is not "invalid input": it propagates and is logged with its traceback.
+_INPUT_ERRORS = (ValueError, KeyError, TypeError, FileNotFoundError)
+
+
+def _input_error(exc: Exception) -> Exception:
+    # A missing file here is one the simulation's own config points to: the config is wrong.
+    if isinstance(exc, KeyError):
+        return InvalidInput(f"Missing value: {exc.args[0] if exc.args else exc}")
+    return InvalidInput(str(exc))
 
 
 
@@ -44,7 +59,8 @@ def default_parameters_for(matrix_id: str | None) -> dict[str, Any]:
         from libs.tuning.auto_select import auto_select_parameters
 
         selection = auto_select_parameters(matrix_id, parameters)
-    except Exception:
+    except Exception:  # the generic defaults still make a valid simulation
+        _log.warning("Auto-selection failed for matrix %s; using the default parameters", matrix_id, exc_info=True)
         return parameters
     return selection["parameters"] if selection.get("feasible") else parameters
 
@@ -78,28 +94,23 @@ def quantum_estimates(normalized_params: dict[str, Any]) -> dict[str, Any]:
         "warnings": [],
     }
 
+    workload = qpu_workload(strategy, strat_block, k_target)
     if strategy == "quantum_annealing":
-        num_starts = int(strat_block.get("num_starts", 1))
-        num_reads = int(strat_block.get("num_reads", 1))
         simulated = bool(strat_block.get("simulated", True))
-        expected_submissions = max(1, num_starts) * bipartitions_per_start
-        expected_reads = expected_submissions * max(1, num_reads)
+        expected_submissions = workload["submissions"]
         estimates["simulated"] = simulated
         estimates["expected_qpu_submissions"] = expected_submissions
-        estimates["expected_qpu_reads"] = expected_reads
+        estimates["expected_qpu_reads"] = workload["samples"]
         if not simulated and expected_submissions > 50:
             estimates["warnings"].append(
                 f"High QPU submission count ({expected_submissions}). Reduce num_starts/k_target or use simulated=true for pilot runs."
             )
     elif strategy == "quantum_approximation_optimizer":
-        num_starts = int(strat_block.get("num_starts", 1))
-        num_steps = int(strat_block.get("num_steps", 1))
-        num_shots = int(strat_block.get("num_shots", 1))
         simulated = bool(strat_block.get("simulated", True))
-        expected_jobs = max(1, num_starts) * bipartitions_per_start * (max(1, num_steps) + 1)
+        expected_jobs = workload["submissions"]
         estimates["simulated"] = simulated
         estimates["expected_qlm_jobs"] = expected_jobs
-        estimates["total_circuit_shots"] = expected_jobs * max(1, num_shots)
+        estimates["total_circuit_shots"] = workload["samples"]
         if not simulated and expected_jobs > 100:
             estimates["warnings"].append(
                 f"High remote QLM job count ({expected_jobs}). Consider reducing num_starts/num_steps or coarsening further."
@@ -181,8 +192,8 @@ def get_simulation(simulation_id: str) -> dict[str, Any]:
         raise NotFound(f"Simulation {simulation_id!r} not found")
     try:
         return inspect_simulation(simulation_dir)
-    except Exception as exc:
-        raise InvalidInput(str(exc)) from exc
+    except _INPUT_ERRORS as exc:
+        raise _input_error(exc) from exc
 
 
 def create_simulation(name: str | None = None, clone_from: str | None = None, matrix: str | None = None) -> dict[str, Any]:
@@ -229,8 +240,34 @@ def save_config(simulation_id: str, config_payload: dict[str, Any]) -> dict[str,
         resolve_parameters_file_path(data_dir, normalized["parameters_file_path"])
         write_json(data_dir / "simulation_config.json", normalized)
         return inspect_simulation(simulation_dir)
-    except Exception as exc:
-        raise InvalidInput(str(exc)) from exc
+    except _INPUT_ERRORS as exc:
+        raise _input_error(exc) from exc
+
+
+def _saved_strategies(params_path: Path) -> dict[str, Any]:
+    """The strategy blocks of the parameters file about to be replaced, to carry them over.
+
+    A file that cannot be used for that (unreadable, not JSON, not a parameter set) is copied
+    aside as ``<name>.unreadable`` instead of being overwritten silently.
+    """
+    if not params_path.exists():
+        return {}
+    try:
+        existing = json.loads(params_path.read_text(encoding="utf-8"))
+        strategies = existing["partitioning_parameters"]["strategies"]
+        if not isinstance(strategies, dict):
+            raise TypeError("strategies is not an object")
+        return strategies
+    except (OSError, ValueError, KeyError, TypeError) as exc:  # ValueError covers bad JSON and bad UTF-8
+        if isinstance(exc, KeyError):
+            return {}  # a valid file that simply has no strategy blocks
+        backup = params_path.with_name(params_path.name + ".unreadable")
+        try:
+            shutil.copy2(params_path, backup)
+            _log.warning("%s was unusable (%s); kept a copy as %s", params_path, exc, backup.name)
+        except OSError as copy_error:
+            _log.warning("%s was unusable (%s) and could not be copied aside: %s", params_path, exc, copy_error)
+        return {}
 
 
 def save_parameters(simulation_id: str, params_payload: dict[str, Any]) -> dict[str, Any]:
@@ -244,17 +281,10 @@ def save_parameters(simulation_id: str, params_payload: dict[str, Any]) -> dict[
         params_path = resolve_parameters_file_path(data_dir, sim_config["parameters_file_path"])
 
         # Preserve all strategy blocks even when validating a single active strategy
-        existing_params = {}
-        if params_path.exists():
-            try:
-                existing_params = json.loads(params_path.read_text(encoding="utf-8"))
-            except Exception:
-                pass
-
+        existing_strategies = _saved_strategies(params_path)
         normalized = validate_and_normalize_simulation_parameters(params_payload)
 
         # Keep non-active strategy configurations intact so switching strategies doesn't lose user settings
-        existing_strategies = existing_params.get("partitioning_parameters", {}).get("strategies", {})
         incoming_strategies = params_payload.get("partitioning_parameters", {}).get("strategies", {})
         merged_strategies = {
             **existing_strategies,
@@ -265,8 +295,8 @@ def save_parameters(simulation_id: str, params_payload: dict[str, Any]) -> dict[
 
         write_json(params_path, normalized)
         return inspect_simulation(simulation_dir)
-    except Exception as exc:
-        raise InvalidInput(str(exc)) from exc
+    except _INPUT_ERRORS as exc:
+        raise _input_error(exc) from exc
 
 
 def load_preset(simulation_id: str, preset_file: str) -> dict[str, Any]:
@@ -281,8 +311,8 @@ def load_preset(simulation_id: str, preset_file: str) -> dict[str, Any]:
             "parameters": normalized,
             "estimates": quantum_estimates(normalized),
         }
-    except Exception as exc:
-        raise InvalidInput(str(exc)) from exc
+    except _INPUT_ERRORS as exc:
+        raise _input_error(exc) from exc
 
 
 def save_preset(simulation_id: str, filename: str, parameters: dict[str, Any], set_active: bool = True) -> dict[str, Any]:
@@ -312,8 +342,8 @@ def save_preset(simulation_id: str, filename: str, parameters: dict[str, Any], s
             write_json(config_path, sim_config)
 
         return inspect_simulation(simulation_dir)
-    except Exception as exc:
-        raise InvalidInput(str(exc)) from exc
+    except _INPUT_ERRORS as exc:
+        raise _input_error(exc) from exc
 
 
 def validate_parameters(params_payload: dict[str, Any]) -> dict[str, Any]:
@@ -323,6 +353,7 @@ def validate_parameters(params_payload: dict[str, Any]) -> dict[str, Any]:
             "valid": True,
             "normalized_parameters": normalized,
             "estimates": quantum_estimates(normalized),
+            "unknown_keys": unknown_parameter_keys(normalized),
         }
     except Exception as exc:
         return {
@@ -399,9 +430,11 @@ def preview_coarsening(simulation_id: str, params_payload: dict[str, Any]) -> di
     try:
         raw_config = json.loads((data_dir / "simulation_config.json").read_text(encoding="utf-8"))
         sim_config = validate_and_normalize_simulation_config(raw_config)
-        # Preview the matrix being edited (may be unsaved) when the client sends it.
-        preview_matrix = params_payload.pop("_matrix", None) if isinstance(params_payload, dict) else None
-        normalized = validate_and_normalize_simulation_parameters(params_payload)
+        # Preview the matrix being edited (may be unsaved) when the client sends it. The caller's
+        # dict is left untouched.
+        payload = dict(params_payload) if isinstance(params_payload, dict) else params_payload
+        preview_matrix = payload.pop("_matrix", None) if isinstance(payload, dict) else None
+        normalized = validate_and_normalize_simulation_parameters(payload)
 
         matrix_path = resolve_simulation_matrix({"input_matrix": preview_matrix} if preview_matrix else sim_config)
         A = load_mtx(matrix_path, label="matrix")
@@ -415,11 +448,8 @@ def preview_coarsening(simulation_id: str, params_payload: dict[str, Any]) -> di
         weight_attr = str(cp.get("weight", "weight"))
         inferior_limit = int(cp["coarsen_inferior_limit"])
         superior_limit = None if cp.get("coarsen_superior_limit") is None else int(cp["coarsen_superior_limit"])
-        k_target = int(normalized["partitioning_parameters"]["common"]["k_target"])
-        # The same weighted graph and supernode cap the run uses, coarsened by the run's own algorithm.
+        # The same weighted graph the run uses; the coarsening is the pipeline's own dry run.
         G0 = build_pipeline_graph(A, dof_per_node, weight_attr)
-        max_node_weight = cp.get("max_node_weight")
-        max_node_weight = float(max_node_weight) if max_node_weight is not None else default_max_node_weight(G0, k_target)
 
         def _level_info(g, lvl: int, prev_n: int | None, accepted: bool) -> dict[str, Any]:
             n = g.number_of_nodes()
@@ -443,21 +473,7 @@ def preview_coarsening(simulation_id: str, params_payload: dict[str, Any]) -> di
             if reason:
                 stops.append(f"Level {len(levels) - 1}: {reason}.")
 
-        try:
-            coarsen_chain(
-                G0,
-                trial_seed=int(normalized["general_parameters"]["seed"]),
-                coarsen_inferior_limit=inferior_limit,
-                coarsen_superior_limit=superior_limit,
-                max_levels=int(cp["max_levels"]),
-                weight=weight_attr,
-                strategy=str(cp["strategy"]),
-                coarsen_ratio=float(cp["coarsen_ratio"]),
-                max_node_weight=max_node_weight,
-                on_level=on_level,
-            )
-        except ValueError:
-            pass  # unreachable range: reported below from the levels themselves
+        coarsening_dry_run(G0, normalized, on_level=on_level)  # an unreachable range shows in the levels
 
         accepted_levels = [lv for lv in levels if lv["accepted"]]
         final_nodes = accepted_levels[-1]["nodes"]
@@ -481,7 +497,7 @@ def preview_coarsening(simulation_id: str, params_payload: dict[str, Any]) -> di
             "elapsed_ms": elapsed_ms,
             "levels": levels,
         }
-    except Exception as exc:
-        raise InvalidInput(str(exc)) from exc
+    except _INPUT_ERRORS as exc:
+        raise _input_error(exc) from exc
 
 

@@ -6,23 +6,33 @@ import networkx as nx
 import pymetis
 
 from libs.multilevel_scheme.partitioning.qa import anneal_bipartition, qaoa_bipartition
+from libs.runtime.log import log
 from libs.multilevel_scheme.partitioning.utils import (
     recursive_kway_via_bipartition,
 )
 
 
-def _weights_to_metis_ints(values: List[float]) -> List[int]:
+METIS_MAX_WEIGHT = 1_000_000
+METIS_MAX_TOTAL = 1_000_000_000  # keeps sums within METIS' 32-bit integers
+
+
+def _weights_to_metis_ints(values: List[float], *, what: str = "weights") -> List[int]:
+    """METIS integer weights proportional to ``values``.
+
+    The largest weight maps to ``METIS_MAX_WEIGHT`` and the rest keep their ratio to it, so the
+    heavy nodes and edges that drive the balance and the cut stay distinct. (Scaling by the
+    smallest weight and capping instead made every weight above a 1e6 range equal.) Weights
+    lighter than 1/METIS_MAX_WEIGHT of the largest round up to 1; that is logged.
+    """
     positive_values = [float(value) for value in values if float(value) > 0.0]
     if not positive_values:
         return [1 for _ in values]
 
-    min_positive = min(positive_values)
-    scale = 1.0 / min_positive if min_positive < 1.0 else 1.0
-    max_weight = 1_000_000
-    weights: List[int] = []
-    for value in values:
-        scaled = int(round(float(value) * scale))
-        weights.append(max(1, min(max_weight, scaled)))
+    scale = min(METIS_MAX_WEIGHT / max(positive_values), METIS_MAX_TOTAL / sum(positive_values))
+    weights = [max(1, int(round(float(value) * scale))) for value in values]
+    floored = sum(1 for value in values if 0.0 < float(value) * scale < 0.5)
+    if floored:
+        log("VERBOSE", f"METIS {what}: {floored} of {len(values)} values are below 1e-6 of the largest and count as 1")
     return weights
 
 
@@ -43,8 +53,8 @@ def _graph_to_metis_csr(G: nx.Graph) -> tuple[List[int], List[int], List[int], L
             edge_weights_raw.append(float(G[node][neighbor].get("weight", 1.0)))
         xadj.append(len(adjncy))
 
-    vweights = _weights_to_metis_ints(node_weights_raw)
-    eweights = _weights_to_metis_ints(edge_weights_raw)
+    vweights = _weights_to_metis_ints(node_weights_raw, what="node weights")
+    eweights = _weights_to_metis_ints(edge_weights_raw, what="edge weights")
     return xadj, adjncy, vweights, eweights
 
 def metis_ufactor(balance_tolerance: float) -> int:
