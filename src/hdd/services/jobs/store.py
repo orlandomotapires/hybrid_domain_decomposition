@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import time
 from pathlib import Path
 from typing import Any
 
@@ -17,6 +18,7 @@ from libs.runtime.atomic import atomic_write_json
 _log = logging.getLogger("hdd.jobs")
 
 SCHEMA = 1
+STALE_TMP_SECONDS = 3600
 _JOB_ID_RE = re.compile(r"^[A-Za-z0-9_-][A-Za-z0-9_.-]*$")
 
 
@@ -48,8 +50,15 @@ class JobStore:
         if not self.directory.is_dir():
             return []
         records = []
-        for stale in self.directory.glob(".*.tmp"):  # left by a writer that crashed
-            stale.unlink(missing_ok=True)
+        cutoff = time.time() - STALE_TMP_SECONDS
+        for leftover in self.directory.glob(".*.tmp"):
+            # Left by a writer that crashed. A recent one may belong to a save in progress (another
+            # Studio, a follower thread), so only old ones go.
+            try:
+                if leftover.stat().st_mtime < cutoff:
+                    leftover.unlink(missing_ok=True)
+            except OSError:
+                pass
         for path in sorted(self.directory.glob("*.json")):
             try:
                 record = json.loads(path.read_text(encoding="utf-8"))

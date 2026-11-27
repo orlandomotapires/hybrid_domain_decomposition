@@ -27,11 +27,14 @@ def _check_permutation_matrix_relation(matrix_name, A_original, A_permuted, perm
     assert A0.shape == Ap.shape
     assert p.shape[0] == n
 
-    diff = abs(Ap - A0[p][:, p]).tocsr()
+    # float64 first: unsigned integers would wrap around in the subtraction, booleans cannot subtract.
+    diff = abs(Ap.astype(np.float64) - A0[p][:, p].astype(np.float64)).tocsr()
     diff.eliminate_zeros()
     errors = diff.data
-    mismatches = int(np.count_nonzero(errors > tol))
-    max_abs_err = float(errors.max()) if errors.size else 0.0
+    bad = ~np.isfinite(errors) | (errors > tol)  # a NaN entry never "matches"
+    mismatches = int(np.count_nonzero(bad))
+    finite = errors[np.isfinite(errors)]
+    max_abs_err = float("inf") if finite.size < errors.size else (float(finite.max()) if finite.size else 0.0)
     return mismatches, max_abs_err
 
 

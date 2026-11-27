@@ -35,6 +35,17 @@ class AtomicWriteTest(unittest.TestCase):
         write_json(self.path, {"new": True})
         self.assertEqual({"new": True}, json.loads(self.path.read_text()))
 
+    def test_permissions_of_the_file_are_kept(self) -> None:
+        import os
+        import stat
+
+        os.chmod(self.path, 0o664)
+        write_json(self.path, {"new": True})
+        self.assertEqual(0o664, stat.S_IMODE(self.path.stat().st_mode))
+        fresh = Path(self.tmp.name) / "fresh.json"
+        write_json(fresh, {})
+        self.assertEqual(0o644, stat.S_IMODE(fresh.stat().st_mode))  # not mkstemp's 0600
+
 
 class AppendLineTest(unittest.TestCase):
     def test_a_line_cut_short_by_a_crash_does_not_swallow_the_next_one(self) -> None:

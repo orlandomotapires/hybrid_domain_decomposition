@@ -405,6 +405,15 @@ class JobManagerTest(unittest.TestCase):
         reopened = JobManager(self.root, command_factory=self.fake)
         self.assertIsNone(reopened.get_job("hist_sim_a_run_ok"))
 
+    def test_a_failed_run_has_no_result_and_can_be_removed_from_the_list(self) -> None:
+        self._run_folder("run_killed", "[10:00:00 INFO] Graph G with 600 nodes and 1150 edges created from the matrix\n")
+        first = JobManager(self.root, command_factory=self.fake)
+        failed = first.get_job("hist_sim_a_run_killed")
+        self.assertIsNone(failed["result_dir"])  # no "Show result" for a run without one
+        self.assertEqual(600, failed["telemetry"].get("initial_nodes"))  # read from the log on demand
+        self.assertTrue(first.delete_job("hist_sim_a_run_killed"))
+        self.assertIsNone(JobManager(self.root, command_factory=self.fake).get_job("hist_sim_a_run_killed"))
+
     def test_symlinked_result_folders_are_kept(self) -> None:
         elsewhere = Path(self.tmp.name) / "other_disk"
         (elsewhere / "run_1").mkdir(parents=True)

@@ -244,6 +244,32 @@ def save_config(simulation_id: str, config_payload: dict[str, Any]) -> dict[str,
         raise _input_error(exc) from exc
 
 
+def _saved_strategies(params_path: Path) -> dict[str, Any]:
+    """The strategy blocks of the parameters file about to be replaced, to carry them over.
+
+    A file that cannot be used for that (unreadable, not JSON, not a parameter set) is copied
+    aside as ``<name>.unreadable`` instead of being overwritten silently.
+    """
+    if not params_path.exists():
+        return {}
+    try:
+        existing = json.loads(params_path.read_text(encoding="utf-8"))
+        strategies = existing["partitioning_parameters"]["strategies"]
+        if not isinstance(strategies, dict):
+            raise TypeError("strategies is not an object")
+        return strategies
+    except (OSError, ValueError, KeyError, TypeError) as exc:  # ValueError covers bad JSON and bad UTF-8
+        if isinstance(exc, KeyError):
+            return {}  # a valid file that simply has no strategy blocks
+        backup = params_path.with_name(params_path.name + ".unreadable")
+        try:
+            shutil.copy2(params_path, backup)
+            _log.warning("%s was unusable (%s); kept a copy as %s", params_path, exc, backup.name)
+        except OSError as copy_error:
+            _log.warning("%s was unusable (%s) and could not be copied aside: %s", params_path, exc, copy_error)
+        return {}
+
+
 def save_parameters(simulation_id: str, params_payload: dict[str, Any]) -> dict[str, Any]:
     simulation_dir = workspace.simulations_dir() / sanitize_simulation_id(simulation_id)
     if not simulation_dir.exists():
@@ -255,21 +281,10 @@ def save_parameters(simulation_id: str, params_payload: dict[str, Any]) -> dict[
         params_path = resolve_parameters_file_path(data_dir, sim_config["parameters_file_path"])
 
         # Preserve all strategy blocks even when validating a single active strategy
-        existing_params = {}
-        if params_path.exists():
-            try:
-                existing_params = json.loads(params_path.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError) as exc:
-                # The other strategies' settings cannot be carried over; keep the old file aside
-                # instead of overwriting it silently.
-                backup = params_path.with_name(params_path.name + ".unreadable")
-                shutil.copy2(params_path, backup)
-                _log.warning("%s was unreadable (%s); kept a copy as %s", params_path, exc, backup.name)
-
+        existing_strategies = _saved_strategies(params_path)
         normalized = validate_and_normalize_simulation_parameters(params_payload)
 
         # Keep non-active strategy configurations intact so switching strategies doesn't lose user settings
-        existing_strategies = existing_params.get("partitioning_parameters", {}).get("strategies", {})
         incoming_strategies = params_payload.get("partitioning_parameters", {}).get("strategies", {})
         merged_strategies = {
             **existing_strategies,

@@ -1052,10 +1052,13 @@ class MainWindow(QMainWindow):
             return simulations.get_simulation(sim_id)
 
         def done(simulation: dict[str, Any]) -> None:
-            doc.reset_to(simulation)
+            if self.docs.get(sim_id) is doc:  # not closed or replaced meanwhile
+                doc.reset_to(simulation)
             self.reload()
 
-        self.ctx.tasks.run(switch, done, lambda exc: QMessageBox.warning(self, "Make active", str(exc)))
+        # A second click supersedes the first (same key), so only the last choice is applied.
+        self.ctx.tasks.run(switch, done, lambda exc: QMessageBox.warning(self, "Make active", str(exc)),
+                           key=f"activate-preset:{sim_id}")
 
     def delete_preset(self, sim_id: str, preset: str) -> None:
         if QMessageBox.question(self, "Delete preset", f"Delete {preset}? This cannot be undone.") != QMessageBox.StandardButton.Yes:
@@ -1110,11 +1113,12 @@ class MainWindow(QMainWindow):
         )
         if answer != QMessageBox.StandardButton.Yes:
             return
-        self._drop_document(sim_id)
         self.statusBar().showMessage(f"Deleting {sim_id}…")
         self.ctx.tasks.run(  # removing every run and study folder can take a while
             lambda: simulations.delete_simulation(sim_id),
-            lambda _result: (self.statusBar().showMessage(f"Deleted {sim_id}.", 4000), self.reload()),
+            # The open document goes only once the files are gone: a failed delete keeps its edits.
+            lambda _result: (self._drop_document(sim_id), self.statusBar().showMessage(f"Deleted {sim_id}.", 4000),
+                             self.reload()),
             lambda exc: (self.statusBar().clearMessage(), QMessageBox.warning(self, "Delete simulation", str(exc)),
                          self.reload()),
         )
@@ -1241,6 +1245,7 @@ class MainWindow(QMainWindow):
             lambda result: (self.statusBar().clearMessage(), self._confirm_and_start_batch(*result)),
             lambda exc: (self.statusBar().clearMessage(),
                          QMessageBox.warning(self, APP_NAME, f"The batch cannot run:\n\n{exc}")),
+            key="plan-batch",  # clicking twice asks once
         )
 
     def _confirm_and_start_batch(self, config: dict[str, Any], plan: dict[str, Any]) -> None:

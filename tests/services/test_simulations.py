@@ -4,6 +4,7 @@ Ported from the web routes' contract tests when the web Studio was removed; the
 HTTP status codes became the matching ``ServiceError`` subclasses.
 """
 
+import json
 import os
 import unittest
 from pathlib import Path
@@ -114,6 +115,14 @@ class SimulationsServiceTest(unittest.TestCase):
         (data / "simulation_parameters.json").write_text("{not json")
         simulations.save_parameters("broken", params)
         self.assertEqual("{not json", (data / "simulation_parameters.json.unreadable").read_text())
+
+    def test_saving_over_a_file_that_is_not_a_parameter_set_works(self) -> None:
+        params = self.new_simulation("odd")["simulation_parameters"]
+        data = workspace.simulations_dir() / "odd" / "data"
+        for content in ("[1, 2]", "null", '{"partitioning_parameters": null}'):
+            (data / "simulation_parameters.json").write_text(content)
+            simulations.save_parameters("odd", params)
+            self.assertIsInstance(json.loads((data / "simulation_parameters.json").read_text()), dict)
 
     def test_preset_lifecycle(self) -> None:
         params = self.new_simulation("presets")["simulation_parameters"]

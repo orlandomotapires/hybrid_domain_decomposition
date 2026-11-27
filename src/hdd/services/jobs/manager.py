@@ -213,6 +213,7 @@ class JobManager:
         self._kill_grace_sec = kill_grace_sec
         self._jobs: dict[str, SimulationJob] = {}
         self._lock = threading.Lock()
+        self._dismiss_lock = threading.Lock()
         self._listeners: list[Listener] = []
         self._listeners_lock = threading.Lock()
         self._closed = threading.Event()
@@ -346,7 +347,9 @@ class JobManager:
                 return
             for raw in text.splitlines():
                 if raw.strip() and job_events.parse(raw) is None:
-                    job.append_log(_parse_log_line(raw, default_hms=stamp))
+                    entry = _parse_log_line(raw, default_hms=stamp)
+                    job.append_log(entry)
+                    parsing.update_telemetry(job.telemetry, entry["message"])  # graph sizes etc. from the log
 
     def _dismissed_path(self) -> Path:
         return self.store.directory.parent / DISMISSED_FILE
@@ -359,12 +362,22 @@ class JobManager:
             return set()
         return {str(item) for item in data} if isinstance(data, list) else set()
 
-    def _dismiss(self, result_dir: str) -> None:
-        dismissed = self._dismissed() | {result_dir}
-        try:
-            atomic_write_json(self._dismissed_path(), sorted(dismissed))
-        except OSError as exc:
-            _log.warning("Could not record the removed run %s: %s", result_dir, exc)
+    def _dismiss(self, run_dir: str) -> None:
+        with self._dismiss_lock:  # read-modify-write: concurrent removals must not lose an entry
+            dismissed = self._dismissed() | {run_dir}
+            try:
+                atomic_write_json(self._dismissed_path(), sorted(dismissed))
+            except OSError as exc:
+                _log.warning("Could not record the removed run %s: %s", run_dir, exc)
+
+    @staticmethod
+    def _run_folder(job: SimulationJob) -> str | None:
+        """The run folder a job stands for: its result, or for a listed failed run, its log's folder."""
+        if job.result_dir:
+            return job.result_dir
+        if job.job_id.startswith("hist_") and job.log_path:
+            return str(Path(job.log_path).parent)
+        return None
 
     def _load_historical_runs(self) -> None:
         dem_root = self.root / "simulations"
@@ -447,7 +460,7 @@ class JobManager:
             finished_at=created_iso,
             started_epoch=mtime,
             finished_epoch=mtime,
-            result_dir=rel_res,
+            result_dir=rel_res if completed else None,  # "Show result" only for runs that have one
             exit_code=0 if completed else 1,
             error_message=None if completed else (error or NO_RESULT_MESSAGE),
             telemetry=telemetry,
@@ -491,8 +504,9 @@ class JobManager:
                 return False
             del self._jobs[job_id]
         self.store.delete(job_id)
-        if job.result_dir and not delete_files:
-            self._dismiss(job.result_dir)  # its run folder must not come back as a historical job
+        run_folder = self._run_folder(job)
+        if run_folder and not delete_files:
+            self._dismiss(run_folder)  # its run folder must not come back as a historical job
         if delete_files and job.result_dir:
             target = (self.root / job.result_dir).resolve()
             try:
@@ -504,6 +518,7 @@ class JobManager:
                     try:
                         shutil.rmtree(target)
                     except OSError as exc:
+                        self._dismiss(job.result_dir)  # the folder stays; keep it off the list anyway
                         self._notify("removed", job_id)
                         raise Conflict(f"The job was removed, but its files could not be deleted: {exc}") from exc
         self._notify("removed", job_id)

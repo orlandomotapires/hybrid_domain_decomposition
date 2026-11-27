@@ -22,12 +22,19 @@ except ImportError:  # Windows: appends are still single writes, just not locked
 def atomic_write_text(path: str | Path, text: str, *, encoding: str = "utf-8") -> None:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
+    # mkstemp creates the file 0600; give the result the permissions the file had (or the usual
+    # 0644), so replacing it does not lock other users of a shared workspace out.
+    try:
+        mode = path.stat().st_mode & 0o777
+    except OSError:
+        mode = 0o644
     fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
     try:
         with os.fdopen(fd, "w", encoding=encoding) as handle:
             handle.write(text)
             handle.flush()
             os.fsync(handle.fileno())
+        os.chmod(tmp, mode)
         os.replace(tmp, path)
     except BaseException:
         Path(tmp).unlink(missing_ok=True)
@@ -43,7 +50,8 @@ def append_line(path: str | Path, line: str) -> None:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     data = (line.rstrip("\n") + "\n").encode("utf-8")
-    fd = os.open(path, os.O_RDWR | os.O_APPEND | os.O_CREAT, 0o644)
+    # O_BINARY (Windows only) keeps "\n" from becoming "\r\n".
+    fd = os.open(path, os.O_RDWR | os.O_APPEND | os.O_CREAT | getattr(os, "O_BINARY", 0), 0o644)
     try:
         if fcntl is not None:
             fcntl.flock(fd, fcntl.LOCK_EX)
